@@ -41,3 +41,12 @@ The type system is one of Gleam's main strengths: it catches mistakes early whil
 letting many local annotations be inferred.
 
 [^1]: Gleam language tour: https://github.com/gleam-lang/language-tour
+
+<!--
+TODO (research):
+  - Gleam's official type-system docs and language-tour examples
+  - Where Gleam requires type annotations and where it infers types
+  - Generic function syntax and examples
+  - The `Result(ok, error)` and `List(element)` types in real Gleam code
+  - How Gleam reports type errors for calls, records, and pattern matching
+-->

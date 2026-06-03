@@ -140,7 +140,15 @@ fn wasm_type(type_: &Type) -> Option<&'static str> {
         Type::Int => Some("i64"),
         Type::Float => Some("f64"),
         Type::Bool => Some("i32"),
-        Type::Nil | Type::String | Type::Function { .. } => None,
+        Type::Nil
+        | Type::String
+        | Type::Tuple(_)
+        | Type::List(_)
+        | Type::Record { .. }
+        | Type::Custom { .. }
+        | Type::Generic(_)
+        | Type::Opaque { .. }
+        | Type::Function { .. } => None,
     }
 }
 

@@ -17,11 +17,13 @@ while keeping a local representation that lowering and code generation can use.
 ## Interop boundary
 
 The type layer should be able to consume official Gleam compiler metadata rather
-than requiring this project to reimplement all inference rules. If local
-checking remains useful for tests, it should share the same output structures as
-imported type data.
+than requiring this project to reimplement all inference rules. Local checking
+uses the same interface structures that imported type data should eventually
+populate: function types, type declarations, constructors, and fields.
 
 ## Required output
 
 Lowering should receive typed declarations, typed expressions, constructor
 metadata, field metadata, and enough representation hints for runtime values.
+Unsupported executable forms can remain rejected by the checker while their type
+metadata is preserved in module interfaces.

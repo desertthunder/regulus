@@ -1,9 +1,10 @@
 use std::collections::HashMap;
 
 use crate::{
-    ast::{self, Expression, LiteralKind, Pattern, Statement},
+    ast::{self, Declaration, Expression, LiteralKind, Pattern, Statement},
     diagnostic::{Diagnostic, DiagnosticCode, Diagnostics, Label},
-    resolve::ResolvedModule,
+    project::Project,
+    resolve::{self, ResolvedModule},
     source::Span,
 };
 
@@ -15,7 +16,43 @@ pub enum Type {
     String,
     Bool,
     Nil,
+    Tuple(Vec<Type>),
+    List(Box<Type>),
+    Record { name: String, fields: Vec<FieldInfo> },
+    Custom { name: String, args: Vec<Type> },
+    Generic(String),
+    Opaque { name: String, args: Vec<Type> },
     Function { params: Vec<Type>, return_type: Box<Type> },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FieldInfo {
+    pub name: String,
+    pub type_: Type,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConstructorInfo {
+    pub name: String,
+    pub fields: Vec<FieldInfo>,
+    pub return_type: Type,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TypeDeclaration {
+    pub name: String,
+    pub parameters: Vec<String>,
+    pub opaque: bool,
+    pub constructors: Vec<ConstructorInfo>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ModuleInterface {
+    pub functions: HashMap<String, Type>,
+    pub types: HashMap<String, TypeDeclaration>,
+    pub constructors: HashMap<String, ConstructorInfo>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,15 +73,43 @@ pub struct TypedModule {
     pub resolved: ResolvedModule,
     pub functions: Vec<TypedFunction>,
     pub expressions: Vec<TypedExpression>,
+    pub interface: ModuleInterface,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TypedProject {
+    pub modules: Vec<TypedModule>,
+    pub interfaces: HashMap<String, ModuleInterface>,
 }
 
 pub fn check(module: ResolvedModule) -> Result<TypedModule, Diagnostics> {
     TypeChecker::new(module).check()
 }
 
+pub fn check_project(project: &Project) -> Result<TypedProject, Diagnostics> {
+    let resolved = resolve::resolve_project(project)?;
+    let mut modules = Vec::new();
+    let mut interfaces = HashMap::new();
+    let mut diagnostics = Vec::new();
+
+    for (module_info, module) in project.graph.modules.iter().zip(resolved.modules) {
+        match check(module) {
+            Ok(typed) => {
+                interfaces.insert(module_info.name.clone(), typed.interface.clone());
+                modules.push(typed);
+            }
+            Err(mut errors) => diagnostics.append(&mut errors),
+        }
+    }
+
+    if diagnostics.is_empty() { Ok(TypedProject { modules, interfaces }) } else { Err(diagnostics) }
+}
+
 struct TypeChecker {
     module: ResolvedModule,
     function_types: HashMap<String, Type>,
+    constructors: HashMap<String, ConstructorInfo>,
+    interface: ModuleInterface,
     functions: Vec<TypedFunction>,
     expressions: Vec<TypedExpression>,
     scopes: Vec<HashMap<String, Type>>,
@@ -56,6 +121,8 @@ impl TypeChecker {
         Self {
             module,
             function_types: HashMap::new(),
+            constructors: HashMap::new(),
+            interface: ModuleInterface::default(),
             functions: Vec::new(),
             expressions: Vec::new(),
             scopes: Vec::new(),
@@ -64,6 +131,7 @@ impl TypeChecker {
     }
 
     fn check(mut self) -> Result<TypedModule, Diagnostics> {
+        self.collect_type_declarations();
         self.collect_annotated_function_types();
 
         for function in self.module.ast.functions.clone() {
@@ -71,15 +139,49 @@ impl TypeChecker {
         }
 
         if self.diagnostics.is_empty() {
-            Ok(TypedModule { resolved: self.module, functions: self.functions, expressions: self.expressions })
+            Ok(TypedModule {
+                resolved: self.module,
+                functions: self.functions,
+                expressions: self.expressions,
+                interface: self.interface,
+            })
         } else {
             Err(self.diagnostics)
+        }
+    }
+
+    fn collect_type_declarations(&mut self) {
+        for declaration in self.module.ast.declarations.clone() {
+            match declaration {
+                Declaration::TypeDefinition(raw) => {
+                    if let Some(type_declaration) = parse_type_definition(&raw) {
+                        for constructor in &type_declaration.constructors {
+                            self.constructors.insert(constructor.name.clone(), constructor.clone());
+                            self.interface
+                                .constructors
+                                .insert(constructor.name.clone(), constructor.clone());
+                        }
+                        self.interface
+                            .types
+                            .insert(type_declaration.name.clone(), type_declaration);
+                    }
+                }
+                Declaration::TypeAlias(raw) => {
+                    if let Some(alias) = parse_type_alias(&raw) {
+                        self.interface.types.insert(alias.name.clone(), alias);
+                    }
+                }
+                _ => {}
+            }
         }
     }
 
     fn collect_annotated_function_types(&mut self) {
         for function in self.module.ast.functions.clone() {
             if let Some(type_) = self.function_type_from_annotations(&function) {
+                self.interface
+                    .functions
+                    .insert(function.name.text.clone(), type_.clone());
                 self.function_types.insert(function.name.text, type_);
             }
         }
@@ -222,6 +324,19 @@ impl TypeChecker {
                 self.pop_scope();
                 type_
             }
+            Expression::Raw(raw) if raw.kind == "record" => {
+                let Some(name) = raw.source.split(['(', ' ']).next() else {
+                    return None;
+                };
+                let Some(constructor) = self.constructors.get(name).cloned() else {
+                    self.diagnostics.push(
+                        Diagnostic::new(DiagnosticCode::TypeError, format!("unknown constructor `{name}`"))
+                            .with_label(Label::primary(raw.span, "unknown constructor here")),
+                    );
+                    return None;
+                };
+                constructor.return_type
+            }
             Expression::Raw(raw) => {
                 self.diagnostics.push(
                     Diagnostic::new(
@@ -361,6 +476,32 @@ impl Type {
             Type::String => "String".into(),
             Type::Bool => "Bool".into(),
             Type::Nil => "Nil".into(),
+            Type::Tuple(items) => format!("#({})", items.iter().map(Type::display).collect::<Vec<_>>().join(", ")),
+            Type::List(item) => format!("List({})", item.display()),
+            Type::Record { name, .. } => name.clone(),
+            Type::Custom { name, args } => {
+                if args.is_empty() {
+                    name.clone()
+                } else {
+                    format!(
+                        "{}({})",
+                        name,
+                        args.iter().map(Type::display).collect::<Vec<_>>().join(", ")
+                    )
+                }
+            }
+            Type::Generic(name) => name.clone(),
+            Type::Opaque { name, args } => {
+                if args.is_empty() {
+                    name.clone()
+                } else {
+                    format!(
+                        "{}({})",
+                        name,
+                        args.iter().map(Type::display).collect::<Vec<_>>().join(", ")
+                    )
+                }
+            }
             Type::Function { params, return_type } => {
                 let params = params.iter().map(Type::display).collect::<Vec<_>>().join(", ");
                 format!("fn({params}) -> {}", return_type.display())
@@ -396,22 +537,128 @@ fn parse_type_source(source: &str) -> Option<Type> {
         "Bool" => Some(Type::Bool),
         "Nil" => Some(Type::Nil),
         _ if source.starts_with("fn(") => parse_function_type(source),
+        _ if source.starts_with("#(") && source.ends_with(')') => {
+            Some(Type::Tuple(parse_type_list(&source[2..source.len() - 1])?))
+        }
+        _ if source.starts_with(char::is_lowercase) => Some(Type::Generic(source.into())),
+        _ if let Some((name, args)) = source.split_once('(') => {
+            let args = args.strip_suffix(')')?;
+            let args = parse_type_list(args)?;
+            if name == "List" && args.len() == 1 {
+                Some(Type::List(Box::new(args.into_iter().next()?)))
+            } else {
+                Some(Type::Custom { name: name.into(), args })
+            }
+        }
+        _ if source.chars().next().is_some_and(char::is_uppercase) => {
+            Some(Type::Custom { name: source.into(), args: Vec::new() })
+        }
         _ => None,
     }
 }
 
+fn parse_type_list(source: &str) -> Option<Vec<Type>> {
+    if source.trim().is_empty() {
+        return Some(Vec::new());
+    }
+    source.split(',').map(|item| parse_type_source(item.trim())).collect()
+}
+
 fn parse_function_type(source: &str) -> Option<Type> {
     let (params, return_type) = source.strip_prefix("fn(")?.split_once(") ->")?;
-    let params = if params.trim().is_empty() {
-        Vec::new()
-    } else {
-        params
-            .split(',')
-            .map(|param| parse_type_source(param.trim()))
-            .collect::<Option<Vec<_>>>()?
-    };
+    let params = parse_type_list(params)?;
     let return_type = parse_type_source(return_type.trim())?;
     Some(Type::Function { params, return_type: Box::new(return_type) })
+}
+
+fn parse_type_definition(raw: &ast::RawSyntax) -> Option<TypeDeclaration> {
+    let header = raw.source.split('{').next()?.trim();
+    let opaque = header.split_whitespace().any(|word| word == "opaque");
+    let name = type_decl_name(header)?.to_string();
+    let parameters = type_parameters(header);
+    let return_type = if opaque {
+        Type::Opaque { name: name.clone(), args: parameters.iter().cloned().map(Type::Generic).collect() }
+    } else {
+        Type::Custom { name: name.clone(), args: parameters.iter().cloned().map(Type::Generic).collect() }
+    };
+    let constructors = raw
+        .source
+        .split_once('{')?
+        .1
+        .lines()
+        .filter_map(|line| parse_constructor(line.trim(), &return_type, raw.span))
+        .collect::<Vec<_>>();
+
+    Some(TypeDeclaration { name, parameters, opaque, constructors, span: raw.span })
+}
+
+fn parse_type_alias(raw: &ast::RawSyntax) -> Option<TypeDeclaration> {
+    let header = raw.source.split('=').next()?.trim();
+    let name = type_decl_name(header)?.to_string();
+    Some(TypeDeclaration {
+        name,
+        parameters: type_parameters(header),
+        opaque: false,
+        constructors: Vec::new(),
+        span: raw.span,
+    })
+}
+
+fn type_decl_name(header: &str) -> Option<&str> {
+    header
+        .split_whitespace()
+        .filter(|word| *word != "pub" && *word != "opaque" && *word != "type")
+        .next()
+        .map(|word| word.split(['(', '{', '=']).next().unwrap_or(word))
+}
+
+fn type_parameters(header: &str) -> Vec<String> {
+    let Some(params) = header
+        .split_once('(')
+        .and_then(|(_, rest)| rest.split_once(')').map(|(params, _)| params))
+    else {
+        return Vec::new();
+    };
+    params
+        .split(',')
+        .map(str::trim)
+        .filter(|param| !param.is_empty())
+        .map(String::from)
+        .collect()
+}
+
+fn parse_constructor(line: &str, return_type: &Type, span: Span) -> Option<ConstructorInfo> {
+    let line = line.trim_end_matches('}').trim();
+    if line.is_empty() || !line.chars().next().is_some_and(char::is_uppercase) {
+        return None;
+    }
+    let name = line.split(['(', ' ']).next()?.to_string();
+    let fields = match line
+        .split_once('(')
+        .and_then(|(_, rest)| rest.rsplit_once(')').map(|(fields, _)| fields))
+    {
+        Some(fields) => parse_fields(fields)?,
+        None => Vec::new(),
+    };
+    Some(ConstructorInfo { name, fields, return_type: return_type.clone(), span })
+}
+
+fn parse_fields(source: &str) -> Option<Vec<FieldInfo>> {
+    if source.trim().is_empty() {
+        return Some(Vec::new());
+    }
+    source
+        .split(',')
+        .enumerate()
+        .map(|(index, field)| {
+            let field = field.trim();
+            if let Some((name, type_)) = field.split_once(':') {
+                Some(FieldInfo { name: name.trim().into(), type_: parse_type_source(type_.trim())? })
+            } else {
+                Some(FieldInfo { name: format!("_{index}"), type_: parse_type_source(field)? })
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -512,6 +759,48 @@ mod tests {
             diagnostics
                 .iter()
                 .any(|diagnostic| diagnostic.message.contains("needs a type annotation"))
+        );
+    }
+
+    #[test]
+    fn parses_generic_tuple_list_and_custom_annotations() {
+        assert_eq!(Type::from_source("List(Int)"), Some(Type::List(Box::new(Type::Int))));
+        assert_eq!(
+            Type::from_source("#(String, Int)"),
+            Some(Type::Tuple(vec![Type::String, Type::Int]))
+        );
+        assert_eq!(
+            Type::from_source("Result(Int, String)"),
+            Some(Type::Custom { name: "Result".into(), args: vec![Type::Int, Type::String] })
+        );
+        assert_eq!(Type::from_source("value"), Some(Type::Generic("value".into())));
+    }
+
+    #[test]
+    fn records_custom_types_constructors_and_fields_in_interface() {
+        let typed = check_source(
+            r#"pub type User { User(name: String, age: Int) }
+fn new_user() { User(name: "Ada", age: 36) }
+"#,
+        )
+        .expect("type check source");
+
+        let user = typed.interface.types.get("User").expect("User type declaration");
+        assert_eq!(user.constructors[0].name, "User");
+        assert_eq!(user.constructors[0].fields[0].name, "name");
+        assert!(typed.interface.constructors.contains_key("User"));
+    }
+
+    #[test]
+    fn records_opaque_and_generic_type_declarations() {
+        let typed = check_source("pub opaque type Box(value) { Box(value) }").expect("type check source");
+
+        let box_ = typed.interface.types.get("Box").expect("Box type declaration");
+        assert!(box_.opaque);
+        assert_eq!(box_.parameters, ["value"]);
+        assert_eq!(
+            box_.constructors[0].return_type,
+            Type::Opaque { name: "Box".into(), args: vec![Type::Generic("value".into())] }
         );
     }
 }

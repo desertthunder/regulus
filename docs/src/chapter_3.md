@@ -188,3 +188,12 @@ or annotation that caused the problem.
 [^2]: Stephen Diehl, "Hindley-Milner Inference": https://smunix.github.io/dev.stephendiehl.com/fun/006_hindley_milner.html
 [^3]: Himanshu Stimsina, "Implementing a Hindley-Milner Type System, Part 1": https://blog.stimsina.com/post/implementing-a-hindley-milner-type-system-part-1
 [^4]: Compiler Club, "Compiling Pattern Matching": https://compiler.club/compiling-pattern-matching/
+
+<!--
+TODO (research):
+  - Gleam's type inference rules and where annotations are required
+  - How Gleam checks function calls, operators, and branch compatibility
+  - Pattern typing for tuples, lists, records, and custom-type constructors
+  - Type information exposed by the official Gleam compiler for module interfaces
+  - How Hindley-Milner inference handles let-polymorphism and generic functions
+-->

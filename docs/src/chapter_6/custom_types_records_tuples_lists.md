@@ -46,3 +46,13 @@ Records and custom types are often the clearest way to model application data.
 They make the possible shapes of a value explicit in the type definition.
 
 [^1]: Gleam language tour: https://github.com/gleam-lang/language-tour
+
+<!--
+TODO (research):
+  - Gleam custom type syntax, including variants with labelled and unlabelled fields
+  - Record construction, record update, and field access examples
+  - Tuple syntax and common tuple use cases in Gleam
+  - List syntax, list patterns, and common `gleam/list` functions
+  - Opaque custom types and public/private constructors
+  - How custom types, records, tuples, and lists appear in Gleam package docs
+-->
