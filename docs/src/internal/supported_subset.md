@@ -1,8 +1,8 @@
 # Supported subset
 
-The compiler currently parses Gleam source with tree-sitter and builds a small
-compiler-owned AST. Later phases are still placeholders, so it does not yet
-compile programs to executable WebAssembly.
+The compiler currently parses Gleam source with tree-sitter, builds a small
+compiler-owned AST, resolves names, and checks a scalar type subset. It does not
+yet compile programs to executable WebAssembly.
 
 ## Current behavior
 
@@ -15,6 +15,9 @@ compile programs to executable WebAssembly.
 - Source file IDs, spans, and diagnostics are defined.
 - Name resolution supports top-level functions, imports, parameters, local
   bindings, shadowing, and qualified module references.
+- Type checking supports scalar types, function types, typed parameters,
+  literals, variables, local bindings, direct calls, arity checks, argument
+  checks, and simple `case` branch compatibility.
 - WASM output is an empty placeholder.
 
 ## Not supported yet
@@ -22,6 +25,7 @@ compile programs to executable WebAssembly.
 - Constants, custom types, records with arguments, lists, tuples, bit arrays,
   external functions, attributes, and advanced patterns.
 - Unqualified imported values and prelude resolution.
-- Type checking or Gleam compiler type import.
+- Generic types, custom types, imported function types, and Gleam compiler type
+  import.
 - Core IR lowering.
 - Executable `.wasm` generation.
