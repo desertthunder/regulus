@@ -2,3 +2,8 @@
 title = "Compiling Gleam to WebAssembly"
 authors = ["Owais Jamil"]
 language = "en"
+
+[output.html]
+default-theme = "coal"
+preferred-dark-theme = "coal"
+additional-css = ["theme/custom.css"]

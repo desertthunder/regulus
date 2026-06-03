@@ -1,0 +1,148 @@
+@font-face {
+  font-family: "Switzer";
+  src: url("../fonts/Switzer-Variable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Switzer";
+  src: url("../fonts/Switzer-VariableItalic.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Outfit";
+  src: url("../fonts/Outfit-Variable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root,
+.coal,
+.navy,
+.ayu,
+.light,
+.rust {
+  --book-sidebar-bg: #151515;
+  --book-main-bg: #1e1e1e;
+  --book-accent: #ffaff3;
+  --book-text: #fefefc;
+
+  --bg: var(--book-main-bg);
+  --fg: var(--book-text);
+  --sidebar-bg: var(--book-sidebar-bg);
+  --sidebar-fg: var(--book-text);
+  --sidebar-non-existant: rgba(254, 254, 252, 0.45);
+  --sidebar-active: var(--book-accent);
+  --sidebar-spacer: rgba(254, 254, 252, 0.12);
+  --scrollbar: rgba(255, 175, 243, 0.45);
+  --icons: var(--book-text);
+  --icons-hover: var(--book-accent);
+  --links: var(--book-accent);
+  --inline-code-color: var(--book-accent);
+  --theme-popup-bg: var(--book-sidebar-bg);
+  --theme-popup-border: var(--book-accent);
+  --theme-hover: rgba(255, 175, 243, 0.16);
+  --quote-bg: rgba(255, 175, 243, 0.08);
+  --quote-border: var(--book-accent);
+  --table-border-color: rgba(254, 254, 252, 0.18);
+  --table-header-bg: var(--book-sidebar-bg);
+  --table-alternate-bg: rgba(21, 21, 21, 0.35);
+  --searchbar-border-color: rgba(255, 175, 243, 0.4);
+  --searchbar-bg: var(--book-sidebar-bg);
+  --searchbar-fg: var(--book-text);
+  --searchresults-header-fg: var(--book-text);
+  --searchresults-border-color: rgba(254, 254, 252, 0.16);
+  --searchresults-li-bg: var(--book-main-bg);
+  --search-mark-bg: rgba(255, 175, 243, 0.3);
+}
+
+html,
+body {
+  background: var(--book-main-bg);
+  color: var(--book-text);
+  font-family: "Switzer", system-ui, sans-serif;
+}
+
+body,
+.content,
+#content,
+.page,
+.page-wrapper {
+  background: var(--book-main-bg);
+}
+
+.sidebar,
+.sidebar-scrollbox,
+.chapter,
+#sidebar-toggle,
+#menu-bar,
+.menu-bar,
+.nav-chapters {
+  background: var(--book-sidebar-bg);
+  color: var(--book-text);
+}
+
+.content main {
+  color: var(--book-text);
+  font-family: "Switzer", system-ui, sans-serif;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+.header,
+.chapter li.part-title {
+  color: var(--book-text);
+  font-family: "Outfit", "Switzer", system-ui, sans-serif;
+  letter-spacing: -0.02em;
+}
+
+a,
+a:visited,
+.content a,
+.chapter li a.active,
+.chapter li a:hover,
+.menu-title,
+.nav-chapters:hover {
+  color: var(--book-accent);
+}
+
+.icon-button:hover,
+.icon-button:focus,
+#sidebar-toggle:hover,
+#sidebar-toggle:focus {
+  color: var(--book-accent);
+  background: rgba(255, 175, 243, 0.12);
+}
+
+code,
+pre,
+.hljs {
+  background: var(--book-sidebar-bg);
+  color: var(--book-text);
+}
+
+:not(pre) > code {
+  color: var(--book-accent);
+  background: rgba(21, 21, 21, 0.7);
+}
+
+blockquote {
+  background: rgba(255, 175, 243, 0.08);
+  border-color: var(--book-accent);
+}
+
+#theme-list,
+#mdbook-theme-list,
+#mdbook-theme-toggle {
+  display: none;
+}
