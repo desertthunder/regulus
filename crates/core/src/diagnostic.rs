@@ -56,6 +56,44 @@ impl Diagnostic {
         )
         .with_label(Label::primary(span, "unsupported here"))
     }
+
+    pub fn render_plain(&self) -> String {
+        let mut rendered = format!("{:?}: {}", self.code, self.message);
+        for label in &self.labels {
+            rendered.push_str(&format!(
+                "\n  --> file {} bytes {}..{}",
+                label.span.file_id.0, label.span.start, label.span.end
+            ));
+            if let Some(message) = &label.message {
+                rendered.push_str(&format!("\n      {message}"));
+            }
+        }
+        for note in &self.notes {
+            rendered.push_str(&format!("\n  note: {note}"));
+        }
+        rendered
+    }
 }
 
 pub type Diagnostics = Vec<Diagnostic>;
+
+#[cfg(test)]
+mod tests {
+    use crate::source::{SourceFileId, Span};
+
+    use super::*;
+
+    #[test]
+    fn renders_plain_diagnostics_without_terminal_colors() {
+        let diagnostic = Diagnostic::new(DiagnosticCode::TypeError, "expected `Int` but found `String`")
+            .with_label(Label::primary(Span::new(SourceFileId(0), 10, 18), "type mismatch"))
+            .with_note("check the function argument");
+
+        insta::assert_snapshot!(diagnostic.render_plain(), @r#"
+TypeError: expected `Int` but found `String`
+  --> file 0 bytes 10..18
+      type mismatch
+  note: check the function argument
+"#);
+    }
+}

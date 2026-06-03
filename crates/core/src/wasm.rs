@@ -174,16 +174,19 @@ mod tests {
     fn emits_wat_for_public_scalar_function() {
         let wasm = compile_wasm("pub fn id(x: Int) -> Int { x }");
 
-        assert_eq!(
-            wasm.wat,
-            "(module\n  (func $id (export \"id\") (param $0 i64) (result i64)\n    local.get $0\n  )\n)\n"
-        );
+        insta::assert_snapshot!(wasm.wat, @r#"
+(module
+  (func $id (export "id") (param $0 i64) (result i64)
+    local.get $0
+  )
+)
+"#);
         assert!(!wasm.bytes.is_empty());
     }
 
     #[test]
     fn runs_exported_function_in_wasmtime() {
-        let wasm = compile_wasm("pub fn id(x: Int) -> Int { x }");
+        let wasm = compile_wasm(include_str!("../../../fixtures/e2e/public_id.gleam"));
         let engine = Engine::default();
         let module = Module::new(&engine, &wasm.bytes).expect("compile wasm module");
         let mut store = Store::new(&engine, ());

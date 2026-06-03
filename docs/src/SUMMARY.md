@@ -42,11 +42,11 @@ TODO:
 # Development
 
 - [Supported subset](internal/supported_subset.md)
+- [Tests & Documentation](testing_docs.md)
 
 # Internal Docs
 
 - [Specs]()
-  - [Initial testing and diagnostics](internal/specs/00_initial_testing_and_diagnostics.md)
   - [Project model and modules](internal/specs/01_project_model_and_modules.md)
   - [Full Gleam syntax](internal/specs/02_full_gleam_syntax.md)
   - [Full name resolution](internal/specs/03_full_name_resolution.md)
@@ -58,7 +58,6 @@ TODO:
   - [Standard library and host interop](internal/specs/09_stdlib_and_host_interop.md)
   - [CLI and build outputs](internal/specs/10_cli_and_build_outputs.md)
 - [Tasks]()
-  - [Initial testing and docs](internal/tasks/00_initial_testing_and_docs.md)
   - [Project model and modules](internal/tasks/01_project_model_and_modules.md)
   - [Full Gleam syntax](internal/tasks/02_full_gleam_syntax.md)
   - [Full name resolution](internal/tasks/03_full_name_resolution.md)
