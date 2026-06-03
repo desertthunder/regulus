@@ -4,6 +4,7 @@ use crate::source::Span;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DiagnosticCode {
     Unsupported,
+    ProjectError,
     ParseError,
     AstError,
     ResolveError,

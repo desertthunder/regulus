@@ -17,4 +17,9 @@ pub enum Command {
         /// Gleam source file to compile.
         input: PathBuf,
     },
+    /// Load a Gleam project and print discovered modules.
+    Project {
+        /// Project directory containing gleam.toml.
+        input: PathBuf,
+    },
 }

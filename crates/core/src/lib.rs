@@ -2,6 +2,7 @@ pub mod ast;
 pub mod diagnostic;
 pub mod ir;
 pub mod parse;
+pub mod project;
 pub mod resolve;
 pub mod source;
 pub mod types;

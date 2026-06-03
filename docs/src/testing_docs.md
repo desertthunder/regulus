@@ -19,6 +19,7 @@ fixtures/
   wasm/
   e2e/
   diagnostics/
+  projects/
 ```
 
 Each fixture should focus on one language feature unless it is an end-to-end

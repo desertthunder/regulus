@@ -216,6 +216,9 @@ name = "compiler_core"
 version = "0.1.0"
 dependencies = [
  "insta",
+ "serde",
+ "tempfile",
+ "toml",
  "tree-sitter",
  "tree-sitter-gleam",
  "wasmtime",

@@ -7,6 +7,34 @@ use crate::{args::Command, echo};
 pub fn run(command: Command) -> ExitCode {
     match command {
         Command::Compile { input } => compile(input),
+        Command::Project { input } => project(input),
+    }
+}
+
+fn project(input: std::path::PathBuf) -> ExitCode {
+    match compiler_core::project::load_project(&input) {
+        Ok(project) => {
+            echo::status(
+                "project",
+                format!(
+                    "{} {} ({} modules)",
+                    project.config.name,
+                    project.config.version,
+                    project.graph.modules.len()
+                ),
+            );
+            for module in project.graph.modules {
+                echo::status("module", format!("{} -> {}", module.name, module.path.display()));
+            }
+            ExitCode::SUCCESS
+        }
+        Err(diagnostics) => {
+            echo::error(format!("could not load project {}", input.display()));
+            for diagnostic in diagnostics {
+                echo::diagnostic(diagnostic.message);
+            }
+            ExitCode::FAILURE
+        }
     }
 }
 
