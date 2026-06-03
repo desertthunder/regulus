@@ -10,8 +10,23 @@ use crate::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Module {
     pub span: Span,
+    pub declarations: Vec<Declaration>,
     pub imports: Vec<Import>,
     pub functions: Vec<Function>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Declaration {
+    Import(Import),
+    Function(Function),
+    Constant(RawSyntax),
+    ExternalFunction(RawSyntax),
+    ExternalType(RawSyntax),
+    TypeAlias(RawSyntax),
+    TypeDefinition(RawSyntax),
+    Attribute(RawSyntax),
+    TargetGroup(RawSyntax),
+    Statement(RawSyntax),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -72,6 +87,7 @@ pub enum Pattern {
     Integer(Literal),
     Float(Literal),
     String(Literal),
+    Raw(RawSyntax),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -82,6 +98,7 @@ pub enum Expression {
     FieldAccess(FieldAccess),
     Block(Block),
     Case(Case),
+    Raw(RawSyntax),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -141,6 +158,13 @@ pub struct Name {
     pub text: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RawSyntax {
+    pub span: Span,
+    pub kind: String,
+    pub source: String,
+}
+
 pub fn build(cst: ConcreteSyntaxTree) -> Result<Module, Diagnostics> {
     let root = cst.tree.root_node();
     let builder = AstBuilder { source: &cst.source };
@@ -153,18 +177,36 @@ struct AstBuilder<'a> {
 
 impl AstBuilder<'_> {
     fn module(&self, node: Node<'_>) -> Result<Module, Diagnostics> {
+        let mut declarations = Vec::new();
         let mut imports = Vec::new();
         let mut functions = Vec::new();
 
         for child in self.named_children(node) {
-            match child.kind() {
-                "import" => imports.push(self.import(child)?),
-                "function" => functions.push(self.function(child)?),
-                _ => return Err(vec![self.unsupported(child)]),
+            let declaration = self.declaration(child)?;
+            match &declaration {
+                Declaration::Import(import) => imports.push(import.clone()),
+                Declaration::Function(function) => functions.push(function.clone()),
+                _ => {}
             }
+            declarations.push(declaration);
         }
 
-        Ok(Module { span: self.span(node), imports, functions })
+        Ok(Module { span: self.span(node), declarations, imports, functions })
+    }
+
+    fn declaration(&self, node: Node<'_>) -> Result<Declaration, Diagnostics> {
+        match node.kind() {
+            "import" => self.import(node).map(Declaration::Import),
+            "function" => self.function(node).map(Declaration::Function),
+            "constant" => Ok(Declaration::Constant(self.raw(node))),
+            "external_function" => Ok(Declaration::ExternalFunction(self.raw(node))),
+            "external_type" => Ok(Declaration::ExternalType(self.raw(node))),
+            "type_alias" => Ok(Declaration::TypeAlias(self.raw(node))),
+            "type_definition" => Ok(Declaration::TypeDefinition(self.raw(node))),
+            "attribute" => Ok(Declaration::Attribute(self.raw(node))),
+            "target_group" => Ok(Declaration::TargetGroup(self.raw(node))),
+            _ => Ok(Declaration::Statement(self.raw(node))),
+        }
     }
 
     fn import(&self, node: Node<'_>) -> Result<Import, Diagnostics> {
@@ -255,7 +297,7 @@ impl AstBuilder<'_> {
             "field_access" => self.field_access(node).map(Expression::FieldAccess),
             "block" => self.block_like(node).map(Expression::Block),
             "case" => self.case(node).map(Expression::Case),
-            _ => Err(vec![self.unsupported(node)]),
+            _ => Ok(Expression::Raw(self.raw(node))),
         }
     }
 
@@ -264,7 +306,7 @@ impl AstBuilder<'_> {
         let kind = match text.as_str() {
             "True" | "False" => LiteralKind::Bool,
             "Nil" => LiteralKind::Nil,
-            _ => return Err(vec![self.unsupported(node)]),
+            _ => return Ok(Expression::Raw(self.raw(node))),
         };
 
         Ok(Expression::Literal(Literal {
@@ -375,7 +417,7 @@ impl AstBuilder<'_> {
             "integer" => Ok(Pattern::Integer(self.literal(node, LiteralKind::Int))),
             "float" => Ok(Pattern::Float(self.literal(node, LiteralKind::Float))),
             "string" => Ok(Pattern::String(self.literal(node, LiteralKind::String))),
-            _ => Err(vec![self.unsupported(node)]),
+            _ => Ok(Pattern::Raw(self.raw(node))),
         }
     }
 
@@ -405,6 +447,10 @@ impl AstBuilder<'_> {
 
     fn literal(&self, node: Node<'_>, kind: LiteralKind) -> Literal {
         Literal { span: self.span(node), kind, source: self.text(node).to_string() }
+    }
+
+    fn raw(&self, node: Node<'_>) -> RawSyntax {
+        RawSyntax { span: self.span(node), kind: node.kind().into(), source: self.text(node).to_string() }
     }
 
     fn text(&self, node: Node<'_>) -> &str {
@@ -490,12 +536,29 @@ pub fn main() {
     }
 
     #[test]
-    fn reports_unsupported_ast_nodes() {
-        let source = SourceFile::new(SourceFileId(0), "const answer = 42");
-        let cst = parse::parse(source).expect("parse source");
-        let diagnostics = build(cst).expect_err("AST build should fail");
+    fn represents_top_level_gleam_syntax_as_declarations() {
+        let ast = parse_ast(include_str!("../../../fixtures/ast/full_syntax.gleam"));
 
-        assert_eq!(diagnostics[0].code, DiagnosticCode::AstError);
-        assert!(diagnostics[0].message.contains("constant"));
+        assert!(matches!(ast.declarations[0], Declaration::Attribute(_)));
+        assert!(matches!(ast.declarations[1], Declaration::Constant(_)));
+        assert!(matches!(ast.declarations[2], Declaration::TypeDefinition(_)));
+        assert!(matches!(ast.declarations[3], Declaration::TypeAlias(_)));
+        assert!(matches!(ast.declarations[4], Declaration::ExternalFunction(_)));
+    }
+
+    #[test]
+    fn represents_expression_and_pattern_forms_as_raw_syntax() {
+        let ast = parse_ast(
+            r#"fn main(items) {
+  let #(first, _) = #(1, 2)
+  case items {
+    [head, ..tail] -> head
+    _ -> first
+  }
+}
+"#,
+        );
+
+        assert_eq!(ast.functions[0].body.statements.len(), 2);
     }
 }

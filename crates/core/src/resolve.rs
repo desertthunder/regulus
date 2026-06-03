@@ -179,6 +179,7 @@ impl Resolver {
                 let child = self.new_scope(Some(scope));
                 self.resolve_block(child, block);
             }
+            Expression::Raw(_) => {}
             Expression::Case(case) => {
                 for subject in &case.subjects {
                     self.resolve_expression(scope, subject);
@@ -200,7 +201,7 @@ impl Resolver {
             Pattern::Name(name) => {
                 self.define(scope, name, kind);
             }
-            Pattern::Discard(_) | Pattern::Integer(_) | Pattern::Float(_) | Pattern::String(_) => {}
+            Pattern::Discard(_) | Pattern::Integer(_) | Pattern::Float(_) | Pattern::String(_) | Pattern::Raw(_) => {}
         }
     }
 

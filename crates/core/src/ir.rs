@@ -262,6 +262,16 @@ impl Lowerer {
                 );
                 None
             }
+            AstExpression::Raw(raw) => {
+                self.diagnostics.push(
+                    Diagnostic::new(
+                        DiagnosticCode::LoweringError,
+                        format!("expression `{}` cannot be lowered", raw.kind),
+                    )
+                    .with_label(Label::primary(raw.span, "unsupported expression here")),
+                );
+                None
+            }
         }
     }
 
@@ -330,6 +340,7 @@ fn lower_pattern(pattern: &Pattern) -> Option<IrPattern> {
             kind: LiteralKind::String,
             source: literal.source.clone(),
         })),
+        Pattern::Raw(_) => None,
     }
 }
 

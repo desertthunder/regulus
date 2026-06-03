@@ -5,6 +5,13 @@
 - [Type systems](./chapter_3.md)
 - [Intermediate representations and lowering](./chapter_4.md)
 - [WebAssembly code generation](./chapter_5.md)
+- [The Gleam Programming Language](./chapter_6.md)
+  - [Modules, imports, and packages](./chapter_6/mods_imports_pkgs.md)
+  - [Functions, values, and expressions](./chapter_6/functions_values_expressions.md)
+  - [Custom types, records, tuples, and lists](./chapter_6/custom_types_records_tuples_lists.md)
+  - [Pattern matching](./chapter_6/pattern_matching.md)
+  - [Type system and inference model](./chapter_6/type_system_inference.md)
+  - [Compilation](./chapter_6/compiler_notes.md)
 
 <!--
 TODO:

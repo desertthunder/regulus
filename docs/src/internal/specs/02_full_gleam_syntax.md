@@ -1,8 +1,9 @@
 # Full Gleam syntax
 
-The AST should cover all Gleam syntax accepted by tree-sitter. Unsupported nodes
-are useful for early milestones, but a feature-complete compiler needs every
-syntax form represented with source spans and clear invariants.
+The AST should cover all Gleam syntax accepted by tree-sitter. Syntax that is
+not yet executable can be represented as raw syntax nodes with kind, source, and
+span, so the parser and AST builder can accept real Gleam modules while later
+compiler work catches up.
 
 ## Syntax to cover
 
@@ -24,3 +25,4 @@ syntax form represented with source spans and clear invariants.
 - AST nodes preserve source order and source spans.
 - Names remain textual until name resolution.
 - AST construction does not infer types or resolve imports.
+- Raw syntax nodes preserve tree-sitter kind, source text, and span.

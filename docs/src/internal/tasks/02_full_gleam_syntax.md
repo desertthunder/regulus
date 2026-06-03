@@ -6,16 +6,16 @@ Represent all tree-sitter Gleam syntax in the compiler AST.
 
 ## Tasks
 
-- [ ] Add AST nodes for constants, attributes, external declarations, type
+- [x] Add AST nodes for constants, attributes, external declarations, type
       aliases, and custom types.
-- [ ] Add AST nodes for records, tuples, lists, bit arrays, and record updates.
-- [ ] Add AST nodes for anonymous functions, pipelines, operators, `use`,
+- [x] Add AST nodes for records, tuples, lists, bit arrays, and record updates.
+- [x] Add AST nodes for anonymous functions, pipelines, operators, `use`,
       `panic`, `todo`, `assert`, and `let assert`.
-- [ ] Add AST nodes for full `case` syntax and guards.
-- [ ] Add AST nodes for all pattern forms.
-- [ ] Convert each supported tree-sitter node into AST.
-- [ ] Add diagnostics for malformed or unsupported grammar edge cases.
-- [ ] Add AST fixtures for each language construct.
+- [x] Add AST nodes for full `case` syntax and guards.
+- [x] Add AST nodes for all pattern forms.
+- [x] Convert each supported tree-sitter node into AST.
+- [x] Add diagnostics for malformed or unsupported grammar edge cases.
+- [x] Add AST fixtures for each language construct.
 
 ## Done when
 
