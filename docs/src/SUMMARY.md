@@ -13,6 +13,7 @@
   - [Pattern matching](./chapter_6/pattern_matching.md)
   - [Type system and inference model](./chapter_6/type_system_inference.md)
   - [Compilation](./chapter_6/compiler_notes.md)
+- [Runtime value representation](./chapter_7.md)
 
 <!--
 TODO:

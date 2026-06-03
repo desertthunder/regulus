@@ -26,9 +26,13 @@ subset to core IR, and emits executable WebAssembly for public scalar functions.
   metadata, and simple `case` branch compatibility.
 - Core IR lowering supports functions, params, locals, literals, local reads and
   writes, direct calls, blocks, and simple branches.
-- WebAssembly output supports scalar signatures, locals, constants, local reads
-  and writes, direct calls, exports, WAT generation, and `.wasm` assembly.
-- Wasmtime tests execute exported scalar functions.
+- WebAssembly output supports scalar signatures, string pointers, locals,
+  constants, local reads and writes, direct calls, exports, WAT generation, and
+  `.wasm` assembly.
+- Runtime representation includes object headers, tags, alignment, static string
+  objects, managed-value pointers, and a bump allocator helper.
+- Wasmtime tests execute exported scalar functions and inspect string memory
+  layout.
 
 ## Not supported yet
 
@@ -38,5 +42,5 @@ subset to core IR, and emits executable WebAssembly for public scalar functions.
 - Full inference for generic types, full custom-type checking, imported function
   types from dependencies, and Gleam compiler type import.
 - Lowering for imported calls, records, lists, tuples, and function values.
-- WASM code generation for strings, branches, records, lists, tuples, imports,
-  and runtime-managed values.
+- WASM code generation for branches, records, lists, tuples, imports, dynamic
+  allocation of managed values, and full runtime-managed value operations.

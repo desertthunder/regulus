@@ -4,6 +4,7 @@ pub mod ir;
 pub mod parse;
 pub mod project;
 pub mod resolve;
+pub mod runtime;
 pub mod source;
 pub mod types;
 pub mod wasm;
