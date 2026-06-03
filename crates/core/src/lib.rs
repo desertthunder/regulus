@@ -1,5 +1,37 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
+pub mod ast;
+pub mod diagnostic;
+pub mod ir;
+pub mod parse;
+pub mod resolve;
+pub mod source;
+pub mod types;
+pub mod wasm;
+
+use diagnostic::Diagnostics;
+use source::{SourceFile, SourceFileId};
+
+/// Output from a full compile pipeline run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompileOutput {
+    pub wasm: wasm::WasmModule,
+}
+
+/// Compile a Gleam source string.
+pub fn compile(source: impl Into<String>) -> Result<CompileOutput, Diagnostics> {
+    let source = SourceFile::new(SourceFileId(0), source);
+    compile_source(source)
+}
+
+/// Compile an already-created source file.
+pub fn compile_source(source: SourceFile) -> Result<CompileOutput, Diagnostics> {
+    let cst = parse::parse(source)?;
+    let ast = ast::build(cst)?;
+    let resolved = resolve::resolve(ast)?;
+    let typed = types::check(resolved)?;
+    let ir = ir::lower(typed)?;
+    let wasm = wasm::emit(ir)?;
+
+    Ok(CompileOutput { wasm })
 }
 
 #[cfg(test)]
@@ -7,8 +39,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
+    fn phases_are_wired_together() {
+        let output = compile("pub fn main() { Nil }").expect("pipeline should run");
+        assert!(output.wasm.bytes.is_empty());
+    }
+
+    #[test]
+    #[ignore = "requires parser, type checker, lowering, and WASM codegen"]
+    fn compiles_add_function_end_to_end() {
+        let output = compile("pub fn add(a, b) { a + b }").expect("compile add function");
+        assert!(!output.wasm.bytes.is_empty());
     }
 }

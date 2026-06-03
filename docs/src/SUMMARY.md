@@ -4,6 +4,7 @@
 
 # Internal planning
 
+- [Supported subset](internal/supported_subset.md)
 - [Specs]()
   - [Pipeline overview](internal/specs/00_pipeline_overview.md)
   - [Tree-sitter to AST](internal/specs/01_tree_sitter_ast.md)

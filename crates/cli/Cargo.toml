@@ -4,3 +4,6 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+clap = { version = "4.5.40", features = ["derive"] }
+compiler_core = { path = "../core" }
+owo-colors = "4.2.1"
