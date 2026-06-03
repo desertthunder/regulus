@@ -6,14 +6,14 @@ Parse Gleam source with tree-sitter and build a compiler-owned AST.
 
 ## Tasks
 
-- [ ] Add the tree-sitter Gleam grammar dependency.
-- [ ] Implement parser setup for a single source file.
-- [ ] Detect and report tree-sitter error nodes.
-- [ ] Define AST nodes for modules, imports, functions, parameters, blocks,
+- [x] Add the tree-sitter Gleam grammar dependency.
+- [x] Implement parser setup for a single source file.
+- [x] Detect and report tree-sitter error nodes.
+- [x] Define AST nodes for modules, imports, functions, parameters, blocks,
       literals, variables, calls, `let`, and simple `case`.
-- [ ] Implement CST-to-AST conversion for the initial subset.
-- [ ] Preserve spans on all AST nodes.
-- [ ] Add AST snapshot tests for simple modules and unsupported syntax.
+- [x] Implement CST-to-AST conversion for the initial subset.
+- [x] Preserve spans on all AST nodes.
+- [x] Add AST snapshot tests for simple modules and unsupported syntax.
 
 ## Done when
 
