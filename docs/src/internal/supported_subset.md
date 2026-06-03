@@ -1,8 +1,8 @@
 # Supported subset
 
 The compiler currently parses Gleam source with tree-sitter, builds a small
-compiler-owned AST, resolves names, and checks a scalar type subset. It does not
-yet compile programs to executable WebAssembly.
+compiler-owned AST, resolves names, checks a scalar type subset, and lowers that
+subset to core IR. It does not yet compile programs to executable WebAssembly.
 
 ## Current behavior
 
@@ -18,6 +18,8 @@ yet compile programs to executable WebAssembly.
 - Type checking supports scalar types, function types, typed parameters,
   literals, variables, local bindings, direct calls, arity checks, argument
   checks, and simple `case` branch compatibility.
+- Core IR lowering supports functions, params, locals, literals, local reads and
+  writes, direct calls, blocks, and simple branches.
 - WASM output is an empty placeholder.
 
 ## Not supported yet
@@ -27,5 +29,5 @@ yet compile programs to executable WebAssembly.
 - Unqualified imported values and prelude resolution.
 - Generic types, custom types, imported function types, and Gleam compiler type
   import.
-- Core IR lowering.
+- Lowering for imported calls, records, lists, tuples, and function values.
 - Executable `.wasm` generation.

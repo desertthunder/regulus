@@ -336,6 +336,10 @@ impl TypeChecker {
 }
 
 impl Type {
+    pub fn from_source(source: &str) -> Option<Self> {
+        parse_type_source(source)
+    }
+
     fn display(&self) -> String {
         match self {
             Type::Int => "Int".into(),

@@ -6,14 +6,14 @@ Lower typed AST into a small, typed core IR.
 
 ## Tasks
 
-- [ ] Define core IR modules, functions, locals, expressions, blocks, literals,
+- [x] Define core IR modules, functions, locals, expressions, blocks, literals,
       calls, branches, and returns.
-- [ ] Implement local allocation for parameters and `let` bindings.
-- [ ] Lower supported literals and variable references.
-- [ ] Lower direct function calls.
-- [ ] Lower blocks and simple branches with explicit evaluation order.
-- [ ] Preserve source spans or debug metadata where useful.
-- [ ] Add core IR snapshot tests.
+- [x] Implement local allocation for parameters and `let` bindings.
+- [x] Lower supported literals and variable references.
+- [x] Lower direct function calls.
+- [x] Lower blocks and simple branches with explicit evaluation order.
+- [x] Preserve source spans or debug metadata where useful.
+- [x] Add core IR snapshot tests.
 
 ## Done when
 
