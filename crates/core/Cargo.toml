@@ -6,3 +6,7 @@ edition = "2024"
 [dependencies]
 tree-sitter = "0.26.9"
 tree-sitter-gleam = "1.0.0"
+wat = "1.251.0"
+
+[dev-dependencies]
+wasmtime = "45.0.0"

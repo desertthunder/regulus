@@ -4,6 +4,7 @@
 - [Name resolution](./chapter_2.md)
 - [Type systems](./chapter_3.md)
 - [Intermediate representations and lowering](./chapter_4.md)
+- [WebAssembly code generation](./chapter_5.md)
 
 # Internal planning
 

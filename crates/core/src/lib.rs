@@ -39,9 +39,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn phases_are_wired_together() {
+    fn compiles_nil_function_to_wasm() {
         let output = compile("pub fn main() { Nil }").expect("pipeline should run");
-        assert!(output.wasm.bytes.is_empty());
+        assert!(!output.wasm.bytes.is_empty());
     }
 
     #[test]
