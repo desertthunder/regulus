@@ -1,0 +1,4 @@
+[book]
+title = "Compiling Gleam to WebAssembly"
+authors = ["Owais Jamil"]
+language = "en"
