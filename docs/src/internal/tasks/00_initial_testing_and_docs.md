@@ -1,4 +1,4 @@
-# Testing and docs tasks
+# Initial testing and docs tasks
 
 ## Goal
 

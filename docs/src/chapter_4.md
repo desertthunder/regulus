@@ -33,7 +33,8 @@ function id(x: Int) -> Int
 
 This form is less concerned with Gleam syntax and more concerned with the work
 that must happen when the program runs. The local variable is explicit. The
-assignment is explicit. The final value is explicit.
+assignment is explicit. The final value is explicit. Values in this IR are typed,
+and variable references have already been turned into known locals or functions.
 
 IRs come in many forms. Some look like trees. Some look like instruction lists.
 Some use control-flow graphs. LLVM bitcode, for example, is a serialized form of

@@ -14,7 +14,8 @@ Gleam source
 ```
 
 The concrete tree is produced by tree-sitter. The abstract tree is the smaller
-shape this compiler works with after parsing.
+shape this compiler works with after parsing. The rest of the book follows that
+same path through names, types, intermediate representation, and WebAssembly.
 
 ## Concrete syntax trees
 
@@ -83,7 +84,9 @@ The current AST records:
 
 Every AST node keeps a source span. A span is a byte range inside the source
 file. If the compiler reports an error, the span tells it which part of the
-original Gleam code to underline.
+original Gleam code to underline. Lists in the AST keep source order, while
+comments, whitespace, and punctuation that no longer carry meaning are left
+behind in the concrete tree.
 
 Names are still just names at this point. If the source says `message`, the AST
 stores the text `message` and where it appeared. Deciding which binding that

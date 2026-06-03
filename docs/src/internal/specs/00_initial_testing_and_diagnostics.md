@@ -1,4 +1,4 @@
-# Testing and diagnostics
+# Initial testing and diagnostics
 
 The project should grow through small phase-level tests plus end-to-end compiler
 tests. Diagnostics are part of the compiler API and should be tested like code
