@@ -6,14 +6,14 @@ Resolve AST names to stable symbols before type checking.
 
 ## Tasks
 
-- [ ] Define symbol IDs, scopes, and a symbol table.
-- [ ] Collect top-level function declarations.
-- [ ] Resolve function parameters and local `let` bindings.
-- [ ] Resolve variable references to symbols.
-- [ ] Implement duplicate-name diagnostics.
-- [ ] Implement unknown-name diagnostics.
-- [ ] Add initial support for qualified module imports.
-- [ ] Add resolver tests for shadowing, duplicates, imports, and unknown names.
+- [x] Define symbol IDs, scopes, and a symbol table.
+- [x] Collect top-level function declarations.
+- [x] Resolve function parameters and local `let` bindings.
+- [x] Resolve variable references to symbols.
+- [x] Implement duplicate-name diagnostics.
+- [x] Implement unknown-name diagnostics.
+- [x] Add initial support for qualified module imports.
+- [x] Add resolver tests for shadowing, duplicates, imports, and unknown names.
 
 ## Done when
 

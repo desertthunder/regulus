@@ -13,13 +13,15 @@ compile programs to executable WebAssembly.
   blocks, literals, variables, calls, field access, `let`, and simple `case`.
 - Unsupported parsed constructs produce AST diagnostics.
 - Source file IDs, spans, and diagnostics are defined.
+- Name resolution supports top-level functions, imports, parameters, local
+  bindings, shadowing, and qualified module references.
 - WASM output is an empty placeholder.
 
 ## Not supported yet
 
 - Constants, custom types, records with arguments, lists, tuples, bit arrays,
   external functions, attributes, and advanced patterns.
-- Name resolution.
+- Unqualified imported values and prelude resolution.
 - Type checking or Gleam compiler type import.
 - Core IR lowering.
 - Executable `.wasm` generation.

@@ -1,6 +1,7 @@
 # Summary
 
-- [Chapter 1](./chapter_1.md)
+- [Syntax trees and Gleam](./chapter_1.md)
+- [Name resolution](./chapter_2.md)
 
 # Internal planning
 
