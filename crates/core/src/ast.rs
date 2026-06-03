@@ -34,6 +34,21 @@ pub struct Import {
     pub span: Span,
     pub module: Name,
     pub alias: Option<Name>,
+    pub unqualified: Vec<UnqualifiedImport>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnqualifiedImport {
+    pub span: Span,
+    pub name: Name,
+    pub alias: Option<Name>,
+    pub kind: UnqualifiedImportKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UnqualifiedImportKind {
+    Value,
+    TypeOrConstructor,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -212,8 +227,36 @@ impl AstBuilder<'_> {
     fn import(&self, node: Node<'_>) -> Result<Import, Diagnostics> {
         let module = self.required_name_field(node, "module")?;
         let alias = self.name_field(node, "alias")?;
+        let unqualified = node
+            .child_by_field_name("imports")
+            .map(|imports| self.unqualified_imports(imports))
+            .transpose()?
+            .unwrap_or_default();
 
-        Ok(Import { span: self.span(node), module, alias })
+        Ok(Import { span: self.span(node), module, alias, unqualified })
+    }
+
+    fn unqualified_imports(&self, node: Node<'_>) -> Result<Vec<UnqualifiedImport>, Diagnostics> {
+        self.named_children(node)
+            .into_iter()
+            .filter(|child| child.kind() == "unqualified_import")
+            .map(|child| self.unqualified_import(child))
+            .collect()
+    }
+
+    fn unqualified_import(&self, node: Node<'_>) -> Result<UnqualifiedImport, Diagnostics> {
+        let name_node = node
+            .child_by_field_name("name")
+            .ok_or_else(|| vec![self.missing(node, "unqualified import name")])?;
+        let name = self.name(name_node);
+        let alias = self.name_field(node, "alias")?;
+        let kind = match name_node.kind() {
+            "identifier" => UnqualifiedImportKind::Value,
+            "type_identifier" => UnqualifiedImportKind::TypeOrConstructor,
+            _ => return Err(vec![self.unsupported(name_node)]),
+        };
+
+        Ok(UnqualifiedImport { span: self.span(node), name, alias, kind })
     }
 
     fn function(&self, node: Node<'_>) -> Result<Function, Diagnostics> {
@@ -435,7 +478,7 @@ impl AstBuilder<'_> {
     fn name_field(&self, node: Node<'_>, field: &str) -> Result<Option<Name>, Diagnostics> {
         node.child_by_field_name(field)
             .map(|child| match child.kind() {
-                "identifier" | "label" | "module" | "discard" => Ok(self.name(child)),
+                "identifier" | "type_identifier" | "label" | "module" | "discard" => Ok(self.name(child)),
                 _ => Err(vec![self.unsupported(child)]),
             })
             .transpose()

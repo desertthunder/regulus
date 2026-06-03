@@ -100,10 +100,12 @@ h4,
 h5,
 h6,
 .header,
-.chapter li.part-title {
+.chapter li.part-title,
+.menu-title {
   color: var(--book-text);
   font-family: "Outfit", "Switzer", system-ui, sans-serif;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.01em;
+  font-weight: 500;
 }
 
 a,

@@ -171,5 +171,27 @@ It reports duplicate names in the same scope and unknown names at their source
 location.
 
 [^1]: Wikipedia, "Name resolution (programming languages)": https://en.wikipedia.org/wiki/Name_resolution_(programming_languages)
+
 [^2]: Will Crichton, "Specificity in Programming Languages": https://willcrichton.net/notes/specificity-programming-languages/
+
 [^3]: Rust Compiler Development Guide, "Name resolution": https://rustc-dev-guide.rust-lang.org/name-resolution.html
+
+<!--
+TODO (research):
+  - Lexical scope vs dynamic scope
+  - Shadowing rules
+  - Separate namespaces in languages
+      - value names
+      - type names
+      - constructors
+      - fields
+      - modules
+  - Qualified vs unqualified imports
+  - Prelude/default imports
+  - Module privacy and public/private declarations
+  - Pattern bindings and how patterns introduce names
+  - Ambiguous imports and duplicate definitions
+  - Cross-module name resolution in package graphs
+  - How Gleam specifically handles imports, aliases, custom type constructors, and record fields
+  - How Rust’s name resolution uses namespaces, modules, and visibility as a comparison point
+-->

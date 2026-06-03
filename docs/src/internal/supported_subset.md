@@ -9,12 +9,16 @@ subset to core IR, and emits executable WebAssembly for public scalar functions.
 - The CLI can read a source file and run the compiler pipeline.
 - Tree-sitter parses Gleam source for a single file.
 - Parse errors are reported as diagnostics with source spans.
-- The AST builder supports imports, functions, parameters, type annotations,
-  blocks, literals, variables, calls, field access, `let`, and simple `case`.
-- Unsupported parsed constructs produce AST diagnostics.
+- The AST builder supports executable syntax for imports, functions, parameters,
+  type annotations, blocks, literals, variables, calls, field access, `let`, and
+  simple `case`.
+- The AST builder preserves broader Gleam syntax as raw syntax nodes with source
+  spans.
 - Source file IDs, spans, and diagnostics are defined.
-- Name resolution supports top-level functions, imports, parameters, local
-  bindings, shadowing, and qualified module references.
+- Name resolution supports namespaced symbols, top-level functions, imports,
+  unqualified imports, prelude type names, parameters, local bindings,
+  shadowing, custom-type names, constructors, fields, qualified module
+  references, and project-module visibility checks.
 - Type checking supports scalar types, function types, typed parameters,
   literals, variables, local bindings, direct calls, arity checks, argument
   checks, and simple `case` branch compatibility.
@@ -26,9 +30,9 @@ subset to core IR, and emits executable WebAssembly for public scalar functions.
 
 ## Not supported yet
 
-- Constants, custom types, records with arguments, lists, tuples, bit arrays,
-  external functions, attributes, and advanced patterns.
-- Unqualified imported values and prelude resolution.
+- Executable support for constants, custom types, records with arguments, lists,
+  tuples, bit arrays, external functions, attributes, and advanced patterns.
+- Full dependency package resolution and imported function type information.
 - Generic types, custom types, imported function types, and Gleam compiler type
   import.
 - Lowering for imported calls, records, lists, tuples, and function values.

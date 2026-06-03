@@ -25,6 +25,7 @@ The resolver should support:
 
 ## Output
 
-Resolved references should point to stable symbol IDs. Symbols should record
-which namespace they belong to so value names and type names can follow Gleam's
-rules without being conflated.
+Resolved references should point to stable symbol IDs. Symbols record their
+namespace so value, type, constructor, field, and module names are not conflated.
+Project resolution should also preserve module interfaces so qualified access can
+check public and private members.

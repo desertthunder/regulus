@@ -7,14 +7,14 @@ project.
 
 ## Tasks
 
-- [ ] Split symbols into namespaces that match Gleam's rules.
-- [ ] Resolve qualified module references across project modules.
-- [ ] Resolve unqualified imports for values, types, and constructors.
-- [ ] Resolve prelude names.
-- [ ] Resolve custom type constructors and record fields.
-- [ ] Enforce visibility rules for public and private declarations.
-- [ ] Detect ambiguous imports and private-name access.
-- [ ] Add cross-module resolver fixtures.
+- [x] Split symbols into namespaces that match Gleam's rules.
+- [x] Resolve qualified module references across project modules.
+- [x] Resolve unqualified imports for values, types, and constructors.
+- [x] Resolve prelude names.
+- [x] Resolve custom type constructors and record fields.
+- [x] Enforce visibility rules for public and private declarations.
+- [x] Detect ambiguous imports and private-name access.
+- [x] Add cross-module resolver fixtures.
 
 ## Done when
 
