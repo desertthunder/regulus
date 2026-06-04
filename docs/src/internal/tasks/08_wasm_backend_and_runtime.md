@@ -19,16 +19,16 @@ Emit WebAssembly for scalar and runtime-managed Gleam values.
 
 ### Runtime memory and values
 
-- [ ] Emit memory operations for heap-managed values using the documented object
+- [x] Emit memory operations for heap-managed values using the documented object
       headers, tags, alignment, and payload layouts.
-- [ ] Emit allocation paths for strings, bit arrays, lists, tuples, records,
+- [x] Emit allocation paths for strings, bit arrays, lists, tuples, records,
       custom-type variants, and closures.
-- [ ] Emit static data for literals and constants where possible.
-- [ ] Emit runtime calls for allocation, string handling, bit-array segment
+- [x] Emit static data for literals and constants where possible.
+- [x] Emit runtime calls for allocation, string handling, bit-array segment
       operations, list operations, equality, panic paths, and assertion failures.
-- [ ] Emit safe field, tuple-element, list-head, list-tail, and bit-array segment
+- [x] Emit safe field, tuple-element, list-head, list-tail, and bit-array segment
       access according to the runtime representation.
-- [ ] Add memory-layout tests in Wasmtime for each managed value kind, not only
+- [x] Add memory-layout tests in Wasmtime for each managed value kind, not only
       strings.
 
 ### Functions and control flow

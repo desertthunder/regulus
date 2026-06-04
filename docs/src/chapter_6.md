@@ -10,6 +10,44 @@ Scalar values can often map directly to WebAssembly value types. Managed values
 need layout rules, allocation, and an ABI between generated WebAssembly and the
 host runtime.
 
+## Runtime ABI
+
+An ABI, or application binary interface, is the rulebook for how values cross a
+compiled-code boundary. For this compiler, the boundary is usually between a
+Gleam function compiled to WebAssembly and host code such as a Wasmtime test or a
+browser JavaScript caller.
+
+Scalar values cross that boundary as ordinary WebAssembly values:
+
+| Gleam type | ABI value |
+| ---------- | --------- |
+| `Int`      | `i64`     |
+| `Float`    | `f64`     |
+| `Bool`     | `i32`     |
+| `Nil`      | no value  |
+
+Managed values cross as `i32` pointers into WebAssembly linear memory. A pointer
+is a byte offset where the runtime object starts. The object begins with an
+8-byte header:
+
+```text
+0..4  tag:  object kind
+4..8  size: length, arity, or field count
+8..   payload bytes or fields
+```
+
+For example, a function that returns a tuple gives the host an `i32`, not the
+tuple fields directly. The host reads memory at that pointer, checks the tag to
+see that it is a tuple, reads the arity from the second word, and then reads the
+payload fields. Strings, bit arrays, lists, records, custom values, and closures
+use the same pointer-based idea with different tags and payload layouts.
+
+This convention keeps WebAssembly function signatures small, but it means both
+sides must agree on layout, ownership, and when a wrapper is needed. A raw
+pointer is enough for generated WebAssembly to pass managed values around; a
+human-facing or JavaScript-facing API may still wrap that pointer in a safer
+shape.
+
 <!--
 TODO (research):
   - Why runtime representation exists

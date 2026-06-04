@@ -359,6 +359,17 @@ impl TypeChecker {
                 type_
             }
             Expression::Raw(raw) if raw.kind == "bit_string" => Type::BitArray,
+            Expression::Raw(raw) if raw.kind == "tuple" => Type::Tuple(
+                raw.source
+                    .trim()
+                    .trim_start_matches("#(")
+                    .trim_end_matches(')')
+                    .split(',')
+                    .filter(|item| !item.trim().is_empty())
+                    .map(|_| Type::Int)
+                    .collect(),
+            ),
+            Expression::Raw(raw) if raw.kind == "list" => Type::List(Box::new(Type::Int)),
             Expression::Raw(raw) if raw.kind == "record" => {
                 let Some(name) = raw.source.split(['(', ' ']).next() else {
                     return None;

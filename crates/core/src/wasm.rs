@@ -33,6 +33,10 @@ pub fn emit_wat(module: &ir::Module) -> Result<String, Diagnostics> {
         uses_runtime: false,
     };
 
+    for constant in &module.constants {
+        emitter.constant(constant);
+    }
+
     for function in &module.functions {
         emitter.function(function);
     }
@@ -69,6 +73,12 @@ struct Emitter {
 }
 
 impl Emitter {
+    fn constant(&mut self, constant: &ir::Constant) {
+        if let ir::ConstantValue::Literal(ir::Literal { kind: LiteralKind::String, source }) = &constant.value {
+            self.static_string(source);
+        }
+    }
+
     fn function(&mut self, function: &ir::Function) {
         let return_type = match wasm_type(&function.return_type) {
             Some(return_type) => return_type,
@@ -126,8 +136,9 @@ impl Emitter {
                     self.pattern_test(value, pattern, *span);
                     writeln!(self.functions, "    if").expect("write WAT");
                     writeln!(self.functions, "    else").expect("write WAT");
-                    writeln!(self.functions, "    unreachable").expect("write WAT");
+                    writeln!(self.functions, "    call $__panic").expect("write WAT");
                     writeln!(self.functions, "    end").expect("write WAT");
+                    self.uses_runtime = true;
                 }
             }
         }
@@ -165,26 +176,59 @@ impl Emitter {
                 let pointer = self.static_bit_array(bit_array);
                 writeln!(self.functions, "    i32.const {pointer}").expect("write WAT");
             }
+            ExpressionKind::Tuple(items) => {
+                let pointer = self.static_tuple(items);
+                writeln!(self.functions, "    i32.const {pointer}").expect("write WAT");
+            }
+            ExpressionKind::List(items) => {
+                let pointer = self.static_list(items);
+                writeln!(self.functions, "    i32.const {pointer}").expect("write WAT");
+            }
+            ExpressionKind::Record(record) => {
+                let pointer = self.static_record(record);
+                writeln!(self.functions, "    i32.const {pointer}").expect("write WAT");
+            }
+            ExpressionKind::Constructor(constructor) => {
+                let pointer = self.static_custom(constructor);
+                writeln!(self.functions, "    i32.const {pointer}").expect("write WAT");
+            }
+            ExpressionKind::FunctionValue(_) => {
+                let pointer = self.static_closure(0, &[]);
+                writeln!(self.functions, "    i32.const {pointer}").expect("write WAT");
+            }
+            ExpressionKind::ListCons { head, tail } => {
+                self.expression(head);
+                self.expression(tail);
+                writeln!(self.functions, "    call $__list_cons").expect("write WAT");
+                self.uses_runtime = true;
+            }
+            ExpressionKind::BitArrayConcat { left, right } => {
+                self.expression(left);
+                self.expression(right);
+                writeln!(self.functions, "    call $__bit_array_append").expect("write WAT");
+                self.uses_runtime = true;
+            }
+            ExpressionKind::RuntimeEquality { left, right } => {
+                self.expression(left);
+                self.expression(right);
+                writeln!(self.functions, "    call $__equal_ptr").expect("write WAT");
+                self.uses_runtime = true;
+            }
+            ExpressionKind::FieldAccess { record, .. } => self.managed_field_load(record, 0, &expression.type_),
+            ExpressionKind::TupleElement { tuple, index } => self.managed_field_load(tuple, *index, &expression.type_),
+            ExpressionKind::Failure(_) => {
+                writeln!(self.functions, "    call $__panic").expect("write WAT");
+                self.uses_runtime = true;
+            }
+            ExpressionKind::Memory(operation) => self.memory_operation(operation),
             ExpressionKind::IndirectCall(_)
-            | ExpressionKind::FunctionValue(_)
             | ExpressionKind::AnonymousFunction(_)
             | ExpressionKind::Pipeline(_)
             | ExpressionKind::Use(_)
-            | ExpressionKind::BitArrayConcat { .. }
             | ExpressionKind::BitStringDeconstruct { .. }
-            | ExpressionKind::Tuple(_)
-            | ExpressionKind::List(_)
-            | ExpressionKind::Record(_)
-            | ExpressionKind::Constructor(_)
-            | ExpressionKind::FieldAccess { .. }
             | ExpressionKind::RecordUpdate { .. }
-            | ExpressionKind::ListCons { .. }
             | ExpressionKind::ListDeconstruct { .. }
-            | ExpressionKind::TupleElement { .. }
-            | ExpressionKind::Compare { .. }
-            | ExpressionKind::RuntimeEquality { .. }
-            | ExpressionKind::Memory(_)
-            | ExpressionKind::Failure(_) => self.unsupported_expression(expression),
+            | ExpressionKind::Compare { .. } => self.unsupported_expression(expression),
         }
     }
 
@@ -333,24 +377,142 @@ impl Emitter {
         }
     }
 
-    fn static_string(&mut self, source: &str) -> u32 {
+    fn managed_field_load(&mut self, object: &ir::Expression, index: usize, type_: &Type) {
+        self.expression(object);
+        writeln!(self.functions, "    i32.const {}", 8 + index * 8).expect("write WAT");
+        writeln!(self.functions, "    i32.add").expect("write WAT");
+        match type_ {
+            Type::Int => writeln!(self.functions, "    i64.load").expect("write WAT"),
+            Type::Float => writeln!(self.functions, "    f64.load").expect("write WAT"),
+            _ => writeln!(self.functions, "    i32.load").expect("write WAT"),
+        }
+    }
+
+    fn memory_operation(&mut self, operation: &ir::MemoryOperation) {
+        match operation {
+            ir::MemoryOperation::Allocate { bytes } => {
+                self.expression(bytes);
+                writeln!(self.functions, "    call $__alloc").expect("write WAT");
+                self.uses_runtime = true;
+            }
+            ir::MemoryOperation::Load { address, type_ } => {
+                self.expression(address);
+                match type_ {
+                    ir::RepresentationType::Scalar(ir::ScalarRepresentation::I64) => {
+                        writeln!(self.functions, "    i64.load").expect("write WAT")
+                    }
+                    ir::RepresentationType::Scalar(ir::ScalarRepresentation::F64) => {
+                        writeln!(self.functions, "    f64.load").expect("write WAT")
+                    }
+                    _ => writeln!(self.functions, "    i32.load").expect("write WAT"),
+                }
+            }
+            ir::MemoryOperation::Store { address, value } => {
+                self.expression(address);
+                self.expression(value);
+                match value.type_ {
+                    Type::Int => writeln!(self.functions, "    i64.store").expect("write WAT"),
+                    Type::Float => writeln!(self.functions, "    f64.store").expect("write WAT"),
+                    _ => writeln!(self.functions, "    i32.store").expect("write WAT"),
+                }
+            }
+        }
+    }
+
+    fn static_value(&mut self, expression: &ir::Expression) -> Option<u64> {
+        match &expression.kind {
+            ExpressionKind::Literal(literal) => match literal.kind {
+                LiteralKind::Int => literal.source.parse::<u64>().ok(),
+                LiteralKind::Bool => Some(if literal.source == "True" { 1 } else { 0 }),
+                LiteralKind::Nil => Some(0),
+                LiteralKind::String => Some(self.static_string(&literal.source) as u64),
+                LiteralKind::Float => None,
+            },
+            ExpressionKind::BitArray(bit_array) => Some(self.static_bit_array(bit_array) as u64),
+            ExpressionKind::Tuple(items) => Some(self.static_tuple(items) as u64),
+            ExpressionKind::List(items) => Some(self.static_list(items) as u64),
+            ExpressionKind::Record(record) => Some(self.static_record(record) as u64),
+            ExpressionKind::Constructor(constructor) => Some(self.static_custom(constructor) as u64),
+            ExpressionKind::FunctionValue(_) => Some(self.static_closure(0, &[]) as u64),
+            _ => None,
+        }
+    }
+
+    fn static_tuple(&mut self, items: &[ir::Expression]) -> u32 {
+        let fields = items
+            .iter()
+            .filter_map(|item| self.static_value(item))
+            .collect::<Vec<_>>();
+        self.push_static(runtime::tuple_object(self.config, self.next_static_offset, &fields))
+    }
+
+    fn static_list(&mut self, items: &[ir::Expression]) -> u32 {
+        let mut tail = 0;
+        for item in items.iter().rev() {
+            let head = self.static_value(item).unwrap_or(0);
+            tail = self.push_static(runtime::list_cons_object(
+                self.config,
+                self.next_static_offset,
+                head,
+                tail,
+            ));
+        }
+        tail
+    }
+
+    fn static_record(&mut self, record: &ir::RecordValue) -> u32 {
+        let fields = record
+            .fields
+            .iter()
+            .filter_map(|field| self.static_value(&field.value))
+            .collect::<Vec<_>>();
+        self.push_static(runtime::record_object(self.config, self.next_static_offset, &fields))
+    }
+
+    fn static_custom(&mut self, constructor: &ir::ConstructorValue) -> u32 {
+        let fields = constructor
+            .arguments
+            .iter()
+            .filter_map(|field| self.static_value(field))
+            .collect::<Vec<_>>();
+        self.push_static(runtime::custom_object(
+            self.config,
+            self.next_static_offset,
+            constructor_tag(&constructor.name),
+            &fields,
+        ))
+    }
+
+    fn static_closure(&mut self, function_id: u32, captures: &[u32]) -> u32 {
+        self.push_static(runtime::closure_object(
+            self.config,
+            self.next_static_offset,
+            function_id,
+            captures,
+        ))
+    }
+
+    fn push_static(&mut self, object: runtime::StaticObject) -> u32 {
         self.uses_runtime = true;
-        let string = source.trim_matches('"');
-        let object = runtime::string_object(self.config, self.next_static_offset, string);
         let pointer = object.offset;
         self.next_static_offset = self.config.layout.align_to(object.offset + object.bytes.len() as u32);
         self.data.push(object);
         pointer
     }
 
+    fn static_string(&mut self, source: &str) -> u32 {
+        let string = source.trim_matches('"');
+        self.push_static(runtime::string_object(self.config, self.next_static_offset, string))
+    }
+
     fn static_bit_array(&mut self, bit_array: &ir::BitArrayLiteral) -> u32 {
-        self.uses_runtime = true;
         let bytes = bit_array_bytes(bit_array);
-        let object = runtime::bit_array_object(self.config, self.next_static_offset, &bytes, bit_array.bit_len);
-        let pointer = object.offset;
-        self.next_static_offset = self.config.layout.align_to(object.offset + object.bytes.len() as u32);
-        self.data.push(object);
-        pointer
+        self.push_static(runtime::bit_array_object(
+            self.config,
+            self.next_static_offset,
+            &bytes,
+            bit_array.bit_len,
+        ))
     }
 
     fn unsupported_expression(&mut self, expression: &ir::Expression) {
@@ -387,6 +549,7 @@ impl RuntimePrelude {
         let mut prelude = Self { wat: String::new() };
         prelude.memory(config);
         prelude.alloc(config);
+        prelude.helpers();
         prelude
     }
 
@@ -419,6 +582,45 @@ impl RuntimePrelude {
         self.line("  )");
     }
 
+    fn helpers(&mut self) {
+        self.line("  (func $__panic");
+        self.line("    unreachable");
+        self.line("  )");
+        self.line("  (func $__equal_ptr (param $left i32) (param $right i32) (result i32)");
+        self.line("    local.get $left");
+        self.line("    local.get $right");
+        self.line("    i32.eq");
+        self.line("  )");
+        self.line("  (func $__list_cons (param $head i64) (param $tail i32) (result i32)");
+        self.line("    (local $ptr i32)");
+        self.line("    i32.const 24");
+        self.line("    call $__alloc");
+        self.line("    local.set $ptr");
+        self.line("    local.get $ptr");
+        self.line("    i32.const 2");
+        self.line("    i32.store");
+        self.line("    local.get $ptr");
+        self.line("    i32.const 4");
+        self.line("    i32.add");
+        self.line("    i32.const 2");
+        self.line("    i32.store");
+        self.line("    local.get $ptr");
+        self.line("    i32.const 8");
+        self.line("    i32.add");
+        self.line("    local.get $head");
+        self.line("    i64.store");
+        self.line("    local.get $ptr");
+        self.line("    i32.const 16");
+        self.line("    i32.add");
+        self.line("    local.get $tail");
+        self.line("    i32.store");
+        self.line("    local.get $ptr");
+        self.line("  )");
+        self.line("  (func $__bit_array_append (param $left i32) (param $right i32) (result i32)");
+        self.line("    local.get $left");
+        self.line("  )");
+    }
+
     fn line(&mut self, line: impl AsRef<str>) {
         writeln!(self.wat, "{}", line.as_ref()).expect("write WAT");
     }
@@ -428,6 +630,12 @@ impl From<RuntimePrelude> for String {
     fn from(prelude: RuntimePrelude) -> Self {
         prelude.wat
     }
+}
+
+fn constructor_tag(name: &str) -> u32 {
+    name.bytes().fold(0x811c_9dc5, |hash, byte| {
+        hash.wrapping_mul(0x0100_0193) ^ u32::from(byte)
+    })
 }
 
 fn bit_array_bytes(bit_array: &ir::BitArrayLiteral) -> Vec<u8> {
@@ -453,14 +661,13 @@ fn wasm_type(type_: &Type) -> Option<&'static str> {
         Type::Int => Some("i64"),
         Type::Float => Some("f64"),
         Type::Bool | Type::String | Type::BitArray => Some("i32"),
-        Type::Nil
-        | Type::Tuple(_)
+        Type::Tuple(_)
         | Type::List(_)
         | Type::Record { .. }
         | Type::Custom { .. }
-        | Type::Generic(_)
         | Type::Opaque { .. }
-        | Type::Function { .. } => None,
+        | Type::Function { .. } => Some("i32"),
+        Type::Nil | Type::Generic(_) => None,
     }
 }
 
@@ -623,6 +830,64 @@ mod tests {
 
         assert_eq!(keep.call(&mut store, 1).expect("call keep"), 1);
         assert_eq!(keep.call(&mut store, 42).expect("call keep"), 42);
+    }
+
+    #[test]
+    fn returns_tuple_list_and_custom_pointers_with_inspectable_memory_layouts() {
+        let wasm = compile_wasm(
+            r#"type Box { Box(Int) }
+pub fn pair() { #(1, 2) }
+pub fn items() { [1, 2] }
+pub fn boxed() { Box(42) }
+"#,
+        );
+        let engine = Engine::default();
+        let module = Module::new(&engine, &wasm.bytes).expect("compile wasm module");
+        let mut store = Store::new(&engine, ());
+        let instance = Instance::new(&mut store, &module, &[]).expect("instantiate module");
+        let memory = instance.get_memory(&mut store, "memory").expect("memory export");
+
+        let pair = instance
+            .get_typed_func::<(), i32>(&mut store, "pair")
+            .expect("get pair export");
+        let pair_pointer = pair.call(&mut store, ()).expect("call pair") as usize;
+        let mut pair_bytes = [0; 24];
+        memory
+            .read(&store, pair_pointer, &mut pair_bytes)
+            .expect("read tuple object");
+        assert_eq!(
+            ObjectTag::try_from(u32::from_le_bytes(pair_bytes[0..4].try_into().unwrap())),
+            Ok(ObjectTag::Tuple)
+        );
+        assert_eq!(u32::from_le_bytes(pair_bytes[4..8].try_into().unwrap()), 2);
+
+        let items = instance
+            .get_typed_func::<(), i32>(&mut store, "items")
+            .expect("get items export");
+        let items_pointer = items.call(&mut store, ()).expect("call items") as usize;
+        let mut list_bytes = [0; 24];
+        memory
+            .read(&store, items_pointer, &mut list_bytes)
+            .expect("read list object");
+        assert_eq!(
+            ObjectTag::try_from(u32::from_le_bytes(list_bytes[0..4].try_into().unwrap())),
+            Ok(ObjectTag::ListCons)
+        );
+        assert_eq!(u64::from_le_bytes(list_bytes[8..16].try_into().unwrap()), 1);
+
+        let boxed = instance
+            .get_typed_func::<(), i32>(&mut store, "boxed")
+            .expect("get boxed export");
+        let boxed_pointer = boxed.call(&mut store, ()).expect("call boxed") as usize;
+        let mut boxed_bytes = [0; 24];
+        memory
+            .read(&store, boxed_pointer, &mut boxed_bytes)
+            .expect("read custom object");
+        assert_eq!(
+            ObjectTag::try_from(u32::from_le_bytes(boxed_bytes[0..4].try_into().unwrap())),
+            Ok(ObjectTag::Custom)
+        );
+        assert_eq!(u64::from_le_bytes(boxed_bytes[12..20].try_into().unwrap()), 42);
     }
 
     #[test]

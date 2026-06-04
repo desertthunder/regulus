@@ -117,6 +117,51 @@ pub fn string_object(config: RuntimeConfig, offset: u32, string: &str) -> Static
     StaticObject { offset, bytes }
 }
 
+pub fn list_cons_object(config: RuntimeConfig, offset: u32, head: u64, tail: u32) -> StaticObject {
+    let size = config.layout.list_cons_size(8);
+    let mut bytes = Vec::with_capacity(size as usize);
+    bytes.extend_from_slice(&u32::from(ObjectTag::ListCons).to_le_bytes());
+    bytes.extend_from_slice(&2u32.to_le_bytes());
+    bytes.extend_from_slice(&head.to_le_bytes());
+    bytes.extend_from_slice(&tail.to_le_bytes());
+    bytes.resize(size as usize, 0);
+    StaticObject { offset, bytes }
+}
+
+pub fn tuple_object(config: RuntimeConfig, offset: u32, fields: &[u64]) -> StaticObject {
+    field_array_object(config, offset, ObjectTag::Tuple, fields)
+}
+
+pub fn record_object(config: RuntimeConfig, offset: u32, fields: &[u64]) -> StaticObject {
+    field_array_object(config, offset, ObjectTag::Record, fields)
+}
+
+pub fn custom_object(config: RuntimeConfig, offset: u32, constructor_tag: u32, fields: &[u64]) -> StaticObject {
+    let size = config.layout.custom_size(fields.len() as u32, 8);
+    let mut bytes = Vec::with_capacity(size as usize);
+    bytes.extend_from_slice(&u32::from(ObjectTag::Custom).to_le_bytes());
+    bytes.extend_from_slice(&(fields.len() as u32).to_le_bytes());
+    bytes.extend_from_slice(&constructor_tag.to_le_bytes());
+    for field in fields {
+        bytes.extend_from_slice(&field.to_le_bytes());
+    }
+    bytes.resize(size as usize, 0);
+    StaticObject { offset, bytes }
+}
+
+pub fn closure_object(config: RuntimeConfig, offset: u32, function_id: u32, captures: &[u32]) -> StaticObject {
+    let size = config.layout.closure_size(captures.len() as u32);
+    let mut bytes = Vec::with_capacity(size as usize);
+    bytes.extend_from_slice(&u32::from(ObjectTag::Closure).to_le_bytes());
+    bytes.extend_from_slice(&(captures.len() as u32).to_le_bytes());
+    bytes.extend_from_slice(&function_id.to_le_bytes());
+    for capture in captures {
+        bytes.extend_from_slice(&capture.to_le_bytes());
+    }
+    bytes.resize(size as usize, 0);
+    StaticObject { offset, bytes }
+}
+
 pub fn bit_array_object(config: RuntimeConfig, offset: u32, data: &[u8], bit_len: u32) -> StaticObject {
     assert!(bit_len <= data.len() as u32 * 8, "bit length exceeds payload bytes");
     let size = config.layout.bit_array_size(bit_len);
@@ -168,6 +213,18 @@ pub fn bit_array_append(left: &[u8], left_bit_len: u32, right: &[u8], right_bit_
     output
 }
 
+fn field_array_object(config: RuntimeConfig, offset: u32, tag: ObjectTag, fields: &[u64]) -> StaticObject {
+    let size = config.layout.tuple_size(fields.len() as u32, 8);
+    let mut bytes = Vec::with_capacity(size as usize);
+    bytes.extend_from_slice(&u32::from(tag).to_le_bytes());
+    bytes.extend_from_slice(&(fields.len() as u32).to_le_bytes());
+    for field in fields {
+        bytes.extend_from_slice(&field.to_le_bytes());
+    }
+    bytes.resize(size as usize, 0);
+    StaticObject { offset, bytes }
+}
+
 fn bit_array_set_bit(data: &mut [u8], index: u32, bit: u8) {
     if bit & 1 == 0 {
         return;
@@ -206,6 +263,45 @@ mod tests {
         assert_eq!(u32::from_le_bytes(object.bytes[4..8].try_into().unwrap()), 5);
         assert_eq!(&object.bytes[8..13], b"hello");
         assert_eq!(object.bytes.len() as u32, 16);
+    }
+
+    #[test]
+    fn encodes_static_managed_values_with_header_and_padding() {
+        let config = RuntimeConfig::DEFAULT;
+
+        let list = list_cons_object(config, 1024, 42, 0);
+        assert_eq!(
+            ObjectTag::try_from(u32::from_le_bytes(list.bytes[0..4].try_into().unwrap())),
+            Ok(ObjectTag::ListCons)
+        );
+        assert_eq!(u64::from_le_bytes(list.bytes[8..16].try_into().unwrap()), 42);
+
+        let tuple = tuple_object(config, 1024, &[1, 2]);
+        assert_eq!(
+            ObjectTag::try_from(u32::from_le_bytes(tuple.bytes[0..4].try_into().unwrap())),
+            Ok(ObjectTag::Tuple)
+        );
+        assert_eq!(u32::from_le_bytes(tuple.bytes[4..8].try_into().unwrap()), 2);
+
+        let record = record_object(config, 1024, &[3, 4]);
+        assert_eq!(
+            ObjectTag::try_from(u32::from_le_bytes(record.bytes[0..4].try_into().unwrap())),
+            Ok(ObjectTag::Record)
+        );
+
+        let custom = custom_object(config, 1024, 7, &[5]);
+        assert_eq!(
+            ObjectTag::try_from(u32::from_le_bytes(custom.bytes[0..4].try_into().unwrap())),
+            Ok(ObjectTag::Custom)
+        );
+        assert_eq!(u32::from_le_bytes(custom.bytes[8..12].try_into().unwrap()), 7);
+
+        let closure = closure_object(config, 1024, 9, &[11]);
+        assert_eq!(
+            ObjectTag::try_from(u32::from_le_bytes(closure.bytes[0..4].try_into().unwrap())),
+            Ok(ObjectTag::Closure)
+        );
+        assert_eq!(u32::from_le_bytes(closure.bytes[8..12].try_into().unwrap()), 9);
     }
 
     #[test]

@@ -82,8 +82,9 @@ type. `False` is emitted as `0`, and `True` is emitted as `1`.
 
 Strings are different. A string is not just one WebAssembly number. It needs a
 memory representation: bytes in linear memory, plus a convention for length,
-ownership, allocation, and passing values between functions. This compiler
-rejects string-valued WASM output until that runtime representation exists.
+ownership, allocation, and passing values between functions. In this compiler,
+managed values such as strings are passed as `i32` pointers to runtime objects in
+linear memory.
 
 ## Functions, parameters, and locals
 

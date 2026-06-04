@@ -860,6 +860,18 @@ impl Lowerer {
                 span: raw.span,
                 kind: ExpressionKind::BitArray(bit_array_literal(raw)),
             }),
+            AstExpression::Raw(raw) if raw.kind == "tuple" => Some(Expression {
+                type_: self.typed_expression_type(raw.span).unwrap_or(Type::Tuple(Vec::new())),
+                span: raw.span,
+                kind: ExpressionKind::Tuple(raw_literal_arguments(raw, context, self)?),
+            }),
+            AstExpression::Raw(raw) if raw.kind == "list" => Some(Expression {
+                type_: self
+                    .typed_expression_type(raw.span)
+                    .unwrap_or(Type::List(Box::new(Type::Int))),
+                span: raw.span,
+                kind: ExpressionKind::List(raw_literal_arguments(raw, context, self)?),
+            }),
             AstExpression::Raw(raw) if raw.kind == "record" => {
                 let type_ = self.typed_expression_type(raw.span).unwrap_or(Type::Nil);
                 Some(Expression {
@@ -867,7 +879,7 @@ impl Lowerer {
                     span: raw.span,
                     kind: ExpressionKind::Constructor(ConstructorValue {
                         name: raw.source.split(['(', ' ']).next().unwrap_or(&raw.source).into(),
-                        arguments: Vec::new(),
+                        arguments: raw_record_arguments(raw, context, self)?,
                     }),
                 })
             }
@@ -1238,6 +1250,49 @@ fn binding_subject(path: &BindingPath) -> usize {
         | BindingPath::ConstructorField { subject, .. }
         | BindingPath::Alias { subject } => *subject,
     }
+}
+
+fn raw_literal_arguments(
+    raw: &ast::RawSyntax, _context: &mut FunctionContext, _lowerer: &mut Lowerer,
+) -> Option<Vec<Expression>> {
+    let source = raw.source.trim();
+    let inner = source
+        .strip_prefix("#(")
+        .and_then(|source| source.strip_suffix(')'))
+        .or_else(|| source.strip_prefix('[').and_then(|source| source.strip_suffix(']')))?;
+    Some(
+        inner
+            .split(',')
+            .filter_map(|item| integer_expression(item.trim(), raw.span))
+            .collect(),
+    )
+}
+
+fn raw_record_arguments(
+    raw: &ast::RawSyntax, _context: &mut FunctionContext, _lowerer: &mut Lowerer,
+) -> Option<Vec<Expression>> {
+    let Some((_, args)) = raw.source.split_once('(') else {
+        return Some(Vec::new());
+    };
+    let inner = args.strip_suffix(')')?;
+    Some(
+        inner
+            .split(',')
+            .filter_map(|item| item.split(':').next_back())
+            .filter_map(|item| integer_expression(item.trim(), raw.span))
+            .collect(),
+    )
+}
+
+fn integer_expression(source: &str, span: Span) -> Option<Expression> {
+    if source.is_empty() || source.parse::<i64>().is_err() {
+        return None;
+    }
+    Some(Expression {
+        type_: Type::Int,
+        span,
+        kind: ExpressionKind::Literal(Literal { kind: LiteralKind::Int, source: source.into() }),
+    })
 }
 
 fn bit_array_literal(raw: &ast::RawSyntax) -> BitArrayLiteral {
@@ -1627,15 +1682,11 @@ mod tests {
     }
 
     #[test]
-    fn reports_spanned_diagnostics_for_typed_ir_the_backend_cannot_emit() {
+    fn emits_managed_constructor_ir_to_wat() {
         let module = lower_source("type Box { Box }\nfn main() { Box }");
-        let diagnostics = wasm::emit_wat(&module).expect_err("managed constructor cannot emit yet");
+        let wat = wasm::emit_wat(&module).expect("emit managed constructor");
 
-        assert!(
-            diagnostics
-                .iter()
-                .any(|diagnostic| diagnostic.labels.iter().any(|label| label.span.start > 0))
-        );
+        assert!(wat.contains("(data"));
     }
 
     #[test]
