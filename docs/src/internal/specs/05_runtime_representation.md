@@ -1,8 +1,8 @@
 # Runtime representation
 
 WebAssembly provides numbers, functions, tables, and linear memory. Gleam values
-such as strings, lists, tuples, records, closures, and custom types use explicit
-runtime representations in linear memory.
+such as strings, bit arrays, lists, tuples, records, closures, and custom types
+use explicit runtime representations in linear memory.
 
 ## Object model
 
@@ -27,6 +27,7 @@ pointers into linear memory.
 | 4   | Record       |
 | 5   | Custom value |
 | 6   | Closure      |
+| 7   | Bit array    |
 
 The empty list can be represented as the null pointer.
 
@@ -34,6 +35,10 @@ The empty list can be represented as the null pointer.
 
 Strings store a byte length in the header's second word and UTF-8 bytes in the
 payload, padded to alignment.
+
+Bit arrays store a bit length in the header's second word and packed bytes in the
+payload. Segment operations must preserve bit offsets and reject invalid segment
+sizes before unsafe memory access.
 
 Lists use cons cells with a head value and tail pointer. Tuples and records use
 fixed field arrays. Custom values add a constructor tag before payload fields.

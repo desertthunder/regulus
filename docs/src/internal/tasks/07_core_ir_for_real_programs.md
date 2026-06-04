@@ -41,26 +41,26 @@ values without depending on parser or resolver syntax details.
 
 ### Control flow and failures
 
-- [ ] Add lowered pattern-matching control flow for all supported pattern forms.
-- [ ] Lower tuple, list, record, constructor, and nested managed-value patterns
+- [x] Add lowered pattern-matching control flow for all supported pattern forms.
+- [x] Lower tuple, list, record, constructor, and nested managed-value patterns
       once IR can construct and inspect those runtime values.
-- [ ] Represent guards, branch fallthrough, successful bindings, and failure
+- [x] Represent guards, branch fallthrough, successful bindings, and failure
       paths explicitly.
-- [ ] Represent `let assert`, `panic`, `todo`, and `assert` failure paths.
-- [ ] Represent blocks, sequencing, and evaluation order without relying on AST
+- [x] Represent `let assert`, `panic`, `todo`, and `assert` failure paths.
+- [x] Represent blocks, sequencing, and evaluation order without relying on AST
       statement shape.
-- [ ] Consider splitting high-level IR, lowered control-flow IR, and
+- [x] Consider splitting high-level IR, lowered control-flow IR, and
       WASM-oriented IR if one structure becomes too broad.
 
 ### Testing and debug output
 
-- [ ] Add deterministic IR snapshots for real-language fixtures.
-- [ ] Add fixtures that cover carried-forward syntax forms: records, tuples,
+- [x] Add deterministic IR snapshots for real-language fixtures.
+- [x] Add fixtures that cover carried-forward syntax forms: records, tuples,
       lists, custom types, constructors, pipelines, anonymous functions, guards,
       and `let assert`.
-- [ ] Add diagnostics for typed constructs that still cannot lower, with spans
+- [x] Add diagnostics for typed constructs that still cannot lower, with spans
       on the unsupported construct.
-- [ ] Keep IR debug output stable enough for contributor-facing snapshots.
+- [x] Keep IR debug output stable enough for contributor-facing snapshots.
 
 ## Done when
 

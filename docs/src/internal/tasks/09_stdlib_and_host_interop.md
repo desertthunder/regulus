@@ -23,8 +23,8 @@ Support useful standard library modules and host calls.
 
 - [ ] Define host imports for Wasmtime, browser, and WASI targets where
       supported.
-- [ ] Define ABI rules for scalar values, strings, lists, tuples, records,
-      custom types, functions, errors, and panics.
+- [ ] Define ABI rules for scalar values, strings, bit arrays, lists, tuples,
+      records, custom types, functions, errors, and panics.
 - [ ] Define ownership rules for managed values crossing the host boundary.
 - [ ] Define how host code reads compiler memory and how compiler code receives
       host-provided managed values.
@@ -35,8 +35,8 @@ Support useful standard library modules and host calls.
 
 - [ ] Implement selected stdlib functions needed by examples.
 - [ ] Implement or import IO functions for Wasmtime tests and browser examples.
-- [ ] Implement equality, string, list, result, option, and debug helpers where
-      needed by compiled programs.
+- [ ] Implement equality, string, bit-array, list, result, option, and debug
+      helpers where needed by compiled programs.
 - [ ] Ensure host imports are target-specific and produce diagnostics on targets
       where they are unavailable.
 - [ ] Add Wasmtime tests for host imported functions.

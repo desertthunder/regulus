@@ -6,17 +6,28 @@ Emit WebAssembly for scalar and runtime-managed Gleam values.
 
 ## Tasks
 
+### Bit arrays
+
+- [ ] Add bit-array and bit-string segment types, including segment options and
+      bit-string patterns.
+- [ ] Add IR forms for bit-array literals, segments, concatenation, and
+      bit-string pattern deconstruction.
+- [ ] Specify bit-array layout, segment packing, bit offsets, and byte
+      alignment rules.
+- [ ] Implement bit-array allocation, append/slice helpers, and segment access.
+- [ ] Add bit-array memory-layout tests in Wasmtime.
+
 ### Runtime memory and values
 
 - [ ] Emit memory operations for heap-managed values using the documented object
       headers, tags, alignment, and payload layouts.
-- [ ] Emit allocation paths for strings, lists, tuples, records, custom-type
-      variants, and closures.
+- [ ] Emit allocation paths for strings, bit arrays, lists, tuples, records,
+      custom-type variants, and closures.
 - [ ] Emit static data for literals and constants where possible.
-- [ ] Emit runtime calls for allocation, string handling, list operations,
-      equality, panic paths, and assertion failures.
-- [ ] Emit safe field, tuple-element, list-head, and list-tail access according
-      to the runtime representation.
+- [ ] Emit runtime calls for allocation, string handling, bit-array segment
+      operations, list operations, equality, panic paths, and assertion failures.
+- [ ] Emit safe field, tuple-element, list-head, list-tail, and bit-array segment
+      access according to the runtime representation.
 - [ ] Add memory-layout tests in Wasmtime for each managed value kind, not only
       strings.
 
@@ -47,10 +58,10 @@ Emit WebAssembly for scalar and runtime-managed Gleam values.
 - [ ] Add WAT snapshots for scalar, managed-value, control-flow, import, and
       export cases.
 - [ ] Add Wasmtime execution tests for managed values, constructor matches,
-      string/list operations, closure calls, and host imports.
-- [ ] Add runtime-backed Wasmtime tests for tuple, list, record, and custom-type
-      constructor patterns after managed-value construction and inspection are
-      implemented.
+      string/list/bit-array operations, closure calls, and host imports.
+- [ ] Add runtime-backed Wasmtime tests for tuple, list, record, bit-string, and
+      custom-type constructor patterns after managed-value construction and
+      inspection are implemented.
 - [ ] Add browser-oriented build tests where practical.
 - [ ] Ensure unsupported backend forms produce source-spanned diagnostics rather
       than WAT assembly failures.

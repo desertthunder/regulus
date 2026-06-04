@@ -112,6 +112,12 @@ impl Emitter {
     fn block(&mut self, block: &ir::Block) {
         for instruction in &block.instructions {
             match instruction {
+                Instruction::Evaluate { expression, .. } => {
+                    self.expression(expression);
+                    if wasm_type(&expression.type_).is_some() {
+                        writeln!(self.functions, "    drop").expect("write WAT");
+                    }
+                }
                 Instruction::LocalSet { local, value, .. } => {
                     self.expression(value);
                     writeln!(self.functions, "    local.set ${}", local.0).expect("write WAT");
@@ -171,7 +177,8 @@ impl Emitter {
             | ExpressionKind::TupleElement { .. }
             | ExpressionKind::Compare { .. }
             | ExpressionKind::RuntimeEquality { .. }
-            | ExpressionKind::Memory(_) => self.unsupported_expression(expression),
+            | ExpressionKind::Memory(_)
+            | ExpressionKind::Failure(_) => self.unsupported_expression(expression),
         }
     }
 
@@ -257,7 +264,11 @@ impl Emitter {
                 self.expression(subject);
                 writeln!(self.functions, "    local.set ${}", local.0).expect("write WAT");
             }
-            ir::IrPattern::Discard | ir::IrPattern::Literal(_) => {}
+            ir::IrPattern::Discard
+            | ir::IrPattern::Literal(_)
+            | ir::IrPattern::Tuple(_)
+            | ir::IrPattern::List { .. }
+            | ir::IrPattern::Constructor { .. } => {}
         }
     }
 
@@ -280,6 +291,16 @@ impl Emitter {
                             .with_label(Label::primary(span, "unsupported pattern here")),
                     ),
                 }
+            }
+            ir::IrPattern::Tuple(_) | ir::IrPattern::List { .. } | ir::IrPattern::Constructor { .. } => {
+                self.diagnostics.push(
+                    Diagnostic::new(
+                        DiagnosticCode::WasmError,
+                        "managed-value patterns are not supported by the WASM backend yet",
+                    )
+                    .with_label(Label::primary(span, "unsupported pattern here")),
+                );
+                writeln!(self.functions, "    i32.const 0").expect("write WAT");
             }
         }
     }

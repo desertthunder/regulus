@@ -53,7 +53,7 @@ TODO:
 # Development
 
 - [Supported subset](internal/supported_subset.md)
-- [Tests & Documentation](testing_docs.md)
+- [Tests & Documentation](internal/testing_docs.md)
 
 # Internal Docs
 

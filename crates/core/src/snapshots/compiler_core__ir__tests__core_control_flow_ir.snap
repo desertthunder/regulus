@@ -1,0 +1,889 @@
+---
+source: crates/core/src/ir.rs
+expression: module
+---
+Module {
+    span: Span {
+        file_id: SourceFileId(
+            0,
+        ),
+        start: 0,
+        end: 302,
+    },
+    imports: [],
+    declarations: [
+        DeclarationMetadata {
+            name: Some(
+                "Outcome",
+            ),
+            kind: TypeDefinition,
+            visibility: Private,
+            span: Span {
+                file_id: SourceFileId(
+                    0,
+                ),
+                start: 0,
+                end: 42,
+            },
+        },
+        DeclarationMetadata {
+            name: Some(
+                "choose",
+            ),
+            kind: Function,
+            visibility: Private,
+            span: Span {
+                file_id: SourceFileId(
+                    0,
+                ),
+                start: 44,
+                end: 220,
+            },
+        },
+        DeclarationMetadata {
+            name: Some(
+                "first",
+            ),
+            kind: Function,
+            visibility: Private,
+            span: Span {
+                file_id: SourceFileId(
+                    0,
+                ),
+                start: 222,
+                end: 301,
+            },
+        },
+    ],
+    constants: [],
+    init: ModuleInit {
+        steps: [],
+    },
+    references: [
+        Reference {
+            name: "result",
+            target: LocalSymbol {
+                name: "result",
+                kind: Parameter,
+            },
+            span: Span {
+                file_id: SourceFileId(
+                    0,
+                ),
+                start: 123,
+                end: 129,
+            },
+        },
+        Reference {
+            name: "Done",
+            target: LocalSymbol {
+                name: "Done",
+                kind: Constructor,
+            },
+            span: Span {
+                file_id: SourceFileId(
+                    0,
+                ),
+                start: 136,
+                end: 140,
+            },
+        },
+        Reference {
+            name: "keep",
+            target: LocalSymbol {
+                name: "keep",
+                kind: Parameter,
+            },
+            span: Span {
+                file_id: SourceFileId(
+                    0,
+                ),
+                start: 151,
+                end: 155,
+            },
+        },
+        Reference {
+            name: "value",
+            target: LocalSymbol {
+                name: "value",
+                kind: Local,
+            },
+            span: Span {
+                file_id: SourceFileId(
+                    0,
+                ),
+                start: 159,
+                end: 164,
+            },
+        },
+        Reference {
+            name: "Failed",
+            target: LocalSymbol {
+                name: "Failed",
+                kind: Constructor,
+            },
+            span: Span {
+                file_id: SourceFileId(
+                    0,
+                ),
+                start: 169,
+                end: 175,
+            },
+        },
+        Reference {
+            name: "reason",
+            target: LocalSymbol {
+                name: "reason",
+                kind: Local,
+            },
+            span: Span {
+                file_id: SourceFileId(
+                    0,
+                ),
+                start: 187,
+                end: 193,
+            },
+        },
+        Reference {
+            name: "Done",
+            target: LocalSymbol {
+                name: "Done",
+                kind: Constructor,
+            },
+            span: Span {
+                file_id: SourceFileId(
+                    0,
+                ),
+                start: 198,
+                end: 202,
+            },
+        },
+        Reference {
+            name: "first",
+            target: LocalSymbol {
+                name: "first",
+                kind: Local,
+            },
+            span: Span {
+                file_id: SourceFileId(
+                    0,
+                ),
+                start: 209,
+                end: 214,
+            },
+        },
+        Reference {
+            name: "pair",
+            target: LocalSymbol {
+                name: "pair",
+                kind: Parameter,
+            },
+            span: Span {
+                file_id: SourceFileId(
+                    0,
+                ),
+                start: 266,
+                end: 270,
+            },
+        },
+        Reference {
+            name: "left",
+            target: LocalSymbol {
+                name: "left",
+                kind: Local,
+            },
+            span: Span {
+                file_id: SourceFileId(
+                    0,
+                ),
+                start: 291,
+                end: 295,
+            },
+        },
+    ],
+    exports: [],
+    functions: [
+        Function {
+            name: "choose",
+            public: false,
+            params: [
+                Local {
+                    id: LocalId(
+                        0,
+                    ),
+                    name: "result",
+                    type_: Custom {
+                        name: "Outcome",
+                        args: [],
+                    },
+                    span: Span {
+                        file_id: SourceFileId(
+                            0,
+                        ),
+                        start: 54,
+                        end: 60,
+                    },
+                },
+                Local {
+                    id: LocalId(
+                        1,
+                    ),
+                    name: "keep",
+                    type_: Bool,
+                    span: Span {
+                        file_id: SourceFileId(
+                            0,
+                        ),
+                        start: 71,
+                        end: 75,
+                    },
+                },
+            ],
+            locals: [
+                Local {
+                    id: LocalId(
+                        0,
+                    ),
+                    name: "result",
+                    type_: Custom {
+                        name: "Outcome",
+                        args: [],
+                    },
+                    span: Span {
+                        file_id: SourceFileId(
+                            0,
+                        ),
+                        start: 54,
+                        end: 60,
+                    },
+                },
+                Local {
+                    id: LocalId(
+                        1,
+                    ),
+                    name: "keep",
+                    type_: Bool,
+                    span: Span {
+                        file_id: SourceFileId(
+                            0,
+                        ),
+                        start: 71,
+                        end: 75,
+                    },
+                },
+                Local {
+                    id: LocalId(
+                        2,
+                    ),
+                    name: "first",
+                    type_: Int,
+                    span: Span {
+                        file_id: SourceFileId(
+                            0,
+                        ),
+                        start: 105,
+                        end: 110,
+                    },
+                },
+                Local {
+                    id: LocalId(
+                        3,
+                    ),
+                    name: "value",
+                    type_: Custom {
+                        name: "Outcome",
+                        args: [],
+                    },
+                    span: Span {
+                        file_id: SourceFileId(
+                            0,
+                        ),
+                        start: 141,
+                        end: 146,
+                    },
+                },
+                Local {
+                    id: LocalId(
+                        4,
+                    ),
+                    name: "reason",
+                    type_: Custom {
+                        name: "Outcome",
+                        args: [],
+                    },
+                    span: Span {
+                        file_id: SourceFileId(
+                            0,
+                        ),
+                        start: 176,
+                        end: 182,
+                    },
+                },
+            ],
+            return_type: Int,
+            abi: CallAbi {
+                params: [
+                    AbiValue {
+                        type_: Custom {
+                            name: "Outcome",
+                            args: [],
+                        },
+                        representation: HeapManaged(
+                            Custom,
+                        ),
+                    },
+                    AbiValue {
+                        type_: Bool,
+                        representation: Scalar(
+                            I32,
+                        ),
+                    },
+                ],
+                return_: Some(
+                    AbiValue {
+                        type_: Int,
+                        representation: Scalar(
+                            I64,
+                        ),
+                    },
+                ),
+                boundary: Internal,
+            },
+            body: Block {
+                instructions: [
+                    AssertMatch {
+                        value: Expression {
+                            type_: Int,
+                            span: Span {
+                                file_id: SourceFileId(
+                                    0,
+                                ),
+                                start: 113,
+                                end: 114,
+                            },
+                            kind: Literal(
+                                Literal {
+                                    kind: Int,
+                                    source: "1",
+                                },
+                            ),
+                        },
+                        pattern: Binding(
+                            LocalId(
+                                2,
+                            ),
+                        ),
+                        failure: FailurePath {
+                            reason: AssertMatch,
+                            span: Span {
+                                file_id: SourceFileId(
+                                    0,
+                                ),
+                                start: 94,
+                                end: 114,
+                            },
+                        },
+                        span: Span {
+                            file_id: SourceFileId(
+                                0,
+                            ),
+                            start: 94,
+                            end: 114,
+                        },
+                    },
+                    LocalSet {
+                        local: LocalId(
+                            2,
+                        ),
+                        value: Expression {
+                            type_: Int,
+                            span: Span {
+                                file_id: SourceFileId(
+                                    0,
+                                ),
+                                start: 113,
+                                end: 114,
+                            },
+                            kind: Literal(
+                                Literal {
+                                    kind: Int,
+                                    source: "1",
+                                },
+                            ),
+                        },
+                        span: Span {
+                            file_id: SourceFileId(
+                                0,
+                            ),
+                            start: 94,
+                            end: 114,
+                        },
+                    },
+                ],
+                result: Expression {
+                    type_: Int,
+                    span: Span {
+                        file_id: SourceFileId(
+                            0,
+                        ),
+                        start: 118,
+                        end: 218,
+                    },
+                    kind: Branch(
+                        Branch {
+                            subjects: [
+                                Expression {
+                                    type_: Custom {
+                                        name: "Outcome",
+                                        args: [],
+                                    },
+                                    span: Span {
+                                        file_id: SourceFileId(
+                                            0,
+                                        ),
+                                        start: 123,
+                                        end: 129,
+                                    },
+                                    kind: LocalGet(
+                                        LocalId(
+                                            0,
+                                        ),
+                                    ),
+                                },
+                            ],
+                            clauses: [
+                                BranchClause {
+                                    patterns: [
+                                        Constructor {
+                                            name: "Done",
+                                            arguments: [
+                                                ConstructorPatternArgument {
+                                                    label: None,
+                                                    pattern: Binding(
+                                                        LocalId(
+                                                            3,
+                                                        ),
+                                                    ),
+                                                    span: Span {
+                                                        file_id: SourceFileId(
+                                                            0,
+                                                        ),
+                                                        start: 141,
+                                                        end: 146,
+                                                    },
+                                                },
+                                            ],
+                                        },
+                                    ],
+                                    guard: Some(
+                                        Expression {
+                                            type_: Bool,
+                                            span: Span {
+                                                file_id: SourceFileId(
+                                                    0,
+                                                ),
+                                                start: 151,
+                                                end: 155,
+                                            },
+                                            kind: LocalGet(
+                                                LocalId(
+                                                    1,
+                                                ),
+                                            ),
+                                        },
+                                    ),
+                                    bindings: [
+                                        SuccessfulBinding {
+                                            local: LocalId(
+                                                3,
+                                            ),
+                                            path: ConstructorField {
+                                                subject: 0,
+                                                field: None,
+                                                index: 0,
+                                            },
+                                            span: Span {
+                                                file_id: SourceFileId(
+                                                    0,
+                                                ),
+                                                start: 141,
+                                                end: 146,
+                                            },
+                                        },
+                                    ],
+                                    body: Expression {
+                                        type_: Custom {
+                                            name: "Outcome",
+                                            args: [],
+                                        },
+                                        span: Span {
+                                            file_id: SourceFileId(
+                                                0,
+                                            ),
+                                            start: 159,
+                                            end: 164,
+                                        },
+                                        kind: LocalGet(
+                                            LocalId(
+                                                3,
+                                            ),
+                                        ),
+                                    },
+                                    span: Span {
+                                        file_id: SourceFileId(
+                                            0,
+                                        ),
+                                        start: 136,
+                                        end: 164,
+                                    },
+                                },
+                                BranchClause {
+                                    patterns: [
+                                        Constructor {
+                                            name: "Failed",
+                                            arguments: [
+                                                ConstructorPatternArgument {
+                                                    label: None,
+                                                    pattern: Binding(
+                                                        LocalId(
+                                                            4,
+                                                        ),
+                                                    ),
+                                                    span: Span {
+                                                        file_id: SourceFileId(
+                                                            0,
+                                                        ),
+                                                        start: 176,
+                                                        end: 182,
+                                                    },
+                                                },
+                                            ],
+                                        },
+                                    ],
+                                    guard: None,
+                                    bindings: [
+                                        SuccessfulBinding {
+                                            local: LocalId(
+                                                4,
+                                            ),
+                                            path: ConstructorField {
+                                                subject: 0,
+                                                field: None,
+                                                index: 0,
+                                            },
+                                            span: Span {
+                                                file_id: SourceFileId(
+                                                    0,
+                                                ),
+                                                start: 176,
+                                                end: 182,
+                                            },
+                                        },
+                                    ],
+                                    body: Expression {
+                                        type_: Custom {
+                                            name: "Outcome",
+                                            args: [],
+                                        },
+                                        span: Span {
+                                            file_id: SourceFileId(
+                                                0,
+                                            ),
+                                            start: 187,
+                                            end: 193,
+                                        },
+                                        kind: LocalGet(
+                                            LocalId(
+                                                4,
+                                            ),
+                                        ),
+                                    },
+                                    span: Span {
+                                        file_id: SourceFileId(
+                                            0,
+                                        ),
+                                        start: 169,
+                                        end: 193,
+                                    },
+                                },
+                                BranchClause {
+                                    patterns: [
+                                        Constructor {
+                                            name: "Done",
+                                            arguments: [
+                                                ConstructorPatternArgument {
+                                                    label: None,
+                                                    pattern: Discard,
+                                                    span: Span {
+                                                        file_id: SourceFileId(
+                                                            0,
+                                                        ),
+                                                        start: 203,
+                                                        end: 204,
+                                                    },
+                                                },
+                                            ],
+                                        },
+                                    ],
+                                    guard: None,
+                                    bindings: [],
+                                    body: Expression {
+                                        type_: Int,
+                                        span: Span {
+                                            file_id: SourceFileId(
+                                                0,
+                                            ),
+                                            start: 209,
+                                            end: 214,
+                                        },
+                                        kind: LocalGet(
+                                            LocalId(
+                                                2,
+                                            ),
+                                        ),
+                                    },
+                                    span: Span {
+                                        file_id: SourceFileId(
+                                            0,
+                                        ),
+                                        start: 198,
+                                        end: 214,
+                                    },
+                                },
+                            ],
+                            fallthrough: FailurePath {
+                                reason: BranchFallthrough,
+                                span: Span {
+                                    file_id: SourceFileId(
+                                        0,
+                                    ),
+                                    start: 118,
+                                    end: 218,
+                                },
+                            },
+                        },
+                    ),
+                },
+                span: Span {
+                    file_id: SourceFileId(
+                        0,
+                    ),
+                    start: 94,
+                    end: 218,
+                },
+            },
+            span: Span {
+                file_id: SourceFileId(
+                    0,
+                ),
+                start: 44,
+                end: 220,
+            },
+        },
+        Function {
+            name: "first",
+            public: false,
+            params: [
+                Local {
+                    id: LocalId(
+                        0,
+                    ),
+                    name: "pair",
+                    type_: Tuple(
+                        [
+                            Int,
+                            Int,
+                        ],
+                    ),
+                    span: Span {
+                        file_id: SourceFileId(
+                            0,
+                        ),
+                        start: 231,
+                        end: 235,
+                    },
+                },
+            ],
+            locals: [
+                Local {
+                    id: LocalId(
+                        0,
+                    ),
+                    name: "pair",
+                    type_: Tuple(
+                        [
+                            Int,
+                            Int,
+                        ],
+                    ),
+                    span: Span {
+                        file_id: SourceFileId(
+                            0,
+                        ),
+                        start: 231,
+                        end: 235,
+                    },
+                },
+                Local {
+                    id: LocalId(
+                        1,
+                    ),
+                    name: "left",
+                    type_: Int,
+                    span: Span {
+                        file_id: SourceFileId(
+                            0,
+                        ),
+                        start: 279,
+                        end: 283,
+                    },
+                },
+            ],
+            return_type: Int,
+            abi: CallAbi {
+                params: [
+                    AbiValue {
+                        type_: Tuple(
+                            [
+                                Int,
+                                Int,
+                            ],
+                        ),
+                        representation: HeapManaged(
+                            Tuple,
+                        ),
+                    },
+                ],
+                return_: Some(
+                    AbiValue {
+                        type_: Int,
+                        representation: Scalar(
+                            I64,
+                        ),
+                    },
+                ),
+                boundary: Internal,
+            },
+            body: Block {
+                instructions: [],
+                result: Expression {
+                    type_: Int,
+                    span: Span {
+                        file_id: SourceFileId(
+                            0,
+                        ),
+                        start: 261,
+                        end: 299,
+                    },
+                    kind: Branch(
+                        Branch {
+                            subjects: [
+                                Expression {
+                                    type_: Tuple(
+                                        [
+                                            Int,
+                                            Int,
+                                        ],
+                                    ),
+                                    span: Span {
+                                        file_id: SourceFileId(
+                                            0,
+                                        ),
+                                        start: 266,
+                                        end: 270,
+                                    },
+                                    kind: LocalGet(
+                                        LocalId(
+                                            0,
+                                        ),
+                                    ),
+                                },
+                            ],
+                            clauses: [
+                                BranchClause {
+                                    patterns: [
+                                        Tuple(
+                                            [
+                                                Binding(
+                                                    LocalId(
+                                                        1,
+                                                    ),
+                                                ),
+                                                Discard,
+                                            ],
+                                        ),
+                                    ],
+                                    guard: None,
+                                    bindings: [
+                                        SuccessfulBinding {
+                                            local: LocalId(
+                                                1,
+                                            ),
+                                            path: TupleElement {
+                                                subject: 0,
+                                                index: 0,
+                                            },
+                                            span: Span {
+                                                file_id: SourceFileId(
+                                                    0,
+                                                ),
+                                                start: 279,
+                                                end: 283,
+                                            },
+                                        },
+                                    ],
+                                    body: Expression {
+                                        type_: Int,
+                                        span: Span {
+                                            file_id: SourceFileId(
+                                                0,
+                                            ),
+                                            start: 291,
+                                            end: 295,
+                                        },
+                                        kind: LocalGet(
+                                            LocalId(
+                                                1,
+                                            ),
+                                        ),
+                                    },
+                                    span: Span {
+                                        file_id: SourceFileId(
+                                            0,
+                                        ),
+                                        start: 277,
+                                        end: 295,
+                                    },
+                                },
+                            ],
+                            fallthrough: FailurePath {
+                                reason: BranchFallthrough,
+                                span: Span {
+                                    file_id: SourceFileId(
+                                        0,
+                                    ),
+                                    start: 261,
+                                    end: 299,
+                                },
+                            },
+                        },
+                    ),
+                },
+                span: Span {
+                    file_id: SourceFileId(
+                        0,
+                    ),
+                    start: 261,
+                    end: 299,
+                },
+            },
+            span: Span {
+                file_id: SourceFileId(
+                    0,
+                ),
+                start: 222,
+                end: 301,
+            },
+        },
+    ],
+}

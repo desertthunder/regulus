@@ -17,7 +17,8 @@ values and provide a clear host ABI.
 ## Runtime integration
 
 The backend should define or import runtime functions for allocation, string
-handling, list construction, equality, panic paths, and any required host IO.
+handling, bit-array segment operations, list construction, equality, panic paths,
+and any required host IO.
 
 ## Entry points
 

@@ -231,6 +231,10 @@ pub struct Block {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Instruction {
+    Evaluate {
+        expression: Expression,
+        span: Span,
+    },
     LocalSet {
         local: LocalId,
         value: Expression,
@@ -253,6 +257,10 @@ pub struct FailurePath {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FailureReason {
     AssertMatch,
+    BranchFallthrough,
+    Panic,
+    Todo,
+    Assert,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -308,6 +316,7 @@ pub enum ExpressionKind {
         right: Box<Expression>,
     },
     Memory(MemoryOperation),
+    Failure(FailurePath),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -419,22 +428,74 @@ pub struct Literal {
 pub struct Branch {
     pub subjects: Vec<Expression>,
     pub clauses: Vec<BranchClause>,
+    pub fallthrough: FailurePath,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BranchClause {
     pub patterns: Vec<IrPattern>,
     pub guard: Option<Expression>,
+    pub bindings: Vec<SuccessfulBinding>,
     pub body: Box<Expression>,
     pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SuccessfulBinding {
+    pub local: LocalId,
+    pub path: BindingPath,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BindingPath {
+    Subject(usize),
+    TupleElement {
+        subject: usize,
+        index: usize,
+    },
+    ListElement {
+        subject: usize,
+        index: usize,
+    },
+    ListTail {
+        subject: usize,
+    },
+    ConstructorField {
+        subject: usize,
+        field: Option<String>,
+        index: usize,
+    },
+    Alias {
+        subject: usize,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IrPattern {
     Discard,
     Binding(LocalId),
-    Alias { pattern: Box<IrPattern>, local: LocalId },
+    Alias {
+        pattern: Box<IrPattern>,
+        local: LocalId,
+    },
     Literal(Literal),
+    Tuple(Vec<IrPattern>),
+    List {
+        elements: Vec<IrPattern>,
+        tail: Option<LocalId>,
+    },
+    Constructor {
+        name: String,
+        arguments: Vec<ConstructorPatternArgument>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConstructorPatternArgument {
+    pub label: Option<String>,
+    pub pattern: IrPattern,
+    pub span: Span,
 }
 
 pub fn lower(module: TypedModule) -> Result<Module, Diagnostics> {
@@ -618,7 +679,8 @@ impl Lowerer {
         let mut instructions = Vec::new();
         let mut result = self.nil_expression(block.span);
 
-        for statement in &block.statements {
+        for (index, statement) in block.statements.iter().enumerate() {
+            let last_statement = index + 1 == block.statements.len();
             match statement {
                 Statement::Let(let_) => {
                     let value = self.lower_expression(context, &let_.value)?;
@@ -646,7 +708,15 @@ impl Lowerer {
                     });
                     self.bind_assert_pattern(context, &mut instructions, &value, &pattern, let_assert.span);
                 }
-                Statement::Expression(expression) => result = self.lower_expression(context, expression)?,
+                Statement::Expression(expression) => {
+                    let value = self.lower_expression(context, expression)?;
+                    if last_statement {
+                        result = value;
+                    } else {
+                        instructions
+                            .push(Instruction::Evaluate { expression: value, span: ast_expression_span(expression) });
+                    }
+                }
             }
         }
 
@@ -700,12 +770,22 @@ impl Lowerer {
                         Some(guard) => Some(self.lower_expression(context, guard)?),
                         None => None,
                     };
+                    let patterns = patterns?;
+                    let bindings = self.successful_bindings(context, &patterns);
                     let body = self.lower_expression(context, &clause.value)?;
                     context.pop_scope();
                     type_ = body.type_.clone();
-                    clauses.push(BranchClause { patterns: patterns?, guard, body: Box::new(body), span: clause.span });
+                    clauses.push(BranchClause { patterns, guard, bindings, body: Box::new(body), span: clause.span });
                 }
-                Some(Expression { type_, span: case.span, kind: ExpressionKind::Branch(Branch { subjects, clauses }) })
+                Some(Expression {
+                    type_,
+                    span: case.span,
+                    kind: ExpressionKind::Branch(Branch {
+                        subjects,
+                        clauses,
+                        fallthrough: FailurePath { reason: FailureReason::BranchFallthrough, span: case.span },
+                    }),
+                })
             }
             AstExpression::FieldAccess(field_access) => {
                 let record = self.lower_expression(context, &field_access.record)?;
@@ -730,6 +810,18 @@ impl Lowerer {
                     }),
                 })
             }
+            AstExpression::Raw(raw) if matches!(raw.kind.as_str(), "panic" | "todo" | "assert") => Some(Expression {
+                type_: self.typed_expression_type(raw.span).unwrap_or(Type::Nil),
+                span: raw.span,
+                kind: ExpressionKind::Failure(FailurePath {
+                    reason: match raw.kind.as_str() {
+                        "panic" => FailureReason::Panic,
+                        "todo" => FailureReason::Todo,
+                        _ => FailureReason::Assert,
+                    },
+                    span: raw.span,
+                }),
+            }),
             AstExpression::Raw(raw) => {
                 self.diagnostics.push(
                     Diagnostic::new(
@@ -827,16 +919,62 @@ impl Lowerer {
                 source: literal.source.clone(),
             })),
             Pattern::Tuple(tuple) => {
-                self.unsupported_pattern(tuple.span, "tuple pattern");
-                None
+                let element_types = match subject_type {
+                    Type::Tuple(types) => types.clone(),
+                    _ => vec![subject_type.clone(); tuple.elements.len()],
+                };
+                let elements = tuple
+                    .elements
+                    .iter()
+                    .zip(element_types.iter())
+                    .map(|(element, type_)| self.lower_pattern(context, element, type_))
+                    .collect::<Option<Vec<_>>>()?;
+                Some(IrPattern::Tuple(elements))
             }
             Pattern::List(list) => {
-                self.unsupported_pattern(list.span, "list pattern");
-                None
+                let element_type = match subject_type {
+                    Type::List(type_) => type_.as_ref().clone(),
+                    _ => subject_type.clone(),
+                };
+                let elements = list
+                    .elements
+                    .iter()
+                    .map(|element| self.lower_pattern(context, element, &element_type))
+                    .collect::<Option<Vec<_>>>()?;
+                let tail = match &list.tail {
+                    Some(ast::ListPatternTail::Name(name)) => {
+                        let local = context.allocate(name, subject_type.clone());
+                        context.bind(name.text.clone(), local.id);
+                        Some(local.id)
+                    }
+                    Some(ast::ListPatternTail::Discard(_)) | None => None,
+                };
+                Some(IrPattern::List { elements, tail })
             }
             Pattern::Constructor(constructor) => {
-                self.unsupported_pattern(constructor.span, "constructor pattern");
-                None
+                let arguments = constructor
+                    .arguments
+                    .iter()
+                    .map(|argument| {
+                        let pattern = match &argument.pattern {
+                            Some(pattern) => self.lower_pattern(context, pattern, subject_type)?,
+                            None => match &argument.label {
+                                Some(label) => {
+                                    let local = context.allocate(label, subject_type.clone());
+                                    context.bind(label.text.clone(), local.id);
+                                    IrPattern::Binding(local.id)
+                                }
+                                None => IrPattern::Discard,
+                            },
+                        };
+                        Some(ConstructorPatternArgument {
+                            label: argument.label.as_ref().map(|label| label.text.clone()),
+                            pattern,
+                            span: argument.span,
+                        })
+                    })
+                    .collect::<Option<Vec<_>>>()?;
+                Some(IrPattern::Constructor { name: constructor_name(&constructor.constructor), arguments })
             }
             Pattern::Alias(alias) => {
                 let inner = self.lower_pattern(context, &alias.pattern, subject_type)?;
@@ -861,6 +999,14 @@ impl Lowerer {
         }
     }
 
+    fn successful_bindings(&self, context: &FunctionContext, patterns: &[IrPattern]) -> Vec<SuccessfulBinding> {
+        let mut bindings = Vec::new();
+        for (subject, pattern) in patterns.iter().enumerate() {
+            collect_successful_bindings(context, pattern, BindingPath::Subject(subject), &mut bindings);
+        }
+        bindings
+    }
+
     fn bind_assert_pattern(
         &mut self, context: &mut FunctionContext, instructions: &mut Vec<Instruction>, value: &Expression,
         pattern: &IrPattern, span: Span,
@@ -873,7 +1019,11 @@ impl Lowerer {
                 self.bind_assert_pattern(context, instructions, value, pattern, span);
                 instructions.push(Instruction::LocalSet { local: *local, value: value.clone(), span });
             }
-            IrPattern::Discard | IrPattern::Literal(_) => {
+            IrPattern::Discard
+            | IrPattern::Literal(_)
+            | IrPattern::Tuple(_)
+            | IrPattern::List { .. }
+            | IrPattern::Constructor { .. } => {
                 let _ = context;
             }
         }
@@ -937,6 +1087,88 @@ impl FunctionContext {
 
     fn pop_scope(&mut self) {
         self.scopes.pop();
+    }
+}
+
+fn ast_expression_span(expression: &AstExpression) -> Span {
+    match expression {
+        AstExpression::Literal(literal) => literal.span,
+        AstExpression::Variable(name) => name.span,
+        AstExpression::Call(call) => call.span,
+        AstExpression::FieldAccess(field_access) => field_access.span,
+        AstExpression::Block(block) => block.span,
+        AstExpression::Case(case) => case.span,
+        AstExpression::Raw(raw) => raw.span,
+    }
+}
+
+fn constructor_name(name: &ast::ConstructorName) -> String {
+    match name {
+        ast::ConstructorName::Local(name) => name.text.clone(),
+        ast::ConstructorName::Remote { module, name, .. } => format!("{}.{}", module.text, name.text),
+    }
+}
+
+fn collect_successful_bindings(
+    context: &FunctionContext, pattern: &IrPattern, path: BindingPath, bindings: &mut Vec<SuccessfulBinding>,
+) {
+    match pattern {
+        IrPattern::Binding(local) => {
+            bindings.push(SuccessfulBinding { local: *local, path, span: context.local(*local).span })
+        }
+        IrPattern::Alias { pattern, local } => {
+            collect_successful_bindings(context, pattern, path.clone(), bindings);
+            bindings.push(SuccessfulBinding {
+                local: *local,
+                path: match path {
+                    BindingPath::Subject(subject) => BindingPath::Alias { subject },
+                    other => other,
+                },
+                span: context.local(*local).span,
+            });
+        }
+        IrPattern::Tuple(elements) => {
+            let subject = binding_subject(&path);
+            for (index, element) in elements.iter().enumerate() {
+                collect_successful_bindings(context, element, BindingPath::TupleElement { subject, index }, bindings);
+            }
+        }
+        IrPattern::List { elements, tail } => {
+            let subject = binding_subject(&path);
+            for (index, element) in elements.iter().enumerate() {
+                collect_successful_bindings(context, element, BindingPath::ListElement { subject, index }, bindings);
+            }
+            if let Some(local) = tail {
+                bindings.push(SuccessfulBinding {
+                    local: *local,
+                    path: BindingPath::ListTail { subject },
+                    span: context.local(*local).span,
+                });
+            }
+        }
+        IrPattern::Constructor { arguments, .. } => {
+            let subject = binding_subject(&path);
+            for (index, argument) in arguments.iter().enumerate() {
+                collect_successful_bindings(
+                    context,
+                    &argument.pattern,
+                    BindingPath::ConstructorField { subject, field: argument.label.clone(), index },
+                    bindings,
+                );
+            }
+        }
+        IrPattern::Discard | IrPattern::Literal(_) => {}
+    }
+}
+
+fn binding_subject(path: &BindingPath) -> usize {
+    match path {
+        BindingPath::Subject(subject)
+        | BindingPath::TupleElement { subject, .. }
+        | BindingPath::ListElement { subject, .. }
+        | BindingPath::ListTail { subject }
+        | BindingPath::ConstructorField { subject, .. }
+        | BindingPath::Alias { subject } => *subject,
     }
 }
 
@@ -1119,7 +1351,7 @@ impl From<&SymbolKind> for ReferenceKind {
 mod tests {
     use super::*;
     use crate::source::{SourceFile, SourceFileId};
-    use crate::{ast, parse, resolve, types};
+    use crate::{ast, parse, resolve, types, wasm};
 
     fn lower_source(source: &str) -> Module {
         let source = SourceFile::new(SourceFileId(0), source);
@@ -1188,6 +1420,52 @@ mod tests {
         assert_eq!(module.declarations[0].visibility, Visibility::Public);
         assert!(module.exports.iter().any(|export| export.name == "main"));
         assert!(module.references.iter().any(|reference| reference.name == "x"));
+    }
+
+    #[test]
+    fn lowers_managed_value_patterns_with_explicit_bindings_and_fallthrough() {
+        let module = lower_source(include_str!("../../../fixtures/ir/core_control_flow.gleam"));
+        let choose = module
+            .functions
+            .iter()
+            .find(|function| function.name == "choose")
+            .expect("choose");
+        let ExpressionKind::Branch(branch) = &choose.body.result.kind else {
+            panic!("expected branch");
+        };
+        assert_eq!(branch.clauses.len(), 3);
+        assert_eq!(branch.fallthrough.reason, FailureReason::BranchFallthrough);
+        assert!(matches!(branch.clauses[0].patterns[0], IrPattern::Constructor { .. }));
+        assert!(!branch.clauses[0].bindings.is_empty());
+
+        let first = module
+            .functions
+            .iter()
+            .find(|function| function.name == "first")
+            .expect("first");
+        let ExpressionKind::Branch(branch) = &first.body.result.kind else {
+            panic!("expected branch");
+        };
+        assert!(matches!(branch.clauses[0].patterns[0], IrPattern::Tuple(_)));
+    }
+
+    #[test]
+    fn snapshots_real_language_ir_fixture() {
+        let module = lower_source(include_str!("../../../fixtures/ir/core_control_flow.gleam"));
+
+        insta::assert_debug_snapshot!("core_control_flow_ir", module);
+    }
+
+    #[test]
+    fn reports_spanned_diagnostics_for_typed_ir_the_backend_cannot_emit() {
+        let module = lower_source("type Box { Box }\nfn main() { Box }");
+        let diagnostics = wasm::emit_wat(&module).expect_err("managed constructor cannot emit yet");
+
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.labels.iter().any(|label| label.span.start > 0))
+        );
     }
 
     #[test]
