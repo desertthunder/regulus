@@ -6,4 +6,4 @@ language = "en"
 [output.html]
 default-theme = "coal"
 preferred-dark-theme = "coal"
-additional-css = ["theme/custom.css"]
+additional-css = ["src/assets/css/custom.css"]

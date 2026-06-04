@@ -1,6 +1,6 @@
 @font-face {
   font-family: "Switzer";
-  src: url("../fonts/Switzer-Variable.woff2") format("woff2");
+  src: url("../../../assets/fonts/Switzer-Variable.woff2") format("woff2");
   font-weight: 100 900;
   font-style: normal;
   font-display: swap;
@@ -8,7 +8,7 @@
 
 @font-face {
   font-family: "Switzer";
-  src: url("../fonts/Switzer-VariableItalic.woff2") format("woff2");
+  src: url("../../../assets/fonts/Switzer-VariableItalic.woff2") format("woff2");
   font-weight: 100 900;
   font-style: italic;
   font-display: swap;
@@ -16,7 +16,7 @@
 
 @font-face {
   font-family: "Outfit";
-  src: url("../fonts/Outfit-Variable.woff2") format("woff2");
+  src: url("../../../assets/fonts/Outfit-Variable.woff2") format("woff2");
   font-weight: 100 900;
   font-style: normal;
   font-display: swap;
