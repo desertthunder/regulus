@@ -187,7 +187,7 @@ impl Resolver {
     }
 
     fn collect_prelude(&mut self, scope: ScopeId) {
-        for name in ["Int", "Float", "String", "Bool", "Nil", "List", "Result"] {
+        for name in ["Int", "Float", "String", "BitArray", "Bool", "Nil", "List", "Result"] {
             let name = ast::Name { span: self.module.span, text: name.into() };
             self.define(scope, &name, Namespace::Type, SymbolKind::Prelude);
         }

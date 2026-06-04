@@ -28,6 +28,7 @@ pub enum ScalarRepresentation {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HeapRepresentation {
     String,
+    BitArray,
     Tuple,
     List,
     Record,
@@ -283,6 +284,15 @@ pub enum ExpressionKind {
     Branch(Branch),
     Tuple(Vec<Expression>),
     List(Vec<Expression>),
+    BitArray(BitArrayLiteral),
+    BitArrayConcat {
+        left: Box<Expression>,
+        right: Box<Expression>,
+    },
+    BitStringDeconstruct {
+        bit_array: Box<Expression>,
+        segments: Vec<BitStringPatternSegment>,
+    },
     Record(RecordValue),
     Constructor(ConstructorValue),
     FieldAccess {
@@ -317,6 +327,51 @@ pub enum ExpressionKind {
     },
     Memory(MemoryOperation),
     Failure(FailurePath),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BitArrayLiteral {
+    pub segments: Vec<BitArraySegment>,
+    pub bit_len: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BitArraySegment {
+    pub value: u64,
+    pub bit_size: u32,
+    pub type_: BitSegmentType,
+    pub options: Vec<BitSegmentOption>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BitStringPatternSegment {
+    pub binding: Option<LocalId>,
+    pub bit_size: Option<u32>,
+    pub type_: BitSegmentType,
+    pub options: Vec<BitSegmentOption>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BitSegmentType {
+    Integer,
+    Float,
+    Binary,
+    Utf8,
+    Utf16,
+    Utf32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BitSegmentOption {
+    Size(u32),
+    Unit(u32),
+    Signed,
+    Unsigned,
+    BigEndian,
+    LittleEndian,
+    NativeEndian,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -489,6 +544,7 @@ pub enum IrPattern {
         name: String,
         arguments: Vec<ConstructorPatternArgument>,
     },
+    BitString(Vec<BitStringPatternSegment>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -799,6 +855,11 @@ impl Lowerer {
                     },
                 })
             }
+            AstExpression::Raw(raw) if raw.kind == "bit_string" => Some(Expression {
+                type_: Type::BitArray,
+                span: raw.span,
+                kind: ExpressionKind::BitArray(bit_array_literal(raw)),
+            }),
             AstExpression::Raw(raw) if raw.kind == "record" => {
                 let type_ = self.typed_expression_type(raw.span).unwrap_or(Type::Nil);
                 Some(Expression {
@@ -982,10 +1043,11 @@ impl Lowerer {
                 context.bind(alias.alias.text.clone(), local.id);
                 Some(IrPattern::Alias { pattern: Box::new(inner), local: local.id })
             }
-            Pattern::BitString(raw) => {
-                self.unsupported_pattern(raw.span, "bit string pattern");
-                None
-            }
+            Pattern::BitString(raw) => Some(IrPattern::BitString(bit_string_pattern_segments(
+                context,
+                raw,
+                subject_type,
+            ))),
             Pattern::Raw(raw) => {
                 self.diagnostics.push(
                     Diagnostic::new(
@@ -1023,17 +1085,11 @@ impl Lowerer {
             | IrPattern::Literal(_)
             | IrPattern::Tuple(_)
             | IrPattern::List { .. }
-            | IrPattern::Constructor { .. } => {
+            | IrPattern::Constructor { .. }
+            | IrPattern::BitString(_) => {
                 let _ = context;
             }
         }
-    }
-
-    fn unsupported_pattern(&mut self, span: Span, kind: &str) {
-        self.diagnostics.push(
-            Diagnostic::new(DiagnosticCode::LoweringError, format!("{kind} cannot be lowered"))
-                .with_label(Label::primary(span, "unsupported pattern here")),
-        );
     }
 
     fn typed_expression_type(&self, span: Span) -> Option<Type> {
@@ -1157,6 +1213,18 @@ fn collect_successful_bindings(
                 );
             }
         }
+        IrPattern::BitString(segments) => {
+            let subject = binding_subject(&path);
+            for (index, segment) in segments.iter().enumerate() {
+                if let Some(local) = segment.binding {
+                    bindings.push(SuccessfulBinding {
+                        local,
+                        path: BindingPath::ListElement { subject, index },
+                        span: context.local(local).span,
+                    });
+                }
+            }
+        }
         IrPattern::Discard | IrPattern::Literal(_) => {}
     }
 }
@@ -1170,6 +1238,107 @@ fn binding_subject(path: &BindingPath) -> usize {
         | BindingPath::ConstructorField { subject, .. }
         | BindingPath::Alias { subject } => *subject,
     }
+}
+
+fn bit_array_literal(raw: &ast::RawSyntax) -> BitArrayLiteral {
+    let segments = bit_array_segments(raw);
+    let bit_len = segments.iter().map(|segment| segment.bit_size).sum();
+    BitArrayLiteral { segments, bit_len }
+}
+
+fn bit_array_segments(raw: &ast::RawSyntax) -> Vec<BitArraySegment> {
+    let Some(inner) = raw
+        .source
+        .trim()
+        .strip_prefix("<<")
+        .and_then(|source| source.strip_suffix(">>"))
+    else {
+        return Vec::new();
+    };
+    inner
+        .split(',')
+        .filter_map(|segment| bit_array_segment(segment.trim(), raw.span))
+        .collect()
+}
+
+fn bit_array_segment(source: &str, span: Span) -> Option<BitArraySegment> {
+    if source.is_empty() {
+        return None;
+    }
+    let (value, options) = source.split_once(':').unwrap_or((source, ""));
+    let value = value.trim().parse::<u64>().ok()?;
+    let options = bit_segment_options(options);
+    let bit_size = options
+        .iter()
+        .find_map(|option| match option {
+            BitSegmentOption::Size(size) => Some(*size),
+            _ => None,
+        })
+        .unwrap_or(8);
+    Some(BitArraySegment { value, bit_size, type_: BitSegmentType::Integer, options, span })
+}
+
+fn bit_segment_options(source: &str) -> Vec<BitSegmentOption> {
+    source
+        .split('-')
+        .filter_map(|option| {
+            let option = option.trim();
+            if option.is_empty() {
+                return None;
+            }
+            match option {
+                "signed" => Some(BitSegmentOption::Signed),
+                "unsigned" => Some(BitSegmentOption::Unsigned),
+                "big" => Some(BitSegmentOption::BigEndian),
+                "little" => Some(BitSegmentOption::LittleEndian),
+                "native" => Some(BitSegmentOption::NativeEndian),
+                "float" => None,
+                "binary" | "bytes" | "bits" | "bit_string" | "utf8" | "utf16" | "utf32" => None,
+                _ if let Some(size) = option.strip_prefix("size(").and_then(|value| value.strip_suffix(')')) => {
+                    size.parse().ok().map(BitSegmentOption::Size)
+                }
+                _ if let Some(unit) = option.strip_prefix("unit(").and_then(|value| value.strip_suffix(')')) => {
+                    unit.parse().ok().map(BitSegmentOption::Unit)
+                }
+                _ => option.parse().ok().map(BitSegmentOption::Size),
+            }
+        })
+        .collect()
+}
+
+fn bit_string_pattern_segments(
+    context: &mut FunctionContext, raw: &ast::RawSyntax, subject_type: &Type,
+) -> Vec<BitStringPatternSegment> {
+    let Some(inner) = raw
+        .source
+        .trim()
+        .strip_prefix("<<")
+        .and_then(|source| source.strip_suffix(">>"))
+    else {
+        return Vec::new();
+    };
+    inner
+        .split(',')
+        .map(|segment| bit_string_pattern_segment(context, segment.trim(), raw.span, subject_type))
+        .collect()
+}
+
+fn bit_string_pattern_segment(
+    context: &mut FunctionContext, source: &str, span: Span, subject_type: &Type,
+) -> BitStringPatternSegment {
+    let (value, options) = source.split_once(':').unwrap_or((source, ""));
+    let options = bit_segment_options(options);
+    let bit_size = options.iter().find_map(|option| match option {
+        BitSegmentOption::Size(size) => Some(*size),
+        _ => None,
+    });
+    let binding = value.trim().chars().next().filter(|char| char.is_lowercase()).map(|_| {
+        let name = ast::Name { span, text: value.trim().into() };
+        let local = context.allocate(&name, subject_type.clone());
+        context.bind(name.text, local.id);
+        local.id
+    });
+    BitStringPatternSegment { binding, bit_size, type_: BitSegmentType::Integer, options, span }
 }
 
 fn type_for_literal(kind: LiteralKind) -> Type {
@@ -1209,6 +1378,7 @@ impl From<&Type> for RepresentationType {
             Type::Bool => Self::Scalar(ScalarRepresentation::I32),
             Type::Nil => Self::Scalar(ScalarRepresentation::Unit),
             Type::String => Self::HeapManaged(HeapRepresentation::String),
+            Type::BitArray => Self::HeapManaged(HeapRepresentation::BitArray),
             Type::Tuple(_) => Self::HeapManaged(HeapRepresentation::Tuple),
             Type::List(_) => Self::HeapManaged(HeapRepresentation::List),
             Type::Record { .. } => Self::HeapManaged(HeapRepresentation::Record),
@@ -1492,6 +1662,17 @@ mod tests {
     }
 
     #[test]
+    fn lowers_bit_arrays_to_managed_value_forms() {
+        let module = lower_source("fn bits() { <<1, 2:size(4), 3>> }");
+        let bits = &module.functions[0];
+
+        assert!(matches!(
+            bits.body.result.kind,
+            ExpressionKind::BitArray(BitArrayLiteral { bit_len: 20, .. })
+        ));
+    }
+
+    #[test]
     fn represents_runtime_managed_value_types() {
         assert_eq!(
             RepresentationType::from(&Type::Int),
@@ -1504,6 +1685,10 @@ mod tests {
         assert_eq!(
             RepresentationType::from(&Type::String),
             RepresentationType::HeapManaged(HeapRepresentation::String)
+        );
+        assert_eq!(
+            RepresentationType::from(&Type::BitArray),
+            RepresentationType::HeapManaged(HeapRepresentation::BitArray)
         );
     }
 

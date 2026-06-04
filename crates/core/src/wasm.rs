@@ -161,11 +161,17 @@ impl Emitter {
                 writeln!(self.functions, "    call ${}", call.function).expect("write WAT");
             }
             ExpressionKind::Branch(branch) => self.branch(branch, &expression.type_, expression.span),
+            ExpressionKind::BitArray(bit_array) => {
+                let pointer = self.static_bit_array(bit_array);
+                writeln!(self.functions, "    i32.const {pointer}").expect("write WAT");
+            }
             ExpressionKind::IndirectCall(_)
             | ExpressionKind::FunctionValue(_)
             | ExpressionKind::AnonymousFunction(_)
             | ExpressionKind::Pipeline(_)
             | ExpressionKind::Use(_)
+            | ExpressionKind::BitArrayConcat { .. }
+            | ExpressionKind::BitStringDeconstruct { .. }
             | ExpressionKind::Tuple(_)
             | ExpressionKind::List(_)
             | ExpressionKind::Record(_)
@@ -268,7 +274,8 @@ impl Emitter {
             | ir::IrPattern::Literal(_)
             | ir::IrPattern::Tuple(_)
             | ir::IrPattern::List { .. }
-            | ir::IrPattern::Constructor { .. } => {}
+            | ir::IrPattern::Constructor { .. }
+            | ir::IrPattern::BitString(_) => {}
         }
     }
 
@@ -292,7 +299,10 @@ impl Emitter {
                     ),
                 }
             }
-            ir::IrPattern::Tuple(_) | ir::IrPattern::List { .. } | ir::IrPattern::Constructor { .. } => {
+            ir::IrPattern::Tuple(_)
+            | ir::IrPattern::List { .. }
+            | ir::IrPattern::Constructor { .. }
+            | ir::IrPattern::BitString(_) => {
                 self.diagnostics.push(
                     Diagnostic::new(
                         DiagnosticCode::WasmError,
@@ -327,6 +337,16 @@ impl Emitter {
         self.uses_runtime = true;
         let string = source.trim_matches('"');
         let object = runtime::string_object(self.config, self.next_static_offset, string);
+        let pointer = object.offset;
+        self.next_static_offset = self.config.layout.align_to(object.offset + object.bytes.len() as u32);
+        self.data.push(object);
+        pointer
+    }
+
+    fn static_bit_array(&mut self, bit_array: &ir::BitArrayLiteral) -> u32 {
+        self.uses_runtime = true;
+        let bytes = bit_array_bytes(bit_array);
+        let object = runtime::bit_array_object(self.config, self.next_static_offset, &bytes, bit_array.bit_len);
         let pointer = object.offset;
         self.next_static_offset = self.config.layout.align_to(object.offset + object.bytes.len() as u32);
         self.data.push(object);
@@ -410,11 +430,29 @@ impl From<RuntimePrelude> for String {
     }
 }
 
+fn bit_array_bytes(bit_array: &ir::BitArrayLiteral) -> Vec<u8> {
+    let mut bytes = vec![0; runtime::bit_array_payload_len(bit_array.bit_len) as usize];
+    let mut offset = 0;
+    for segment in &bit_array.segments {
+        for bit_index in 0..segment.bit_size {
+            let source_shift = segment.bit_size - bit_index - 1;
+            let bit = if source_shift < u64::BITS { (segment.value >> source_shift) & 1 } else { 0 };
+            if bit == 1 {
+                let byte = &mut bytes[(offset / 8) as usize];
+                let target_shift = 7 - offset % 8;
+                *byte |= 1 << target_shift;
+            }
+            offset += 1;
+        }
+    }
+    bytes
+}
+
 fn wasm_type(type_: &Type) -> Option<&'static str> {
     match type_ {
         Type::Int => Some("i64"),
         Type::Float => Some("f64"),
-        Type::Bool | Type::String => Some("i32"),
+        Type::Bool | Type::String | Type::BitArray => Some("i32"),
         Type::Nil
         | Type::Tuple(_)
         | Type::List(_)
@@ -585,6 +623,29 @@ mod tests {
 
         assert_eq!(keep.call(&mut store, 1).expect("call keep"), 1);
         assert_eq!(keep.call(&mut store, 42).expect("call keep"), 42);
+    }
+
+    #[test]
+    fn returns_bit_array_pointer_with_inspectable_memory_layout() {
+        let wasm = compile_wasm("pub fn bits() { <<1, 2, 3>> }");
+        let engine = Engine::default();
+        let module = Module::new(&engine, &wasm.bytes).expect("compile wasm module");
+        let mut store = Store::new(&engine, ());
+        let instance = Instance::new(&mut store, &module, &[]).expect("instantiate module");
+        let bits = instance
+            .get_typed_func::<(), i32>(&mut store, "bits")
+            .expect("get bits export");
+        let pointer = bits.call(&mut store, ()).expect("call bits") as usize;
+        let memory = instance.get_memory(&mut store, "memory").expect("memory export");
+        let mut bytes = [0; 16];
+        memory.read(&store, pointer, &mut bytes).expect("read bit array object");
+
+        assert_eq!(
+            ObjectTag::try_from(u32::from_le_bytes(bytes[0..4].try_into().unwrap())),
+            Ok(ObjectTag::BitArray)
+        );
+        assert_eq!(u32::from_le_bytes(bytes[4..8].try_into().unwrap()), 24);
+        assert_eq!(&bytes[8..11], &[1, 2, 3]);
     }
 
     #[test]

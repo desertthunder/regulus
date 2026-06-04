@@ -16,6 +16,10 @@ impl Layout {
         self.header_size + self.align_to(byte_len)
     }
 
+    pub fn bit_array_size(self, bit_len: u32) -> u32 {
+        self.header_size + self.align_to(bit_array_payload_len(bit_len))
+    }
+
     pub fn list_cons_size(self, value_size: u32) -> u32 {
         self.align_to(self.header_size + value_size + self.word_size)
     }
@@ -56,6 +60,7 @@ pub enum ObjectTag {
     Record,
     Custom,
     Closure,
+    BitArray,
 }
 
 impl From<ObjectTag> for u32 {
@@ -67,6 +72,7 @@ impl From<ObjectTag> for u32 {
             ObjectTag::Record => 4,
             ObjectTag::Custom => 5,
             ObjectTag::Closure => 6,
+            ObjectTag::BitArray => 7,
         }
     }
 }
@@ -82,6 +88,7 @@ impl TryFrom<u32> for ObjectTag {
             4 => Ok(ObjectTag::Record),
             5 => Ok(ObjectTag::Custom),
             6 => Ok(ObjectTag::Closure),
+            7 => Ok(ObjectTag::BitArray),
             _ => Err(()),
         }
     }
@@ -110,6 +117,66 @@ pub fn string_object(config: RuntimeConfig, offset: u32, string: &str) -> Static
     StaticObject { offset, bytes }
 }
 
+pub fn bit_array_object(config: RuntimeConfig, offset: u32, data: &[u8], bit_len: u32) -> StaticObject {
+    assert!(bit_len <= data.len() as u32 * 8, "bit length exceeds payload bytes");
+    let size = config.layout.bit_array_size(bit_len);
+    let payload_len = bit_array_payload_len(bit_len) as usize;
+    let mut bytes = Vec::with_capacity(size as usize);
+    bytes.extend_from_slice(&u32::from(ObjectTag::BitArray).to_le_bytes());
+    bytes.extend_from_slice(&bit_len.to_le_bytes());
+    bytes.extend_from_slice(&data[..payload_len]);
+    bytes.resize(size as usize, 0);
+    StaticObject { offset, bytes }
+}
+
+pub fn bit_array_payload_len(bit_len: u32) -> u32 {
+    bit_len.div_ceil(8)
+}
+
+pub fn bit_array_get_bit(data: &[u8], bit_len: u32, index: u32) -> Option<u8> {
+    if index >= bit_len {
+        return None;
+    }
+    let byte = data.get((index / 8) as usize)?;
+    let shift = 7 - index % 8;
+    Some((byte >> shift) & 1)
+}
+
+pub fn bit_array_slice(data: &[u8], source_bit_len: u32, start: u32, bit_len: u32) -> Option<Vec<u8>> {
+    if start.checked_add(bit_len)? > source_bit_len {
+        return None;
+    }
+    let mut output = vec![0; bit_array_payload_len(bit_len) as usize];
+    for offset in 0..bit_len {
+        let bit = bit_array_get_bit(data, source_bit_len, start + offset)?;
+        bit_array_set_bit(&mut output, offset, bit);
+    }
+    Some(output)
+}
+
+pub fn bit_array_append(left: &[u8], left_bit_len: u32, right: &[u8], right_bit_len: u32) -> Vec<u8> {
+    let bit_len = left_bit_len + right_bit_len;
+    let mut output = vec![0; bit_array_payload_len(bit_len) as usize];
+    for index in 0..left_bit_len {
+        let bit = bit_array_get_bit(left, left_bit_len, index).expect("left bit in range");
+        bit_array_set_bit(&mut output, index, bit);
+    }
+    for index in 0..right_bit_len {
+        let bit = bit_array_get_bit(right, right_bit_len, index).expect("right bit in range");
+        bit_array_set_bit(&mut output, left_bit_len + index, bit);
+    }
+    output
+}
+
+fn bit_array_set_bit(data: &mut [u8], index: u32, bit: u8) {
+    if bit & 1 == 0 {
+        return;
+    }
+    let byte = &mut data[(index / 8) as usize];
+    let shift = 7 - index % 8;
+    *byte |= 1 << shift;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -117,7 +184,9 @@ mod tests {
     #[test]
     fn converts_object_tags_to_and_from_u32() {
         assert_eq!(u32::from(ObjectTag::String), 1);
+        assert_eq!(u32::from(ObjectTag::BitArray), 7);
         assert_eq!(ObjectTag::try_from(6), Ok(ObjectTag::Closure));
+        assert_eq!(ObjectTag::try_from(7), Ok(ObjectTag::BitArray));
         assert_eq!(ObjectTag::try_from(99), Err(()));
     }
 
@@ -140,9 +209,43 @@ mod tests {
     }
 
     #[test]
+    fn encodes_static_bit_arrays_with_header_and_padding() {
+        let object = bit_array_object(
+            RuntimeConfig::DEFAULT,
+            RuntimeConfig::DEFAULT.static_data_start,
+            &[0b1010_0101, 0b1100_0000],
+            10,
+        );
+
+        assert_eq!(object.offset, 1024);
+        assert_eq!(
+            ObjectTag::try_from(u32::from_le_bytes(object.bytes[0..4].try_into().unwrap())),
+            Ok(ObjectTag::BitArray)
+        );
+        assert_eq!(u32::from_le_bytes(object.bytes[4..8].try_into().unwrap()), 10);
+        assert_eq!(&object.bytes[8..10], &[0b1010_0101, 0b1100_0000]);
+        assert_eq!(object.bytes.len() as u32, 16);
+    }
+
+    #[test]
+    fn slices_and_appends_bit_arrays() {
+        let data = [0b1010_0101, 0b1100_0000];
+
+        assert_eq!(bit_array_get_bit(&data, 10, 0), Some(1));
+        assert_eq!(bit_array_get_bit(&data, 10, 1), Some(0));
+        assert_eq!(bit_array_get_bit(&data, 10, 10), None);
+        assert_eq!(bit_array_slice(&data, 10, 2, 5), Some(vec![0b1001_0000]));
+        assert_eq!(
+            bit_array_append(&[0b1010_0000], 4, &[0b1100_0000], 4),
+            vec![0b1010_1100]
+        );
+    }
+
+    #[test]
     fn computes_aligned_object_sizes() {
         let layout = Layout::DEFAULT;
 
+        assert_eq!(layout.bit_array_size(10), 16);
         assert_eq!(layout.list_cons_size(8), 24);
         assert_eq!(layout.tuple_size(3, 8), 32);
         assert_eq!(layout.record_size(2, 8), 24);

@@ -8,14 +8,14 @@ Emit WebAssembly for scalar and runtime-managed Gleam values.
 
 ### Bit arrays
 
-- [ ] Add bit-array and bit-string segment types, including segment options and
+- [x] Add bit-array and bit-string segment types, including segment options and
       bit-string patterns.
-- [ ] Add IR forms for bit-array literals, segments, concatenation, and
+- [x] Add IR forms for bit-array literals, segments, concatenation, and
       bit-string pattern deconstruction.
-- [ ] Specify bit-array layout, segment packing, bit offsets, and byte
+- [x] Specify bit-array layout, segment packing, bit offsets, and byte
       alignment rules.
-- [ ] Implement bit-array allocation, append/slice helpers, and segment access.
-- [ ] Add bit-array memory-layout tests in Wasmtime.
+- [x] Implement bit-array allocation, append/slice helpers, and segment access.
+- [x] Add bit-array memory-layout tests in Wasmtime.
 
 ### Runtime memory and values
 

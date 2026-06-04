@@ -14,6 +14,7 @@ pub enum Type {
     Int,
     Float,
     String,
+    BitArray,
     Bool,
     Nil,
     Tuple(Vec<Type>),
@@ -357,6 +358,7 @@ impl TypeChecker {
                 self.pop_scope();
                 type_
             }
+            Expression::Raw(raw) if raw.kind == "bit_string" => Type::BitArray,
             Expression::Raw(raw) if raw.kind == "record" => {
                 let Some(name) = raw.source.split(['(', ' ']).next() else {
                     return None;
@@ -447,10 +449,7 @@ impl TypeChecker {
                 self.bind_pattern(&alias.pattern, type_);
                 self.define(alias.alias.text.clone(), type_.clone());
             }
-            Pattern::BitString(raw) => self.diagnostics.push(
-                Diagnostic::new(DiagnosticCode::TypeError, "bit string patterns cannot be typed yet")
-                    .with_label(Label::primary(raw.span, "bit string pattern here")),
-            ),
+            Pattern::BitString(raw) => self.expect_same(&Type::BitArray, type_, raw.span),
             Pattern::Raw(raw) => self.diagnostics.push(
                 Diagnostic::new(DiagnosticCode::TypeError, format!("unsupported pattern `{}`", raw.kind))
                     .with_label(Label::primary(raw.span, "unsupported pattern here")),
@@ -758,6 +757,7 @@ impl Type {
             Type::Int => "Int".into(),
             Type::Float => "Float".into(),
             Type::String => "String".into(),
+            Type::BitArray => "BitArray".into(),
             Type::Bool => "Bool".into(),
             Type::Nil => "Nil".into(),
             Type::Tuple(items) => format!("#({})", items.iter().map(Type::display).collect::<Vec<_>>().join(", ")),
@@ -886,6 +886,7 @@ fn parse_type_source(source: &str) -> Option<Type> {
         "Int" => Some(Type::Int),
         "Float" => Some(Type::Float),
         "String" => Some(Type::String),
+        "BitArray" => Some(Type::BitArray),
         "Bool" => Some(Type::Bool),
         "Nil" => Some(Type::Nil),
         _ if source.starts_with("fn(") => parse_function_type(source),
@@ -1138,6 +1139,7 @@ mod tests {
 
     #[test]
     fn parses_generic_tuple_list_and_custom_annotations() {
+        assert_eq!(Type::from_source("BitArray"), Some(Type::BitArray));
         assert_eq!(Type::from_source("List(Int)"), Some(Type::List(Box::new(Type::Int))));
         assert_eq!(
             Type::from_source("#(String, Int)"),
