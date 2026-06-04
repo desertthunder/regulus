@@ -9,19 +9,19 @@ Make the CLI compile projects and produce useful artifacts.
 ### Commands and inputs
 
 - [ ] Add project compile command using `gleam.toml`.
-- [ ] Keep single-file compilation available for tests and examples.
-- [ ] Add output path configuration.
-- [ ] Add target selection for supported runtimes: Wasmtime, browser, and WASI
+- [x] Keep single-file compilation available for tests and examples.
+- [x] Add output path configuration.
+- [x] Add target selection for supported runtimes: Wasmtime, browser, and WASI
       where implemented.
 - [ ] Add package/dependency discovery flags or configuration once dependency
       metadata is supported.
-- [ ] Return useful exit codes for success, diagnostics, and command misuse.
+- [x] Return useful exit codes for success, diagnostics, and command misuse.
 
 ### Artifacts
 
-- [ ] Write `.wasm` artifacts.
-- [ ] Add optional WAT output.
-- [ ] Add optional AST, resolved AST, typed output, and IR debug dumps.
+- [x] Write `.wasm` artifacts.
+- [x] Add optional WAT output.
+- [x] Add optional AST, resolved AST, typed output, and IR debug dumps.
 - [ ] Add optional runtime layout and ABI debug output where helpful.
 - [ ] Keep generated artifact names deterministic for multi-module projects.
 - [ ] Avoid writing partial final artifacts after a failed compile unless the
@@ -31,9 +31,9 @@ Make the CLI compile projects and produce useful artifacts.
 
 - [ ] Render diagnostics with source snippets, labels, notes, and file paths.
 - [ ] Group diagnostics across project modules in a stable order.
-- [ ] Show unsupported-feature diagnostics from AST, resolver, type, lowering,
+- [x] Show unsupported-feature diagnostics from AST, resolver, type, lowering,
       backend, stdlib, and ABI stages without losing source spans.
-- [ ] Keep normal compile output concise; make debug output opt-in.
+- [x] Keep normal compile output concise; make debug output opt-in.
 - [ ] Add human-readable messages for missing project files, duplicate modules,
       unsupported exports, and backend target mismatches.
 
