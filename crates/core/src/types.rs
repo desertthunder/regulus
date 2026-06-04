@@ -86,14 +86,28 @@ pub fn check(module: ResolvedModule) -> Result<TypedModule, Diagnostics> {
     TypeChecker::new(module).check()
 }
 
+fn check_with_constructors(
+    module: ResolvedModule, external_constructors: HashMap<String, ConstructorInfo>,
+) -> Result<TypedModule, Diagnostics> {
+    TypeChecker::new(module)
+        .with_external_constructors(external_constructors)
+        .check()
+}
+
 pub fn check_project(project: &Project) -> Result<TypedProject, Diagnostics> {
     let resolved = resolve::resolve_project(project)?;
     let mut modules = Vec::new();
     let mut interfaces = HashMap::new();
     let mut diagnostics = Vec::new();
 
+    let external_constructors = resolved
+        .modules
+        .iter()
+        .flat_map(|module| constructors_from_ast(&module.ast))
+        .collect::<HashMap<_, _>>();
+
     for (module_info, module) in project.graph.modules.iter().zip(resolved.modules) {
-        match check(module) {
+        match check_with_constructors(module, external_constructors.clone()) {
             Ok(typed) => {
                 interfaces.insert(module_info.name.clone(), typed.interface.clone());
                 modules.push(typed);
@@ -128,6 +142,11 @@ impl TypeChecker {
             scopes: Vec::new(),
             diagnostics: Vec::new(),
         }
+    }
+
+    fn with_external_constructors(mut self, constructors: HashMap<String, ConstructorInfo>) -> Self {
+        self.constructors.extend(constructors);
+        self
     }
 
     fn check(mut self) -> Result<TypedModule, Diagnostics> {
@@ -229,6 +248,7 @@ impl TypeChecker {
             .insert(function.name.text.clone(), function_type.clone());
         self.functions
             .push(TypedFunction { name: function.name.clone(), type_: function_type });
+
         self.pop_scope();
     }
 
@@ -384,10 +404,13 @@ impl TypeChecker {
                     for (pattern, subject_type) in clause.patterns.iter().zip(subject_types.iter()) {
                         self.bind_pattern(pattern, subject_type);
                     }
-                    if let Some(guard) = &clause.guard
-                        && let Some(guard_type) = self.check_expression(guard)
-                    {
-                        self.expect_same(&Type::Bool, &guard_type, guard.span());
+                    if let Some(guard) = &clause.guard {
+                        let guard_type = self
+                            .check_guard_expression(guard)
+                            .or_else(|| self.check_expression(guard));
+                        if let Some(guard_type) = guard_type {
+                            self.expect_same(&Type::Bool, &guard_type, guard.span());
+                        }
                     }
                     let clause_type = self.check_expression(&clause.value)?;
                     self.pop_scope();
@@ -398,6 +421,7 @@ impl TypeChecker {
                     }
                 }
 
+                self.check_case_coverage(case, &subject_types);
                 result_type.unwrap_or(Type::Nil)
             }
         };
@@ -416,43 +440,9 @@ impl TypeChecker {
             Pattern::String(literal) => self.expect_same(&Type::String, type_, literal.span),
             Pattern::Bool(literal) => self.expect_same(&Type::Bool, type_, literal.span),
             Pattern::Nil(literal) => self.expect_same(&Type::Nil, type_, literal.span),
-            Pattern::Tuple(tuple) => {
-                if let Type::Tuple(elements) = type_ {
-                    if tuple.elements.len() != elements.len() {
-                        self.diagnostics.push(
-                            Diagnostic::new(DiagnosticCode::TypeError, "tuple pattern has the wrong arity")
-                                .with_label(Label::primary(tuple.span, "wrong number of elements")),
-                        );
-                    }
-                    for (pattern, element_type) in tuple.elements.iter().zip(elements.iter()) {
-                        self.bind_pattern(pattern, element_type);
-                    }
-                } else {
-                    self.diagnostics.push(
-                        Diagnostic::new(DiagnosticCode::TypeError, "tuple pattern used with non-tuple value")
-                            .with_label(Label::primary(tuple.span, "tuple pattern here")),
-                    );
-                }
-            }
-            Pattern::List(list) => {
-                let Type::List(element_type) = type_ else {
-                    self.diagnostics.push(
-                        Diagnostic::new(DiagnosticCode::TypeError, "list pattern used with non-list value")
-                            .with_label(Label::primary(list.span, "list pattern here")),
-                    );
-                    return;
-                };
-                for pattern in &list.elements {
-                    self.bind_pattern(pattern, element_type);
-                }
-                if let Some(ast::ListPatternTail::Name(name)) = &list.tail {
-                    self.define(name.text.clone(), Type::List(element_type.clone()));
-                }
-            }
-            Pattern::Constructor(constructor) => self.diagnostics.push(
-                Diagnostic::new(DiagnosticCode::TypeError, "constructor patterns cannot be typed yet")
-                    .with_label(Label::primary(constructor.span, "constructor pattern here")),
-            ),
+            Pattern::Tuple(tuple) => self.bind_tuple_pattern(tuple, type_),
+            Pattern::List(list) => self.bind_list_pattern(list, type_),
+            Pattern::Constructor(constructor) => self.bind_constructor_pattern(constructor, type_),
             Pattern::Alias(alias) => {
                 self.bind_pattern(&alias.pattern, type_);
                 self.define(alias.alias.text.clone(), type_.clone());
@@ -466,6 +456,230 @@ impl TypeChecker {
                     .with_label(Label::primary(raw.span, "unsupported pattern here")),
             ),
         }
+    }
+
+    fn bind_tuple_pattern(&mut self, tuple: &ast::TuplePattern, type_: &Type) {
+        match type_ {
+            Type::Tuple(elements) => {
+                if tuple.elements.len() != elements.len() {
+                    self.diagnostics.push(
+                        Diagnostic::new(DiagnosticCode::TypeError, "tuple pattern has the wrong arity")
+                            .with_label(Label::primary(tuple.span, "wrong number of elements")),
+                    );
+                }
+                for (pattern, element_type) in tuple.elements.iter().zip(elements.iter()) {
+                    self.bind_pattern(pattern, element_type);
+                }
+            }
+            _ => self.diagnostics.push(
+                Diagnostic::new(DiagnosticCode::TypeError, "tuple pattern used with non-tuple value")
+                    .with_label(Label::primary(tuple.span, "tuple pattern here")),
+            ),
+        }
+    }
+
+    fn bind_list_pattern(&mut self, list: &ast::ListPattern, type_: &Type) {
+        let Type::List(element_type) = type_ else {
+            self.diagnostics.push(
+                Diagnostic::new(DiagnosticCode::TypeError, "list pattern used with non-list value")
+                    .with_label(Label::primary(list.span, "list pattern here")),
+            );
+            return;
+        };
+        for pattern in &list.elements {
+            self.bind_pattern(pattern, element_type);
+        }
+        if let Some(ast::ListPatternTail::Name(name)) = &list.tail {
+            self.define(name.text.clone(), Type::List(element_type.clone()));
+        }
+    }
+
+    fn bind_constructor_pattern(&mut self, pattern: &ast::ConstructorPattern, type_: &Type) {
+        let name = constructor_pattern_name(pattern);
+        let Some(constructor) = self.constructors.get(name).cloned() else {
+            self.diagnostics.push(
+                Diagnostic::new(DiagnosticCode::TypeError, format!("unknown constructor `{name}`"))
+                    .with_label(Label::primary(pattern.span, "unknown constructor here")),
+            );
+            return;
+        };
+
+        self.expect_same(&constructor.return_type.substitute_from(type_), type_, pattern.span);
+        let fields = instantiate_fields(&constructor, type_);
+        if pattern.arguments.len() > fields.len() {
+            self.diagnostics.push(
+                Diagnostic::new(DiagnosticCode::TypeError, "constructor pattern has too many arguments")
+                    .with_label(Label::primary(pattern.span, "too many arguments")),
+            );
+        }
+
+        for (index, argument) in pattern.arguments.iter().enumerate() {
+            let field = match &argument.label {
+                Some(label) => fields.iter().find(|field| field.name == label.text),
+                None => fields.get(index),
+            };
+            let Some(field) = field else {
+                self.diagnostics.push(
+                    Diagnostic::new(DiagnosticCode::TypeError, "unknown constructor field")
+                        .with_label(Label::primary(argument.span, "unknown field here")),
+                );
+                continue;
+            };
+            match &argument.pattern {
+                Some(nested) => self.bind_pattern(nested, &field.type_),
+                None => {
+                    if let Some(label) = &argument.label {
+                        self.define(label.text.clone(), field.type_.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    fn check_guard_expression(&mut self, expr: &Expression) -> Option<Type> {
+        match expr {
+            Expression::Variable(name) => self.lookup_name(name),
+            Expression::Literal(literal) if literal.kind == LiteralKind::Bool => Some(Type::Bool),
+            Expression::Raw(raw) if raw.kind == "binary_expression" => Some(Type::Bool),
+            _ => None,
+        }
+    }
+
+    fn check_case_coverage(&mut self, case: &ast::Case, subject_types: &[Type]) {
+        for (subject_index, subject_type) in subject_types.iter().enumerate() {
+            let mut covered = false;
+            for clause in &case.clauses {
+                let Some(pattern) = clause.patterns.get(subject_index) else { continue };
+                if covered {
+                    self.diagnostics.push(
+                        Diagnostic::new(DiagnosticCode::TypeError, "case branch is unreachable")
+                            .with_label(Label::primary(clause.span, "unreachable branch")),
+                    );
+                    continue;
+                }
+                if clause.guard.is_none() && self.pattern_covers_type(pattern, subject_type) {
+                    covered = true;
+                }
+            }
+            if covered {
+                continue;
+            }
+
+            match subject_type {
+                Type::Bool => self.check_bool_exhaustiveness(case, subject_index),
+                Type::List(_) => self.check_list_exhaustiveness(case, subject_index),
+                Type::Tuple(_) => self.check_tuple_exhaustiveness(case, subject_index),
+                Type::Custom { .. } => self.check_custom_exhaustiveness(case, subject_index, subject_type),
+                _ => {}
+            }
+        }
+    }
+
+    fn check_bool_exhaustiveness(&mut self, case: &ast::Case, subject_index: usize) {
+        let mut seen_true = false;
+        let mut seen_false = false;
+        for clause in case.clauses.iter().filter(|clause| clause.guard.is_none()) {
+            match clause.patterns.get(subject_index) {
+                Some(Pattern::Bool(literal)) if literal.source == "True" => seen_true = true,
+                Some(Pattern::Bool(literal)) if literal.source == "False" => seen_false = true,
+                _ => {}
+            }
+        }
+        if !seen_true || !seen_false {
+            let missing = match (seen_true, seen_false) {
+                (false, false) => "True and False",
+                (false, true) => "True",
+                (true, false) => "False",
+                (true, true) => return,
+            };
+            self.non_exhaustive(
+                case.span,
+                format!("case expression is not exhaustive; missing {missing}"),
+            );
+        }
+    }
+
+    fn check_list_exhaustiveness(&mut self, case: &ast::Case, subject_index: usize) {
+        let mut empty = false;
+        let mut non_empty = false;
+        for clause in case.clauses.iter().filter(|clause| clause.guard.is_none()) {
+            if let Some(Pattern::List(list)) = clause.patterns.get(subject_index) {
+                empty |= list.elements.is_empty() && list.tail.is_none();
+                non_empty |= !list.elements.is_empty() && list.tail.is_some();
+            }
+        }
+        if !empty || !non_empty {
+            self.non_exhaustive(case.span, "case expression is not exhaustive for list values");
+        }
+    }
+
+    fn check_tuple_exhaustiveness(&mut self, case: &ast::Case, subject_index: usize) {
+        if !case
+            .clauses
+            .iter()
+            .filter(|clause| clause.guard.is_none())
+            .any(|clause| {
+                clause
+                    .patterns
+                    .get(subject_index)
+                    .is_some_and(|pattern| self.pattern_covers_type(pattern, &Type::Tuple(Vec::new())))
+            })
+        {
+            self.non_exhaustive(case.span, "case expression is not exhaustive for tuple values");
+        }
+    }
+
+    fn check_custom_exhaustiveness(&mut self, case: &ast::Case, subject_index: usize, subject_type: &Type) {
+        let constructors = self
+            .constructors
+            .values()
+            .filter(|constructor| constructor.return_type.substitute_from(subject_type) == *subject_type)
+            .map(|constructor| constructor.name.clone())
+            .collect::<std::collections::HashSet<_>>();
+        if constructors.is_empty() {
+            return;
+        }
+        let seen = case
+            .clauses
+            .iter()
+            .filter(|clause| clause.guard.is_none())
+            .filter_map(|clause| match clause.patterns.get(subject_index) {
+                Some(Pattern::Constructor(pattern)) => Some(constructor_pattern_name(pattern).to_string()),
+                _ => None,
+            })
+            .collect::<std::collections::HashSet<_>>();
+        let missing = constructors.difference(&seen).cloned().collect::<Vec<_>>();
+        if !missing.is_empty() {
+            self.non_exhaustive(
+                case.span,
+                format!("case expression is not exhaustive; missing {}", missing.join(", ")),
+            );
+        }
+    }
+
+    fn pattern_covers_type(&self, pattern: &Pattern, type_: &Type) -> bool {
+        match pattern {
+            Pattern::Name(_) | Pattern::Discard(_) => true,
+            Pattern::Alias(alias) => self.pattern_covers_type(&alias.pattern, type_),
+            Pattern::Tuple(tuple) => match type_ {
+                Type::Tuple(elements) => tuple
+                    .elements
+                    .iter()
+                    .zip(elements.iter())
+                    .all(|(pattern, type_)| self.pattern_covers_type(pattern, type_)),
+                _ => tuple
+                    .elements
+                    .iter()
+                    .all(|pattern| matches!(pattern, Pattern::Name(_) | Pattern::Discard(_))),
+            },
+            _ => false,
+        }
+    }
+
+    fn non_exhaustive(&mut self, span: Span, message: impl Into<String>) {
+        self.diagnostics.push(
+            Diagnostic::new(DiagnosticCode::TypeError, message).with_label(Label::primary(span, "non-exhaustive case")),
+        );
     }
 
     fn lookup_name(&mut self, name: &ast::Name) -> Option<Type> {
@@ -534,6 +748,11 @@ impl Type {
         parse_type_source(source)
     }
 
+    fn substitute_from(&self, actual: &Type) -> Type {
+        let substitutions = substitutions_for(self, actual);
+        substitute_type(self, &substitutions)
+    }
+
     fn display(&self) -> String {
         match self {
             Type::Int => "Int".into(),
@@ -593,6 +812,74 @@ impl ExpressionSpan for Expression {
     }
 }
 
+fn constructor_pattern_name(pattern: &ast::ConstructorPattern) -> &str {
+    match &pattern.constructor {
+        ast::ConstructorName::Local(name) => &name.text,
+        ast::ConstructorName::Remote { name, .. } => &name.text,
+    }
+}
+
+fn instantiate_fields(constructor: &ConstructorInfo, actual_type: &Type) -> Vec<FieldInfo> {
+    let substitutions = substitutions_for(&constructor.return_type, actual_type);
+    constructor
+        .fields
+        .iter()
+        .map(|field| FieldInfo { name: field.name.clone(), type_: substitute_type(&field.type_, &substitutions) })
+        .collect()
+}
+
+fn substitutions_for(expected: &Type, actual: &Type) -> HashMap<String, Type> {
+    let mut substitutions = HashMap::new();
+    collect_substitutions(expected, actual, &mut substitutions);
+    substitutions
+}
+
+fn collect_substitutions(expected: &Type, actual: &Type, substitutions: &mut HashMap<String, Type>) {
+    match (expected, actual) {
+        (Type::Generic(name), actual) => {
+            substitutions.insert(name.clone(), actual.clone());
+        }
+        (Type::Tuple(expected), Type::Tuple(actual)) => {
+            for (expected, actual) in expected.iter().zip(actual.iter()) {
+                collect_substitutions(expected, actual, substitutions);
+            }
+        }
+        (Type::List(expected), Type::List(actual)) => collect_substitutions(expected, actual, substitutions),
+        (Type::Custom { name: expected_name, args: expected }, Type::Custom { name: actual_name, args: actual })
+            if expected_name == actual_name =>
+        {
+            for (expected, actual) in expected.iter().zip(actual.iter()) {
+                collect_substitutions(expected, actual, substitutions);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn substitute_type(type_: &Type, substitutions: &HashMap<String, Type>) -> Type {
+    match type_ {
+        Type::Generic(name) => substitutions.get(name).cloned().unwrap_or_else(|| type_.clone()),
+        Type::Tuple(items) => Type::Tuple(items.iter().map(|item| substitute_type(item, substitutions)).collect()),
+        Type::List(item) => Type::List(Box::new(substitute_type(item, substitutions))),
+        Type::Custom { name, args } => Type::Custom {
+            name: name.clone(),
+            args: args.iter().map(|arg| substitute_type(arg, substitutions)).collect(),
+        },
+        Type::Opaque { name, args } => Type::Opaque {
+            name: name.clone(),
+            args: args.iter().map(|arg| substitute_type(arg, substitutions)).collect(),
+        },
+        Type::Function { params, return_type } => Type::Function {
+            params: params
+                .iter()
+                .map(|param| substitute_type(param, substitutions))
+                .collect(),
+            return_type: Box::new(substitute_type(return_type, substitutions)),
+        },
+        _ => type_.clone(),
+    }
+}
+
 fn parse_type_source(source: &str) -> Option<Type> {
     let source = source.trim();
     match source {
@@ -634,6 +921,23 @@ fn parse_function_type(source: &str) -> Option<Type> {
     let params = parse_type_list(params)?;
     let return_type = parse_type_source(return_type.trim())?;
     Some(Type::Function { params, return_type: Box::new(return_type) })
+}
+
+fn constructors_from_ast(module: &ast::Module) -> Vec<(String, ConstructorInfo)> {
+    module
+        .declarations
+        .iter()
+        .filter_map(|declaration| match declaration {
+            Declaration::TypeDefinition(raw) => parse_type_definition(raw),
+            _ => None,
+        })
+        .flat_map(|declaration| {
+            declaration
+                .constructors
+                .into_iter()
+                .map(|constructor| (constructor.name.clone(), constructor))
+        })
+        .collect()
 }
 
 fn parse_type_definition(raw: &ast::RawSyntax) -> Option<TypeDeclaration> {
@@ -729,10 +1033,10 @@ fn parse_fields(source: &str) -> Option<Vec<FieldInfo>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        ast, parse, resolve,
-        source::{SourceFile, SourceFileId},
-    };
+    use crate::source::{SourceFile, SourceFileId};
+    use crate::{ast, parse, project, resolve};
+    use std::{fs, path::Path};
+    use tempfile::tempdir;
 
     fn check_source(source: &str) -> Result<TypedModule, Diagnostics> {
         let source = SourceFile::new(SourceFileId(0), source);
@@ -740,6 +1044,11 @@ mod tests {
         let ast = ast::build(cst).expect("build ast");
         let resolved = resolve::resolve(ast).expect("resolve names");
         check(resolved)
+    }
+
+    fn write(path: &Path, text: &str) {
+        fs::create_dir_all(path.parent().expect("fixture parent")).expect("create fixture dir");
+        fs::write(path, text).expect("write fixture");
     }
 
     #[test]
@@ -867,5 +1176,124 @@ fn new_user() { User(name: "Ada", age: 36) }
             box_.constructors[0].return_type,
             Type::Opaque { name: "Box".into(), args: vec![Type::Generic("value".into())] }
         );
+    }
+
+    #[test]
+    fn checks_tuple_list_record_and_constructor_patterns() {
+        let typed = check_source(
+            r#"pub type Person {
+  Person(name: String, age: Int)
+}
+
+pub type Outcome(value) {
+  Ok(value)
+  Error(String)
+}
+
+fn tuple(pair: #(Int, String)) { case pair { #(number, _) -> number } }
+fn list(items: List(Int)) { case items { [head, ..tail] -> head _ -> 0 } }
+fn record(person: Person) { case person { Person(name:, age: _) -> name } }
+fn generic(result: Outcome(Int)) { case result { Ok(value) -> value Error(_) -> 0 } }
+"#,
+        )
+        .expect("type check source");
+
+        assert!(
+            typed
+                .expressions
+                .iter()
+                .any(|expression| expression.type_ == Type::String)
+        );
+    }
+
+    #[test]
+    fn checks_imported_constructor_patterns_in_projects() {
+        let dir = tempdir().expect("tempdir");
+        write(
+            &dir.path().join("gleam.toml"),
+            "name = \"sample\"\nversion = \"1.0.0\"\n",
+        );
+        write(&dir.path().join("src/app.gleam"), "pub type Boxed { Boxed(Int) }\n");
+        write(
+            &dir.path().join("src/main.gleam"),
+            "import app\nfn main(value: Boxed) { case value { app.Boxed(inner) -> inner } }\n",
+        );
+        let project = project::load_project(dir.path()).expect("load project");
+
+        let typed = check_project(&project).expect("type check project");
+
+        assert_eq!(typed.modules.len(), 2);
+    }
+
+    #[test]
+    fn reports_invalid_nested_patterns() {
+        let diagnostics = check_source(
+            r#"pub type Person {
+  Person(name: String, age: Int)
+}
+
+fn main(person: Person) { case person { Person(name: 1, age: _) -> 0 } }
+"#,
+        )
+        .expect_err("invalid pattern should fail");
+
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains("expected `Int` but found `String`"))
+        );
+        insta::assert_snapshot!(
+            diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.render_plain())
+                .collect::<Vec<_>>()
+                .join("\n\n")
+        );
+    }
+
+    #[test]
+    fn checks_case_guards_are_bool() {
+        let diagnostics = check_source(
+            r#"pub type Boxed {
+  Boxed(Int)
+}
+
+fn main(value: Boxed) { case value { Boxed(number) if number -> number } }
+"#,
+        )
+        .expect_err("guard should be bool");
+
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains("expected `Bool` but found `Int`"))
+        );
+    }
+
+    #[test]
+    fn reports_bool_exhaustiveness_and_redundancy() {
+        let missing = check_source("fn main(flag: Bool) { case flag { True -> 1 } }")
+            .expect_err("non-exhaustive bool case should fail");
+        assert!(
+            missing
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains("not exhaustive"))
+        );
+
+        let redundant = check_source("fn main(flag: Bool) { case flag { _ -> 1 False -> 0 } }")
+            .expect_err("redundant branch should fail");
+        assert!(
+            redundant
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains("unreachable"))
+        );
+
+        let rendered = missing
+            .iter()
+            .chain(redundant.iter())
+            .map(|diagnostic| diagnostic.render_plain())
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        insta::assert_snapshot!(rendered);
     }
 }

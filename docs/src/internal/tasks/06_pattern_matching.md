@@ -52,25 +52,25 @@ generation.
 
 ### Type checking and diagnostics
 
-- [ ] Type-check tuple patterns by arity and element type.
-- [ ] Type-check list patterns by element type, including empty lists and
+- [x] Type-check tuple patterns by arity and element type.
+- [x] Type-check list patterns by element type, including empty lists and
       spread/rest patterns where supported.
-- [ ] Type-check record patterns against record field metadata.
-- [ ] Type-check constructor patterns against constructor parameter metadata,
+- [x] Type-check record patterns against record field metadata.
+- [x] Type-check constructor patterns against constructor parameter metadata,
       including imported constructors and generic custom types.
-- [ ] Type-check nested patterns recursively while preserving useful diagnostic
+- [x] Type-check nested patterns recursively while preserving useful diagnostic
       spans.
-- [ ] Type-check guards as `Bool` expressions.
-- [ ] Type-check `let assert` patterns and report impossible static matches
+- [x] Type-check guards as `Bool` expressions.
+- [x] Type-check `let assert` patterns and report impossible static matches
       where possible.
-- [ ] Continue checking branch result compatibility after pattern checking.
-- [ ] Add exhaustiveness diagnostics for booleans, tuples, lists, and custom-type
+- [x] Continue checking branch result compatibility after pattern checking.
+- [x] Add exhaustiveness diagnostics for booleans, tuples, lists, and custom-type
       constructors where the compiler can prove missing cases.
-- [ ] Add redundancy diagnostics for unreachable branches where the compiler can
+- [x] Add redundancy diagnostics for unreachable branches where the compiler can
       prove a previous branch already covers the same values.
-- [ ] Treat guards conservatively so guarded branches do not incorrectly make a
+- [x] Treat guards conservatively so guarded branches do not incorrectly make a
       match exhaustive.
-- [ ] Add diagnostic snapshots for invalid patterns, non-exhaustive matches, and
+- [x] Add diagnostic snapshots for invalid patterns, non-exhaustive matches, and
       redundant branches.
 
 ### Lowering and WebAssembly

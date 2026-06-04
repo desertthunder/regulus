@@ -1,0 +1,11 @@
+---
+source: crates/core/src/types.rs
+expression: rendered
+---
+TypeError: case expression is not exhaustive; missing False
+  --> file 0 bytes 22..45
+      non-exhaustive case
+
+TypeError: case branch is unreachable
+  --> file 0 bytes 41..51
+      unreachable branch
