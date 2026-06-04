@@ -148,14 +148,19 @@ impl Emitter {
             ExpressionKind::LocalGet(local) => {
                 writeln!(self.functions, "    local.get ${}", local.0).expect("write WAT")
             }
-            ExpressionKind::Call { function, arguments } => {
-                for argument in arguments {
-                    self.expression(argument);
+            ExpressionKind::DirectCall(call) => {
+                for argument in &call.arguments {
+                    self.expression(&argument.value);
                 }
-                writeln!(self.functions, "    call ${function}").expect("write WAT");
+                writeln!(self.functions, "    call ${}", call.function).expect("write WAT");
             }
             ExpressionKind::Branch(branch) => self.branch(branch, &expression.type_, expression.span),
-            ExpressionKind::Tuple(_)
+            ExpressionKind::IndirectCall(_)
+            | ExpressionKind::FunctionValue(_)
+            | ExpressionKind::AnonymousFunction(_)
+            | ExpressionKind::Pipeline(_)
+            | ExpressionKind::Use(_)
+            | ExpressionKind::Tuple(_)
             | ExpressionKind::List(_)
             | ExpressionKind::Record(_)
             | ExpressionKind::Constructor(_)

@@ -188,8 +188,30 @@ pub struct Function {
     pub params: Vec<Local>,
     pub locals: Vec<Local>,
     pub return_type: Type,
+    pub abi: CallAbi,
     pub body: Block,
     pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CallAbi {
+    pub params: Vec<AbiValue>,
+    pub return_: Option<AbiValue>,
+    pub boundary: CallBoundary,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AbiValue {
+    pub type_: Type,
+    pub representation: RepresentationType,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CallBoundary {
+    Internal,
+    ModuleExport,
+    ModuleImport { module: String },
+    HostImport { module: String, name: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -244,10 +266,12 @@ pub struct Expression {
 pub enum ExpressionKind {
     Literal(Literal),
     LocalGet(LocalId),
-    Call {
-        function: String,
-        arguments: Vec<Expression>,
-    },
+    DirectCall(DirectCall),
+    IndirectCall(IndirectCall),
+    FunctionValue(FunctionValue),
+    AnonymousFunction(AnonymousFunction),
+    Pipeline(PipelineLowering),
+    Use(UseLowering),
     Branch(Branch),
     Tuple(Vec<Expression>),
     List(Vec<Expression>),
@@ -284,6 +308,62 @@ pub enum ExpressionKind {
         right: Box<Expression>,
     },
     Memory(MemoryOperation),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DirectCall {
+    pub function: String,
+    pub arguments: Vec<CallArgument>,
+    pub abi: CallAbi,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IndirectCall {
+    pub callee: Box<Expression>,
+    pub arguments: Vec<CallArgument>,
+    pub abi: CallAbi,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CallArgument {
+    pub label: Option<String>,
+    pub value: Expression,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FunctionValue {
+    pub name: String,
+    pub abi: CallAbi,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AnonymousFunction {
+    pub params: Vec<Local>,
+    pub captures: Vec<Capture>,
+    pub body: Block,
+    pub abi: CallAbi,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Capture {
+    pub source: LocalId,
+    pub name: String,
+    pub type_: Type,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PipelineLowering {
+    pub input: Box<Expression>,
+    pub call: Box<Expression>,
+    pub inserted_argument: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UseLowering {
+    pub callback: Box<Expression>,
+    pub call: Box<Expression>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -496,7 +576,8 @@ impl Lowerer {
     }
 
     fn lower_function(&mut self, function: &ast::Function) -> Option<Function> {
-        let return_type = match self.function_types.get(&function.name.text)? {
+        let function_type = self.function_types.get(&function.name.text)?.clone();
+        let return_type = match &function_type {
             Type::Function { return_type, .. } => *return_type.clone(),
             _ => return None,
         };
@@ -523,6 +604,10 @@ impl Lowerer {
             params,
             locals: context.locals,
             return_type,
+            abi: call_abi(
+                &function_type,
+                if function.public { CallBoundary::ModuleExport } else { CallBoundary::Internal },
+            ),
             body,
             span: function.span,
         })
@@ -578,35 +663,22 @@ impl Lowerer {
                 kind: ExpressionKind::Literal(Literal { kind: literal.kind.clone(), source: literal.source.clone() }),
             }),
             AstExpression::Variable(name) => {
-                let local = context.lookup(&name.text)?;
-                let type_ = context.local(local).type_.clone();
-                Some(Expression { type_, span: name.span, kind: ExpressionKind::LocalGet(local) })
-            }
-            AstExpression::Call(call) => {
-                let AstExpression::Variable(function_name) = call.function.as_ref() else {
-                    self.diagnostics.push(
-                        Diagnostic::new(
-                            DiagnosticCode::LoweringError,
-                            "only direct function calls can be lowered",
-                        )
-                        .with_label(Label::primary(call.span, "unsupported call here")),
-                    );
-                    return None;
-                };
-                let Type::Function { return_type, .. } = self.function_types.get(&function_name.text)?.clone() else {
-                    return None;
-                };
-                let arguments = call
-                    .arguments
-                    .iter()
-                    .map(|argument| self.lower_expression(context, &argument.value))
-                    .collect::<Option<Vec<_>>>()?;
+                if let Some(local) = context.lookup(&name.text) {
+                    let type_ = context.local(local).type_.clone();
+                    return Some(Expression { type_, span: name.span, kind: ExpressionKind::LocalGet(local) });
+                }
+
+                let type_ = self.function_types.get(&name.text)?.clone();
                 Some(Expression {
-                    type_: *return_type,
-                    span: call.span,
-                    kind: ExpressionKind::Call { function: function_name.text.clone(), arguments },
+                    span: name.span,
+                    kind: ExpressionKind::FunctionValue(FunctionValue {
+                        name: name.text.clone(),
+                        abi: call_abi(&type_, CallBoundary::Internal),
+                    }),
+                    type_,
                 })
             }
+            AstExpression::Call(call) => self.lower_call(context, call),
             AstExpression::Block(block) => Some(*self.lower_block(context, block)?.result),
             AstExpression::Case(case) => {
                 let subjects = case
@@ -669,6 +741,59 @@ impl Lowerer {
                 None
             }
         }
+    }
+
+    fn lower_call(&mut self, context: &mut FunctionContext, call: &ast::Call) -> Option<Expression> {
+        if let AstExpression::Variable(function_name) = call.function.as_ref()
+            && let Some(function_type) = self.function_types.get(&function_name.text).cloned()
+        {
+            let Type::Function { return_type, .. } = function_type.clone() else {
+                return None;
+            };
+            return Some(Expression {
+                type_: *return_type,
+                span: call.span,
+                kind: ExpressionKind::DirectCall(DirectCall {
+                    function: function_name.text.clone(),
+                    arguments: self.lower_call_arguments(context, &call.arguments)?,
+                    abi: call_abi(&function_type, CallBoundary::Internal),
+                }),
+            });
+        }
+
+        let callee = self.lower_expression(context, &call.function)?;
+        let Type::Function { return_type, .. } = callee.type_.clone() else {
+            self.diagnostics.push(
+                Diagnostic::new(DiagnosticCode::LoweringError, "called value is not a function")
+                    .with_label(Label::primary(call.span, "not a function here")),
+            );
+            return None;
+        };
+        let callee_type = callee.type_.clone();
+        Some(Expression {
+            type_: *return_type,
+            span: call.span,
+            kind: ExpressionKind::IndirectCall(IndirectCall {
+                callee: Box::new(callee),
+                arguments: self.lower_call_arguments(context, &call.arguments)?,
+                abi: call_abi(&callee_type, CallBoundary::Internal),
+            }),
+        })
+    }
+
+    fn lower_call_arguments(
+        &mut self, context: &mut FunctionContext, arguments: &[ast::Argument],
+    ) -> Option<Vec<CallArgument>> {
+        arguments
+            .iter()
+            .map(|argument| {
+                Some(CallArgument {
+                    label: argument.label.as_ref().map(|label| label.text.clone()),
+                    value: self.lower_expression(context, &argument.value)?,
+                    span: argument.span,
+                })
+            })
+            .collect()
     }
 
     fn lower_pattern(
@@ -822,6 +947,25 @@ fn type_for_literal(kind: LiteralKind) -> Type {
         LiteralKind::String => Type::String,
         LiteralKind::Bool => Type::Bool,
         LiteralKind::Nil => Type::Nil,
+    }
+}
+
+fn call_abi(type_: &Type, boundary: CallBoundary) -> CallAbi {
+    match type_ {
+        Type::Function { params, return_type } => {
+            CallAbi { params: params.iter().map(AbiValue::from).collect(), return_: abi_return(return_type), boundary }
+        }
+        _ => CallAbi { params: Vec::new(), return_: None, boundary },
+    }
+}
+
+fn abi_return(type_: &Type) -> Option<AbiValue> {
+    if matches!(type_, Type::Nil) { None } else { Some(AbiValue::from(type_)) }
+}
+
+impl From<&Type> for AbiValue {
+    fn from(type_: &Type) -> Self {
+        Self { type_: type_.clone(), representation: RepresentationType::from(type_) }
     }
 }
 
@@ -990,7 +1134,6 @@ mod tests {
     fn lowers_function_params_and_let_locals() {
         let module = lower_source("fn id(x: Int) -> Int { let y = x y }");
         let function = &module.functions[0];
-
         assert_eq!(function.params.len(), 1);
         assert_eq!(function.locals.len(), 2);
         assert_eq!(function.body.instructions.len(), 1);
@@ -1006,14 +1149,15 @@ mod tests {
             .find(|function| function.name == "main")
             .expect("main function");
 
-        assert!(matches!(main.body.result.kind, ExpressionKind::Call { ref function, .. } if function == "id"));
+        assert!(
+            matches!(main.body.result.kind, ExpressionKind::DirectCall(DirectCall { ref function, .. }) if function == "id")
+        );
     }
 
     #[test]
     fn lowers_case_to_branch() {
         let module = lower_source("fn main(x: Int) { case x { 0 -> 1 _ -> 2 } }");
         let main = &module.functions[0];
-
         assert!(matches!(main.body.result.kind, ExpressionKind::Branch(_)));
     }
 
@@ -1040,11 +1184,33 @@ mod tests {
     #[test]
     fn records_declaration_metadata_exports_and_references() {
         let module = lower_source("pub const answer = 42\npub fn main(x: Int) { x }");
-
         assert!(matches!(module.declarations[0].kind, DeclarationKind::Constant));
         assert_eq!(module.declarations[0].visibility, Visibility::Public);
         assert!(module.exports.iter().any(|export| export.name == "main"));
         assert!(module.references.iter().any(|reference| reference.name == "x"));
+    }
+
+    #[test]
+    fn lowers_function_values_and_indirect_calls() {
+        let module = lower_source("fn apply(x: Int, f: fn(Int) -> Int) -> Int { f(x) }");
+        let apply = &module.functions[0];
+        assert!(matches!(apply.body.result.kind, ExpressionKind::IndirectCall(_)));
+        assert_eq!(apply.abi.params.len(), 2);
+    }
+
+    #[test]
+    fn lowers_named_functions_as_values() {
+        let module = lower_source("fn id(x: Int) -> Int { x }\nfn main() { id }");
+        let main = module
+            .functions
+            .iter()
+            .find(|function| function.name == "main")
+            .expect("main function");
+
+        assert!(matches!(
+            main.body.result.kind,
+            ExpressionKind::FunctionValue(FunctionValue { ref name, .. }) if name == "id"
+        ));
     }
 
     #[test]
@@ -1067,7 +1233,6 @@ mod tests {
     fn lowers_custom_type_constructors_to_managed_value_forms() {
         let module = lower_source("type Box { Box }\nfn main() { Box }");
         let main = &module.functions[0];
-
         assert!(matches!(
             main.body.result.kind,
             ExpressionKind::Constructor(ConstructorValue { ref name, .. }) if name == "Box"
@@ -1077,7 +1242,6 @@ mod tests {
     #[test]
     fn core_ir_debug_output_is_deterministic() {
         let module = lower_source("fn id(x: Int) -> Int { x }");
-
         assert_eq!(format!("{module:#?}"), format!("{module:#?}"));
     }
 }

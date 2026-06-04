@@ -32,12 +32,12 @@ values without depending on parser or resolver syntax details.
 
 ### Functions and calls
 
-- [ ] Add closure and function-value representation.
-- [ ] Add indirect-call support for function values.
-- [ ] Represent anonymous functions and captured variables.
-- [ ] Represent pipeline, `use`, labelled argument, and higher-order call
+- [x] Add closure and function-value representation.
+- [x] Add indirect-call support for function values.
+- [x] Represent anonymous functions and captured variables.
+- [x] Represent pipeline, `use`, labelled argument, and higher-order call
       lowering once the type checker supplies enough metadata.
-- [ ] Add call ABI metadata for values crossing module or host boundaries.
+- [x] Add call ABI metadata for values crossing module or host boundaries.
 
 ### Control flow and failures
 
