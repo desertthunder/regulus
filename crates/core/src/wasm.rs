@@ -1,4 +1,4 @@
-use std::fmt::Write;
+use std::{collections::HashMap, fmt::Write};
 
 use crate::diagnostic::{Diagnostic, DiagnosticCode, Diagnostics, Label};
 use crate::ir::{self, ExpressionKind, Instruction};
@@ -31,6 +31,27 @@ pub fn emit_wat(module: &ir::Module) -> Result<String, Diagnostics> {
         config: runtime::RuntimeConfig::DEFAULT,
         next_static_offset: runtime::RuntimeConfig::DEFAULT.static_data_start,
         uses_runtime: false,
+        function_ids: module
+            .functions
+            .iter()
+            .enumerate()
+            .map(|(id, function)| (function.name.clone(), id as u32))
+            .collect(),
+        function_order: module.functions.iter().map(|function| function.name.clone()).collect(),
+        function_signatures: module
+            .functions
+            .iter()
+            .map(|function| {
+                (
+                    function.name.clone(),
+                    (
+                        function.params.iter().map(|param| param.type_.clone()).collect(),
+                        function.return_type.clone(),
+                    ),
+                )
+            })
+            .collect(),
+        current_scratch: None,
     };
 
     for constant in &module.constants {
@@ -70,6 +91,10 @@ struct Emitter {
     config: runtime::RuntimeConfig,
     next_static_offset: u32,
     uses_runtime: bool,
+    function_ids: HashMap<String, u32>,
+    function_order: Vec<String>,
+    function_signatures: HashMap<String, (Vec<Type>, Type)>,
+    current_scratch: Option<String>,
 }
 
 impl Emitter {
@@ -115,7 +140,14 @@ impl Emitter {
             }
         }
 
+        let previous_scratch = self.current_scratch.clone();
+        if block_contains_indirect_call(&function.body) {
+            writeln!(self.functions, "    (local $__callee i32)").expect("write WAT");
+            self.current_scratch = Some("__callee".into());
+        }
+
         self.block(&function.body);
+        self.current_scratch = previous_scratch;
         self.functions.push_str("  )\n");
     }
 
@@ -192,8 +224,17 @@ impl Emitter {
                 let pointer = self.static_custom(constructor);
                 writeln!(self.functions, "    i32.const {pointer}").expect("write WAT");
             }
-            ExpressionKind::FunctionValue(_) => {
-                let pointer = self.static_closure(0, &[]);
+            ExpressionKind::FunctionValue(function) => {
+                let pointer = self.static_closure(self.function_id(&function.name), &[]);
+                writeln!(self.functions, "    i32.const {pointer}").expect("write WAT");
+            }
+            ExpressionKind::AnonymousFunction(function) => {
+                let captures = function
+                    .captures
+                    .iter()
+                    .map(|capture| capture.source.0)
+                    .collect::<Vec<_>>();
+                let pointer = self.static_closure(0, &captures);
                 writeln!(self.functions, "    i32.const {pointer}").expect("write WAT");
             }
             ExpressionKind::ListCons { head, tail } => {
@@ -221,15 +262,87 @@ impl Emitter {
                 self.uses_runtime = true;
             }
             ExpressionKind::Memory(operation) => self.memory_operation(operation),
-            ExpressionKind::IndirectCall(_)
-            | ExpressionKind::AnonymousFunction(_)
-            | ExpressionKind::Pipeline(_)
+            ExpressionKind::IndirectCall(call) => self.indirect_call(call, expression.span),
+
+            ExpressionKind::Pipeline(_)
             | ExpressionKind::Use(_)
             | ExpressionKind::BitStringDeconstruct { .. }
             | ExpressionKind::RecordUpdate { .. }
             | ExpressionKind::ListDeconstruct { .. }
             | ExpressionKind::Compare { .. } => self.unsupported_expression(expression),
         }
+    }
+
+    fn indirect_call(&mut self, call: &ir::IndirectCall, span: crate::source::Span) {
+        let Some(scratch) = self.current_scratch.clone() else {
+            self.diagnostics.push(
+                Diagnostic::new(DiagnosticCode::WasmError, "indirect calls need a scratch local")
+                    .with_label(Label::primary(span, "indirect call here")),
+            );
+            return;
+        };
+        self.expression(&call.callee);
+        writeln!(self.functions, "    local.set ${scratch}").expect("write WAT");
+
+        let result_type = call
+            .abi
+            .return_
+            .as_ref()
+            .and_then(|value| wasm_type(&value.type_))
+            .unwrap_or("");
+        self.indirect_call_branch(call, 0, result_type, &scratch);
+    }
+
+    fn indirect_call_branch(&mut self, call: &ir::IndirectCall, index: usize, result_type: &str, scratch: &str) {
+        let Some(name) = self.function_order.get(index).cloned() else {
+            if result_type.is_empty() {
+                writeln!(self.functions, "    call $__panic").expect("write WAT");
+                self.uses_runtime = true;
+            } else {
+                writeln!(self.functions, "    unreachable").expect("write WAT");
+            }
+            return;
+        };
+        if !self.function_matches_indirect_call(&name, call) {
+            self.indirect_call_branch(call, index + 1, result_type, scratch);
+            return;
+        }
+        let id = self.function_id(&name);
+
+        writeln!(self.functions, "    local.get ${scratch}").expect("write WAT");
+        writeln!(self.functions, "    i32.const 8").expect("write WAT");
+        writeln!(self.functions, "    i32.add").expect("write WAT");
+        writeln!(self.functions, "    i32.load").expect("write WAT");
+        writeln!(self.functions, "    i32.const {id}").expect("write WAT");
+        writeln!(self.functions, "    i32.eq").expect("write WAT");
+        if result_type.is_empty() {
+            writeln!(self.functions, "    if").expect("write WAT");
+        } else {
+            writeln!(self.functions, "    if (result {result_type})").expect("write WAT");
+        }
+        for argument in &call.arguments {
+            self.expression(&argument.value);
+        }
+        writeln!(self.functions, "    call ${name}").expect("write WAT");
+        writeln!(self.functions, "    else").expect("write WAT");
+        self.indirect_call_branch(call, index + 1, result_type, scratch);
+        writeln!(self.functions, "    end").expect("write WAT");
+    }
+
+    fn function_id(&self, name: &str) -> u32 {
+        self.function_ids.get(name).copied().unwrap_or_default()
+    }
+
+    fn function_matches_indirect_call(&self, name: &str, call: &ir::IndirectCall) -> bool {
+        let Some((params, return_type)) = self.function_signatures.get(name) else {
+            return false;
+        };
+        params.len() == call.arguments.len()
+            && params
+                .iter()
+                .zip(call.arguments.iter())
+                .all(|(param, argument)| param == &argument.value.type_)
+            && call.abi.return_.as_ref().map(|value| &value.type_) == Some(return_type)
     }
 
     fn branch(&mut self, branch: &ir::Branch, type_: &Type, span: crate::source::Span) {
@@ -314,12 +427,47 @@ impl Emitter {
                 self.expression(subject);
                 writeln!(self.functions, "    local.set ${}", local.0).expect("write WAT");
             }
-            ir::IrPattern::Discard
-            | ir::IrPattern::Literal(_)
-            | ir::IrPattern::Tuple(_)
-            | ir::IrPattern::List { .. }
-            | ir::IrPattern::Constructor { .. }
-            | ir::IrPattern::BitString(_) => {}
+            ir::IrPattern::Tuple(elements) => {
+                for (index, element) in elements.iter().enumerate() {
+                    self.bind_managed_pattern_field(subject, element, 8 + index * 8);
+                }
+            }
+            ir::IrPattern::List { elements, tail } => {
+                if let Some(head) = elements.first() {
+                    self.bind_managed_pattern_field(subject, head, 8);
+                }
+                if let Some(local) = tail {
+                    self.expression(subject);
+                    writeln!(self.functions, "    i32.const 16").expect("write WAT");
+                    writeln!(self.functions, "    i32.add").expect("write WAT");
+                    writeln!(self.functions, "    i32.load").expect("write WAT");
+                    writeln!(self.functions, "    local.set ${}", local.0).expect("write WAT");
+                }
+            }
+            ir::IrPattern::Constructor { arguments, .. } => {
+                for (index, argument) in arguments.iter().enumerate() {
+                    self.bind_managed_pattern_field(subject, &argument.pattern, 12 + index * 8);
+                }
+            }
+            ir::IrPattern::Discard | ir::IrPattern::Literal(_) | ir::IrPattern::BitString(_) => {}
+        }
+    }
+
+    fn bind_managed_pattern_field(&mut self, subject: &ir::Expression, pattern: &ir::IrPattern, offset: usize) {
+        match pattern {
+            ir::IrPattern::Binding(local) => {
+                self.expression(subject);
+                writeln!(self.functions, "    i32.const {offset}").expect("write WAT");
+                writeln!(self.functions, "    i32.add").expect("write WAT");
+                writeln!(self.functions, "    i64.load").expect("write WAT");
+                writeln!(self.functions, "    local.set ${}", local.0).expect("write WAT");
+            }
+            ir::IrPattern::Alias { pattern, local } => {
+                self.bind_managed_pattern_field(subject, pattern, offset);
+                self.expression(subject);
+                writeln!(self.functions, "    local.set ${}", local.0).expect("write WAT");
+            }
+            _ => {}
         }
     }
 
@@ -343,19 +491,41 @@ impl Emitter {
                     ),
                 }
             }
-            ir::IrPattern::Tuple(_)
-            | ir::IrPattern::List { .. }
-            | ir::IrPattern::Constructor { .. }
-            | ir::IrPattern::BitString(_) => {
-                self.diagnostics.push(
-                    Diagnostic::new(
-                        DiagnosticCode::WasmError,
-                        "managed-value patterns are not supported by the WASM backend yet",
-                    )
-                    .with_label(Label::primary(span, "unsupported pattern here")),
-                );
-                writeln!(self.functions, "    i32.const 0").expect("write WAT");
+            ir::IrPattern::Tuple(elements) => {
+                self.managed_tag_test(subject, runtime::ObjectTag::Tuple, Some(elements.len() as u32))
             }
+            ir::IrPattern::List { elements, .. } if elements.is_empty() => {
+                self.expression(subject);
+                writeln!(self.functions, "    i32.eqz").expect("write WAT");
+            }
+            ir::IrPattern::List { .. } => self.managed_tag_test(subject, runtime::ObjectTag::ListCons, None),
+            ir::IrPattern::Constructor { name, .. } => {
+                self.managed_tag_test(subject, runtime::ObjectTag::Custom, None);
+                self.expression(subject);
+                writeln!(self.functions, "    i32.const 8").expect("write WAT");
+                writeln!(self.functions, "    i32.add").expect("write WAT");
+                writeln!(self.functions, "    i32.load").expect("write WAT");
+                writeln!(self.functions, "    i32.const {}", constructor_tag(name)).expect("write WAT");
+                writeln!(self.functions, "    i32.eq").expect("write WAT");
+                writeln!(self.functions, "    i32.and").expect("write WAT");
+            }
+            ir::IrPattern::BitString(_) => self.managed_tag_test(subject, runtime::ObjectTag::BitArray, None),
+        }
+    }
+
+    fn managed_tag_test(&mut self, subject: &ir::Expression, tag: runtime::ObjectTag, size: Option<u32>) {
+        self.expression(subject);
+        writeln!(self.functions, "    i32.load").expect("write WAT");
+        writeln!(self.functions, "    i32.const {}", u32::from(tag)).expect("write WAT");
+        writeln!(self.functions, "    i32.eq").expect("write WAT");
+        if let Some(size) = size {
+            self.expression(subject);
+            writeln!(self.functions, "    i32.const 4").expect("write WAT");
+            writeln!(self.functions, "    i32.add").expect("write WAT");
+            writeln!(self.functions, "    i32.load").expect("write WAT");
+            writeln!(self.functions, "    i32.const {size}").expect("write WAT");
+            writeln!(self.functions, "    i32.eq").expect("write WAT");
+            writeln!(self.functions, "    i32.and").expect("write WAT");
         }
     }
 
@@ -632,6 +802,72 @@ impl From<RuntimePrelude> for String {
     }
 }
 
+fn block_contains_indirect_call(block: &ir::Block) -> bool {
+    block.instructions.iter().any(|instruction| match instruction {
+        Instruction::Evaluate { expression, .. }
+        | Instruction::LocalSet { value: expression, .. }
+        | Instruction::AssertMatch { value: expression, .. } => expression_contains_indirect_call(expression),
+    }) || expression_contains_indirect_call(&block.result)
+}
+
+fn expression_contains_indirect_call(expression: &ir::Expression) -> bool {
+    match &expression.kind {
+        ExpressionKind::IndirectCall(_) => true,
+        ExpressionKind::DirectCall(call) => call
+            .arguments
+            .iter()
+            .any(|argument| expression_contains_indirect_call(&argument.value)),
+        ExpressionKind::Branch(branch) => {
+            branch.subjects.iter().any(expression_contains_indirect_call)
+                || branch.clauses.iter().any(|clause| {
+                    clause.guard.as_ref().is_some_and(expression_contains_indirect_call)
+                        || expression_contains_indirect_call(&clause.body)
+                })
+        }
+        ExpressionKind::Tuple(items) | ExpressionKind::List(items) => {
+            items.iter().any(expression_contains_indirect_call)
+        }
+        ExpressionKind::BitArrayConcat { left, right }
+        | ExpressionKind::Compare { left, right, .. }
+        | ExpressionKind::RuntimeEquality { left, right } => {
+            expression_contains_indirect_call(left) || expression_contains_indirect_call(right)
+        }
+        ExpressionKind::BitStringDeconstruct { bit_array, .. }
+        | ExpressionKind::FieldAccess { record: bit_array, .. }
+        | ExpressionKind::TupleElement { tuple: bit_array, .. }
+        | ExpressionKind::ListDeconstruct { list: bit_array, .. } => expression_contains_indirect_call(bit_array),
+        ExpressionKind::Record(record) => record
+            .fields
+            .iter()
+            .any(|field| expression_contains_indirect_call(&field.value)),
+        ExpressionKind::Constructor(constructor) => constructor.arguments.iter().any(expression_contains_indirect_call),
+        ExpressionKind::RecordUpdate { record, updates } => {
+            expression_contains_indirect_call(record)
+                || updates
+                    .iter()
+                    .any(|field| expression_contains_indirect_call(&field.value))
+        }
+        ExpressionKind::ListCons { head, tail } => {
+            expression_contains_indirect_call(head) || expression_contains_indirect_call(tail)
+        }
+        ExpressionKind::Memory(operation) => match operation {
+            ir::MemoryOperation::Allocate { bytes } => expression_contains_indirect_call(bytes),
+            ir::MemoryOperation::Load { address, .. } => expression_contains_indirect_call(address),
+            ir::MemoryOperation::Store { address, value } => {
+                expression_contains_indirect_call(address) || expression_contains_indirect_call(value)
+            }
+        },
+        ExpressionKind::Literal(_)
+        | ExpressionKind::LocalGet(_)
+        | ExpressionKind::FunctionValue(_)
+        | ExpressionKind::AnonymousFunction(_)
+        | ExpressionKind::Pipeline(_)
+        | ExpressionKind::Use(_)
+        | ExpressionKind::BitArray(_)
+        | ExpressionKind::Failure(_) => false,
+    }
+}
+
 fn constructor_tag(name: &str) -> u32 {
     name.bytes().fold(0x811c_9dc5, |hash, byte| {
         hash.wrapping_mul(0x0100_0193) ^ u32::from(byte)
@@ -830,6 +1066,33 @@ mod tests {
 
         assert_eq!(keep.call(&mut store, 1).expect("call keep"), 1);
         assert_eq!(keep.call(&mut store, 42).expect("call keep"), 42);
+    }
+
+    #[test]
+    fn runs_indirect_call_through_function_value() {
+        let wasm = compile_wasm(
+            r#"pub fn id(x: Int) -> Int { x }
+fn apply(x: Int, f: fn(Int) -> Int) -> Int { f(x) }
+pub fn main() { apply(41, id) }
+"#,
+        );
+        let engine = Engine::default();
+        let module = Module::new(&engine, &wasm.bytes).expect("compile wasm module");
+        let mut store = Store::new(&engine, ());
+        let instance = Instance::new(&mut store, &module, &[]).expect("instantiate module");
+        let main = instance
+            .get_typed_func::<(), i64>(&mut store, "main")
+            .expect("get main export");
+
+        assert_eq!(main.call(&mut store, ()).expect("call main"), 41);
+    }
+
+    #[test]
+    fn emits_managed_pattern_control_flow() {
+        let wasm = compile_wasm("pub fn first(pair: #(Int, Int)) -> Int { case pair { #(left, _) -> left } }");
+
+        assert!(wasm.wat.contains("i32.load"));
+        assert!(wasm.wat.contains("i64.load"));
     }
 
     #[test]

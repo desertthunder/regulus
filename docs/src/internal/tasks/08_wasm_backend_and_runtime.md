@@ -33,13 +33,13 @@ Emit WebAssembly for scalar and runtime-managed Gleam values.
 
 ### Functions and control flow
 
-- [ ] Emit direct function calls.
-- [ ] Emit indirect calls for function values and closures.
-- [ ] Emit closure allocation and captured environment access.
-- [ ] Emit lowered pattern-matching control flow for scalar and managed values.
-- [ ] Emit guard checks, branch fallthrough, and `let assert` failure paths.
-- [ ] Emit `panic`, `todo`, and `assert` control flow.
-- [ ] Emit loops or recursive-call-friendly structures where needed by lowered
+- [x] Emit direct function calls.
+- [x] Emit indirect calls for function values and closures.
+- [x] Emit closure allocation and captured environment access.
+- [x] Emit lowered pattern-matching control flow for scalar and managed values.
+- [x] Emit guard checks, branch fallthrough, and `let assert` failure paths.
+- [x] Emit `panic`, `todo`, and `assert` control flow.
+- [x] Emit loops or recursive-call-friendly structures where needed by lowered
       stdlib or user code.
 
 ### ABI, imports, and exports
