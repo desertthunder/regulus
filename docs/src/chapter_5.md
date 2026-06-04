@@ -1,198 +1,175 @@
-# WebAssembly code generation
+# Intermediate representations and lowering
 
-WebAssembly, or WASM, is a portable binary instruction format for executable
-programs.[^1] It is designed to run in browsers and in standalone runtimes such
-as Wasmtime.[^2] A WebAssembly program is stored in a module. A module can define
-functions, locals, imports, exports, memory, tables, and other runtime items.
+A compiler usually does not translate source code directly into machine code or
+WebAssembly. It first translates the program into one or more intermediate
+representations, often shortened to IR. An IR is a compiler-friendly form of the
+program.[^1]
 
-This compiler emits WebAssembly from core IR. For the scalar subset, the job is
-small enough to see directly:
+The source language is designed for people. The target language is designed for
+a machine or runtime. An IR sits between them. It gives the compiler a place to
+make evaluation order explicit, remove surface syntax, and use data structures
+that are easier to analyze or emit.
 
-```gleam
-pub fn id(x: Int) -> Int {
-  x
-}
-```
+## Why use an IR
 
-can become WAT like this:
-
-```wat
-(module
-  (func $id (export "id") (param $0 i64) (result i64)
-    local.get $0
-  )
-)
-```
-
-WAT is WebAssembly's text format. It is easier for people to read than binary
-`.wasm`, and it can be assembled into the binary format that runtimes execute.
-The OpenCS WAT material gives small examples of this text format and how it maps
-to WebAssembly modules.[^3]
-
-## A stack machine
-
-WebAssembly is built around a stack-machine execution model. A stack machine
-uses a stack for intermediate values: instructions push values onto the stack,
-and later instructions pop values off.[^4]
-
-This WAT function returns the integer `42`:
-
-```wat
-(func $answer (result i64)
-  i64.const 42
-)
-```
-
-The instruction `i64.const 42` pushes an `i64` value onto the stack. Since the
-function result type is `i64`, that value becomes the function result.
-
-A function call follows the same idea. Arguments are pushed first, then the call
-instruction consumes them:
-
-```wat
-(func $id (param $0 i64) (result i64)
-  local.get $0
-)
-
-(func $main (result i64)
-  i64.const 1
-  call $id
-)
-```
-
-`i64.const 1` pushes the argument. `call $id` consumes it and pushes the return
-value. Koopman's stack computer notes describe this style of evaluation in terms
-of values moving through a data stack rather than through named temporary
-registers.[^5]
-
-## Types
-
-WebAssembly has a small set of numeric value types. The compiler maps Gleam's
-scalar types onto those value types:
-
-| Gleam type | WebAssembly type |
-| ---------- | ---------------- |
-| `Int`      | `i64`            |
-| `Float`    | `f64`            |
-| `Bool`     | `i32`            |
-| `Nil`      | no result value  |
-
-`Bool` uses `i32` because WebAssembly does not have a separate boolean value
-type. `False` is emitted as `0`, and `True` is emitted as `1`.
-
-Strings are different. A string is not just one WebAssembly number. It needs a
-memory representation: bytes in linear memory, plus a convention for length,
-ownership, allocation, and passing values between functions. This compiler
-rejects string-valued WASM output until that runtime representation exists.
-
-## Functions, parameters, and locals
-
-A WebAssembly function declares its parameters and result:
-
-```wat
-(func $id (param $0 i64) (result i64)
-  local.get $0
-)
-```
-
-The CodeRunDebug WAT guide shows this same shape: parameters are declared with
-`param`, and return values are declared with `result`.[^6]
-
-Core IR locals map to WebAssembly locals. A Gleam function like this:
+Consider a small Gleam function:
 
 ```gleam
-pub fn main(x: Int) -> Int {
+fn id(x: Int) -> Int {
   let y = x
   y
 }
 ```
 
-can be emitted as:
+The syntax tree tells us this is a function with a parameter, a `let` binding,
+and a final expression. The IR can record a simpler sequence:
 
-```wat
-(module
-  (func $main (export "main") (param $0 i64) (result i64)
-    (local $1 i64)
-    local.get $0
-    local.set $1
-    local.get $1
-  )
-)
+```text
+function id(x: Int) -> Int
+  local y: Int
+  y = get x
+  return get y
 ```
 
-The parameter `x` is local `$0`. The `let` binding `y` is local `$1`. The value
-of `x` is pushed onto the stack with `local.get $0`, then stored into `y` with
-`local.set $1`. The final `local.get $1` leaves the return value on the stack.
+This form is less concerned with Gleam syntax and more concerned with the work
+that must happen when the program runs. The local variable is explicit. The
+assignment is explicit. The final value is explicit. Values in this IR are typed,
+and variable references have already been turned into known locals or functions.
 
-## Exports
+IRs come in many forms. Some look like trees. Some look like instruction lists.
+Some use control-flow graphs. LLVM bitcode, for example, is a serialized form of
+LLVM IR that stores modules, functions, types, constants, and instructions in a
+compact binary format.[^2]
 
-A WebAssembly module can hide functions or export them. Exported functions are
-visible to the host runtime. In this compiler, public Gleam functions with
-supported scalar signatures are exported:
+The right IR depends on what the compiler needs to do. Ray Toal's notes on
+intermediate representations show several common choices, including syntax
+trees, three-address code, and stack-machine code.[^3]
+
+## Lowering
+
+Lowering is the act of translating from a higher-level representation into a
+lower-level one. Matt Warren describes lowering in the C# compiler as converting
+rich language constructs into simpler forms that later parts of the compiler can
+handle more easily.[^4]
+
+For this project, lowering means translating typed Gleam AST into core IR.
+Gleam has source-level ideas such as `let`, blocks, and `case`. Core IR keeps the
+same program meaning, but stores it in a smaller set of constructs:
+
+- functions
+- locals
+- local reads and writes
+- literals
+- direct calls
+- branch expressions
+- blocks with ordered instructions and a result
+
+A `let` expression is a good example:
 
 ```gleam
-pub fn id(x: Int) -> Int {
-  x
+let y = x
+y
+```
+
+The AST stores this as a `let` binding followed by a variable expression. The IR
+allocates a local for `y`, writes the lowered value of `x` into it, and reads
+`y` as the block result.
+
+```text
+local y: Int
+set y, get x
+result get y
+```
+
+## Evaluation order
+
+Source syntax can leave some details implicit. IR should make them explicit.
+In a block, expressions are evaluated from top to bottom:
+
+```gleam
+fn main() {
+  let one = 1
+  let two = one
+  two
 }
 ```
 
-emits an export:
+The IR stores the two local writes in order, then stores the block result. This
+is helpful for WebAssembly because WebAssembly code generation also needs a clear
+order of instructions.
 
-```wat
-(func $id (export "id") (param $0 i64) (result i64)
-  local.get $0
-)
+## Locals
+
+Names are useful for people, but compilers often prefer stable IDs. During
+lowering, parameters and local bindings become locals:
+
+```text
+LocalId(0): x: Int
+LocalId(1): y: Int
 ```
 
-A host can then load the module and call the exported function.
+A variable expression such as `y` becomes `LocalGet(LocalId(1))`. From this
+point on, the compiler does not need to search scopes to understand which `y` is
+being used. That work has already been reflected in the local allocation.
 
-## Running with Wasmtime
+## Calls
 
-Wasmtime is a standalone WebAssembly runtime from the Bytecode Alliance.[^2] It
-can load a `.wasm` module, instantiate it, find an export, and call it from Rust.
+A direct function call in Gleam:
 
-A test for the `id` function follows this pattern:
+```gleam
+id(1)
+```
+
+lowers to an IR call with a function name and lowered arguments:
 
 ```rust
-let engine = wasmtime::Engine::default();
-let module = wasmtime::Module::new(&engine, wasm_bytes)?;
-let mut store = wasmtime::Store::new(&engine, ());
-let instance = wasmtime::Instance::new(&mut store, &module, &[])?;
-let id = instance.get_typed_func::<i64, i64>(&mut store, "id")?;
-
-assert_eq!(id.call(&mut store, 42)?, 42);
+Call {
+  function: "id",
+  arguments: [1]
+}
 ```
 
-That gives the compiler an end-to-end check: source code becomes IR, IR becomes
-WAT, WAT becomes `.wasm`, and Wasmtime executes the exported function.
+The type checker has already checked arity and argument types. Lowering can
+therefore focus on representation: what is called, what values are passed, and
+what type comes back.
 
-## What this compiler emits today
+## Branches
 
-The WebAssembly backend currently handles:
+A simple `case` expression lowers into a branch expression:
 
-- modules
-- functions
-- scalar function signatures
-- local declarations
-- `Int`, `Float`, and `Bool` constants
-- `Nil` functions with no result value
+```gleam
+case x {
+  0 -> 1
+  _ -> 2
+}
+```
+
+The IR stores the lowered subject, the patterns, and each branch body. This is
+still higher-level than raw WebAssembly branching, but it is lower-level than
+Gleam syntax. A later code generator can choose how to turn the branch into WASM
+blocks, comparisons, and jumps.
+
+## What this compiler lowers today
+
+The current core IR handles:
+
+- modules and functions
+- function parameters
+- local allocation for parameters and `let` bindings
+- typed literals
 - local reads and writes
 - direct function calls
-- exports for public scalar functions
-- WAT generation
-- binary `.wasm` assembly from WAT
-- Wasmtime execution tests for exported scalar functions
+- blocks with ordered instructions and a result
+- simple `case` expressions as branch expressions
+- source spans on IR nodes where useful
 
-It rejects runtime-managed values such as strings.
+The output is deterministic, which makes it suitable for snapshot-style tests and
+for reading while the compiler grows.
 
-[^1]: WebAssembly Core Specification: https://webassembly.github.io/spec/core/
+[^1]: Wikipedia, "Intermediate representation": https://en.wikipedia.org/wiki/Intermediate_representation
 
-[^2]: Wasmtime documentation: https://docs.wasmtime.dev/
+[^2]: LLVM, "LLVM Bitcode File Format": https://llvm.org/docs/BitCodeFormat.html
 
-[^3]: Aalto University OpenCS, "Example: WAT and WASM": https://opencs.aalto.fi/en/courses/modern-and-emerging-programming-languages/part-7/7-example-wat-and-wasm
+[^3]: Ray Toal, "Intermediate Representations": https://cs.lmu.edu/~ray/notes/ir/
 
-[^4]: Wikipedia, "Stack machine": https://en.wikipedia.org/wiki/Stack_machine
-
-[^5]: Philip J. Koopman, "Stack Computers: Chapter 6": https://users.ece.cmu.edu/~koopman/stack_computers/chap6.html
-
-[^6]: CodeRunDebug, "WAT Functions: Parameters and Results": https://coderundebug.com/learn/wat/functions/#parameters-and-results
+[^4]: Matt Warren, "Lowering in the C# Compiler": https://mattwarren.org/2017/05/25/Lowering-in-the-C-Compiler/

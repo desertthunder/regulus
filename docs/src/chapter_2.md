@@ -1,47 +1,32 @@
-# Name resolution
+# Lexing, parsing, and syntax trees
 
-Names are how a program connects pieces of code. In Gleam, a name might refer to
-a function, a parameter, a local variable, a type, a constructor, a record field,
-or an imported module:
-
-```gleam
-import gleam/io
-
-fn greet(name) {
-  let message = "Hello, " <> name
-  io.println(message)
-}
-```
-
-This program has several names: `io`, `greet`, `name`, `message`, and `println`.
-The source text only tells us how those names are spelled. Name resolution works
-out what each name refers to.
-
-A common compiler definition is that name resolution connects references to the
-declarations they denote.[^1] That sounds small, but it is one of the places
-where a language's rules become concrete. The compiler has to decide which names
-are visible, what happens when two names are the same, and whether a name like
-`io.println` means a module function or a field access.
+A compiler needs a structured view of a program before it can do much with it.
+Source code begins as text: characters in a file. The compiler turns that text
+into shapes it can inspect. A module can contain imports and functions. A
+function can contain parameters and a body. A body can contain expressions.
 
 For this project, the path is:
 
 ```text
-Gleam AST
-  -> scopes and symbols
-  -> resolved references
+Gleam source
+  -> tree-sitter concrete syntax tree
+  -> abstract syntax tree
 ```
 
-The parser keeps names as text. The resolver turns those names into stable
-symbol IDs and qualified member references that later compiler passes can use.
+A traditional compiler often shows a lexer before the parser:
 
-This chapter covers name resolution in more detail, including:
+```text
+characters -> tokens -> syntax tree
+```
 
-- lexical scope and shadowing
-- bindings, references, scopes, and symbol tables
-- namespaces, imports, and qualified names
-- pattern bindings, visibility, and package graphs
-- the resolver implemented in this compiler
+Tree-sitter handles the tokenizing and parsing together for us, but the ideas
+are still useful. Lexing explains how source text becomes meaningful pieces.
+Parsing explains how those pieces become a program structure. Syntax trees give
+later compiler passes a stable representation to inspect.
 
-[^1]: Pierre Neron, Andrew Tolmach, Eelco Visser, and Guido Wachsmuth, "A
-    Theory of Name Resolution":
-    https://researchr.org/publication/NeronTVW15
+This chapter covers this process in more detail, including:
+
+- lexing source text into tokens
+- parsing tokens into expression structure
+- using concrete and abstract syntax trees
+- reading the Gleam grammar through tree-sitter

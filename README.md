@@ -35,7 +35,9 @@ and explained.
 - [x] Emit WAT and assemble `.wasm`
 - [x] Execute exported scalar functions in Wasmtime tests
 - [ ] Compile full packages and dependencies
+      ([spec](./docs/src/internal/specs/01_project_model_and_modules.md))
 - [ ] Import type information from Gleam packages
+      ([spec](./docs/src/internal/specs/04_gleam_types_and_interfaces.md))
 
 ### Gleam language subset
 
@@ -49,9 +51,13 @@ and explained.
 - [x] Type declarations, aliases, constructors, fields, generics, and opaque
       type names in name resolution and type checking
 - [ ] Executable records, custom values, tuples, lists, and bit arrays
+      ([spec](./docs/src/internal/specs/07_core_ir_for_real_programs.md))
 - [ ] External functions and host imports
+      ([spec](./docs/src/internal/specs/09_stdlib_and_host_interop.md))
 - [ ] Advanced pattern matching over structured values
+      ([spec](./docs/src/internal/specs/06_pattern_matching.md))
 - [ ] Full generic type inference
+      ([spec](./docs/src/internal/specs/04_gleam_types_and_interfaces.md))
 
 ### WebAssembly output
 
@@ -63,8 +69,11 @@ and explained.
 - [x] Linear memory export and static string objects
 - [x] Bump allocation helper in the runtime prelude
 - [ ] Imported functions
+      ([spec](./docs/src/internal/specs/09_stdlib_and_host_interop.md))
 - [ ] Runtime-managed records, lists, tuples, and custom values
+      ([spec](./docs/src/internal/specs/05_runtime_representation.md))
 - [ ] Standard library and browser/WASI interop
+      ([spec](./docs/src/internal/specs/09_stdlib_and_host_interop.md))
 
 For more detail, see the book in [`docs/src`](./docs/src/introduction.md) and
 the current supported subset in

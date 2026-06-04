@@ -1,32 +1,19 @@
-# Lexing, parsing, and syntax trees
+# A tour of Gleam
 
-A compiler needs a structured view of a program before it can do much with it.
-Source code begins as text: characters in a file. The compiler turns that text
-into shapes it can inspect. A module can contain imports and functions. A
-function can contain parameters and a body. A body can contain expressions.
+Gleam is a statically typed functional language with a small, friendly syntax. It
+runs on the Erlang virtual machine and JavaScript runtimes, and it has a package
+manager, formatter, build tool, and standard library designed to be used
+together.[^1]
 
-For this project, the path is:
+This chapter introduces the language at a high level: modules, imports,
+packages, functional programming ideas, functions, values, custom types,
+records, lists, pattern matching, and type inference. The examples are based on
+the Gleam language tour.[^2]
 
-```text
-Gleam source
-  -> tree-sitter concrete syntax tree
-  -> abstract syntax tree
-```
+This chapter gives enough Gleam context to make the compiler chapters easier to
+read. A WebAssembly compiler for Gleam has to understand modules, names,
+expressions, typed data, pattern matching, and generic types before it can lower
+a program to executable code.
 
-A traditional compiler often shows a lexer before the parser:
-
-```text
-characters -> tokens -> syntax tree
-```
-
-Tree-sitter handles the tokenizing and parsing together for us, but the ideas
-are still useful. Lexing explains how source text becomes meaningful pieces.
-Parsing explains how those pieces become a program structure. Syntax trees give
-later compiler passes a stable representation to inspect.
-
-This chapter covers this process in more detail, including:
-
-- lexing source text into tokens
-- parsing tokens into expression structure
-- using concrete and abstract syntax trees
-- reading the Gleam grammar through tree-sitter
+[^1]: Gleam homepage: https://gleam.run/
+[^2]: Gleam language tour: https://github.com/gleam-lang/language-tour

@@ -1,141 +1,145 @@
-# Intermediate representations and lowering
+# Type systems
 
-A compiler usually does not translate source code directly into machine code or
-WebAssembly. It first translates the program into one or more intermediate
-representations, often shortened to IR. An IR is a compiler-friendly form of the
-program.[^1]
+A type system classifies values and expressions. In Gleam, `1` is an `Int`,
+`"hello"` is a `String`, `True` is a `Bool`, and a function has a function type
+that describes its parameters and return value.
 
-The source language is designed for people. The target language is designed for
-a machine or runtime. An IR sits between them. It gives the compiler a place to
-make evaluation order explicit, remove surface syntax, and use data structures
-that are easier to analyze or emit.
-
-## Why use an IR
-
-Consider a small Gleam function:
+Types let the compiler reject programs before they run:
 
 ```gleam
 fn id(x: Int) -> Int {
-  let y = x
-  y
+  x
+}
+
+fn main() {
+  id("not an int")
 }
 ```
 
-The syntax tree tells us this is a function with a parameter, a `let` binding,
-and a final expression. The IR can record a simpler sequence:
+The call to `id` is shaped correctly: it has one argument. Name resolution can
+also find the function named `id`. The problem is that the argument has the wrong
+type. `id` expects an `Int`, but the call passes a `String`.
+
+## Checking expressions
+
+A type checker walks expressions and assigns each one a type. Simple literals
+are direct:
 
 ```text
-function id(x: Int) -> Int
-  local y: Int
-  y = get x
-  return get y
+1       : Int
+1.5     : Float
+"hi"    : String
+True    : Bool
+Nil     : Nil
 ```
 
-This form is less concerned with Gleam syntax and more concerned with the work
-that must happen when the program runs. The local variable is explicit. The
-assignment is explicit. The final value is explicit. Values in this IR are typed,
-and variable references have already been turned into known locals or functions.
-
-IRs come in many forms. Some look like trees. Some look like instruction lists.
-Some use control-flow graphs. LLVM bitcode, for example, is a serialized form of
-LLVM IR that stores modules, functions, types, constants, and instructions in a
-compact binary format.[^2]
-
-The right IR depends on what the compiler needs to do. Ray Toal's notes on
-intermediate representations show several common choices, including syntax
-trees, three-address code, and stack-machine code.[^3]
-
-## Lowering
-
-Lowering is the act of translating from a higher-level representation into a
-lower-level one. Matt Warren describes lowering in the C# compiler as converting
-rich language constructs into simpler forms that later parts of the compiler can
-handle more easily.[^4]
-
-For this project, lowering means translating typed Gleam AST into core IR.
-Gleam has source-level ideas such as `let`, blocks, and `case`. Core IR keeps the
-same program meaning, but stores it in a smaller set of constructs:
-
-- functions
-- locals
-- local reads and writes
-- literals
-- direct calls
-- branch expressions
-- blocks with ordered instructions and a result
-
-A `let` expression is a good example:
+Variables get their types from bindings. In this function, the parameter
+annotation says that `name` is a `String`, so the expression `name` also has type
+`String`:
 
 ```gleam
-let y = x
-y
+fn echo(name: String) -> String {
+  name
+}
 ```
 
-The AST stores this as a `let` binding followed by a variable expression. The IR
-allocates a local for `y`, writes the lowered value of `x` into it, and reads
-`y` as the block result.
-
-```text
-local y: Int
-set y, get x
-result get y
-```
-
-## Evaluation order
-
-Source syntax can leave some details implicit. IR should make them explicit.
-In a block, expressions are evaluated from top to bottom:
+A `let` binding gets its type from the value on the right-hand side:
 
 ```gleam
 fn main() {
-  let one = 1
-  let two = one
-  two
+  let x = 1
+  x
 }
 ```
 
-The IR stores the two local writes in order, then stores the block result. This
-is helpful for WebAssembly because WebAssembly code generation also needs a clear
-order of instructions.
+Here `1` has type `Int`, so `x` has type `Int`, and the final expression has type
+`Int` too.
 
-## Locals
+## Function types
 
-Names are useful for people, but compilers often prefer stable IDs. During
-lowering, parameters and local bindings become locals:
+A function type records the parameter types and the return type. The function
+below has type `fn(Int) -> Int`:
 
-```text
-LocalId(0): x: Int
-LocalId(1): y: Int
+```gleam
+fn id(x: Int) -> Int {
+  x
+}
 ```
 
-A variable expression such as `y` becomes `LocalGet(LocalId(1))`. From this
-point on, the compiler does not need to search scopes to understand which `y` is
-being used. That work has already been reflected in the local allocation.
+A call checks two things:
 
-## Calls
+1. The value being called is a function.
+2. The argument types match the function's parameter types.
 
-A direct function call in Gleam:
+So this call is valid:
 
 ```gleam
 id(1)
 ```
 
-lowers to an IR call with a function name and lowered arguments:
+This call has the wrong arity:
 
-```rust
-Call {
-  function: "id",
-  arguments: [1]
+```gleam
+id(1, 2)
+```
+
+And this call has the wrong argument type:
+
+```gleam
+id("one")
+```
+
+Stephen Diehl's Typechecker Zoo shows this same core idea in several type
+systems: expressions are checked against rules, and those rules produce or
+compare types.[^1]
+
+## Inference and annotations
+
+Some languages require many type annotations. Some infer most types. Hindley-
+Milner is a famous family of inference algorithms used by languages in the ML
+tradition.[^2] It can infer types for many programs without requiring the
+programmer to write them down.
+
+A tiny example of inference is the `let` binding above. The programmer does not
+write `x: Int`, but the compiler can infer it from `1`.
+
+This compiler currently uses a smaller approach. Function parameters need type
+annotations, and local bindings can often be inferred from their values:
+
+```gleam
+fn add_one(x: Int) -> Int {
+  let one = 1
+  x
 }
 ```
 
-The type checker has already checked arity and argument types. Lowering can
-therefore focus on representation: what is called, what values are passed, and
-what type comes back.
+The annotation on `x` gives the checker a type for the parameter. The literal
+`1` gives the checker a type for `one`.
 
-## Branches
+A fuller inference system would introduce type variables, collect constraints,
+and solve those constraints. Hindley-Milner tutorials often present this as a
+process of generating equations such as "the argument type must equal the
+parameter type" and then unifying them.[^3]
 
-A simple `case` expression lowers into a branch expression:
+## Branches and pattern matching
+
+A `case` expression has subjects, patterns, and branch values:
+
+```gleam
+fn choose(x: Int) {
+  case x {
+    0 -> 1
+    _ -> 2
+  }
+}
+```
+
+The patterns are checked against the subject type. Since `x` is an `Int`, the
+literal pattern `0` is valid. The discard pattern `_` accepts the subject without
+introducing a name.
+
+The branch values also need to agree. This `case` has type `Int` because both
+branches return integers:
 
 ```gleam
 case x {
@@ -144,32 +148,52 @@ case x {
 }
 ```
 
-The IR stores the lowered subject, the patterns, and each branch body. This is
-still higher-level than raw WebAssembly branching, but it is lower-level than
-Gleam syntax. A later code generator can choose how to turn the branch into WASM
-blocks, comparisons, and jumps.
+This one is rejected because one branch returns an `Int` and the other returns a
+`String`:
 
-## What this compiler lowers today
+```gleam
+case x {
+  0 -> 1
+  _ -> "two"
+}
+```
 
-The current core IR handles:
+Pattern matching can become much richer than this. Real compilers often lower
+patterns into decision trees or related forms so matching can be checked and
+compiled efficiently.[^4] The current checker only needs the simpler question:
+does this pattern make sense for the subject type, and do all branches produce a
+compatible result?
 
-- modules and functions
-- function parameters
-- local allocation for parameters and `let` bindings
-- typed literals
-- local reads and writes
+## What this compiler checks today
+
+The current type checker handles:
+
+- `Int`, `Float`, `String`, `Bool`, and `Nil`
+- function types
+- typed function parameters
+- optional function return annotations
+- literals
+- variables
+- local `let` bindings
 - direct function calls
-- blocks with ordered instructions and a result
-- simple `case` expressions as branch expressions
-- source spans on IR nodes where useful
+- arity checks
+- argument type checks
+- simple `case` expressions
+- branch type compatibility
 
-The output is deterministic, which makes it suitable for snapshot-style tests and
-for reading while the compiler grows.
+It reports type errors with source spans, so errors point back to the expression
+or annotation that caused the problem.
 
-[^1]: Wikipedia, "Intermediate representation": https://en.wikipedia.org/wiki/Intermediate_representation
+[^1]: Stephen Diehl, "Typechecker Zoo": https://www.stephendiehl.com/posts/typechecker_zoo/
+[^2]: Stephen Diehl, "Hindley-Milner Inference": https://smunix.github.io/dev.stephendiehl.com/fun/006_hindley_milner.html
+[^3]: Himanshu Stimsina, "Implementing a Hindley-Milner Type System, Part 1": https://blog.stimsina.com/post/implementing-a-hindley-milner-type-system-part-1
+[^4]: Compiler Club, "Compiling Pattern Matching": https://compiler.club/compiling-pattern-matching/
 
-[^2]: LLVM, "LLVM Bitcode File Format": https://llvm.org/docs/BitCodeFormat.html
-
-[^3]: Ray Toal, "Intermediate Representations": https://cs.lmu.edu/~ray/notes/ir/
-
-[^4]: Matt Warren, "Lowering in the C# Compiler": https://mattwarren.org/2017/05/25/Lowering-in-the-C-Compiler/
+<!--
+TODO (research):
+  - Gleam's type inference rules and where annotations are required
+  - How Gleam checks function calls, operators, and branch compatibility
+  - Pattern typing for tuples, lists, records, and custom-type constructors
+  - Type information exposed by the official Gleam compiler for module interfaces
+  - How Hindley-Milner inference handles let-polymorphism and generic functions
+-->
