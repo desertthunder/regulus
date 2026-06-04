@@ -25,9 +25,10 @@ Emit WebAssembly for scalar and runtime-managed Gleam values.
       custom-type variants, and closures.
 - [x] Emit static data for literals and constants where possible.
 - [x] Emit runtime calls for allocation, string handling, bit-array segment
-      operations, list operations, equality, panic paths, and assertion failures.
-- [x] Emit safe field, tuple-element, list-head, list-tail, and bit-array segment
-      access according to the runtime representation.
+      operations, list operations, equality, panic paths, and assertion
+      failures.
+- [x] Emit safe field, tuple-element, list-head, list-tail, and bit-array
+      segment access according to the runtime representation.
 - [x] Add memory-layout tests in Wasmtime for each managed value kind, not only
       strings.
 
@@ -44,29 +45,29 @@ Emit WebAssembly for scalar and runtime-managed Gleam values.
 
 ### ABI, imports, and exports
 
-- [ ] Emit imports and exports using the host ABI.
-- [ ] Decide which public Gleam functions can be exported directly and which
+- [x] Emit imports and exports using the host ABI.
+- [x] Decide which public Gleam functions can be exported directly and which
       need wrappers.
-- [ ] Emit wrappers for strings and managed values crossing the host boundary.
-- [ ] Support Wasmtime, browser, and WASI target settings where selected by the
+- [x] Emit wrappers for strings and managed values crossing the host boundary.
+- [x] Support Wasmtime, browser, and WASI target settings where selected by the
       CLI.
-- [ ] Reject unsupported ABI shapes with diagnostics before WAT assembly.
+- [x] Reject unsupported ABI shapes with diagnostics before WAT assembly.
 
 ### Determinism and tests
 
-- [ ] Keep WAT output deterministic.
-- [ ] Add WAT snapshots for scalar, managed-value, control-flow, import, and
+- [x] Keep WAT output deterministic.
+- [x] Add WAT snapshots for scalar, managed-value, control-flow, import, and
       export cases.
-- [ ] Add Wasmtime execution tests for managed values, constructor matches,
+- [x] Add Wasmtime execution tests for managed values, constructor matches,
       string/list/bit-array operations, closure calls, and host imports.
-- [ ] Add runtime-backed Wasmtime tests for tuple, list, record, bit-string, and
+- [x] Add runtime-backed Wasmtime tests for tuple, list, record, bit-string, and
       custom-type constructor patterns after managed-value construction and
       inspection are implemented.
-- [ ] Add browser-oriented build tests where practical.
-- [ ] Ensure unsupported backend forms produce source-spanned diagnostics rather
+- [x] Add browser-oriented build tests where practical.
+- [x] Ensure unsupported backend forms produce source-spanned diagnostics rather
       than WAT assembly failures.
 
 ## Done when
 
-Real Gleam functions using managed values can be compiled to WASM and executed in
-Wasmtime, and unsupported backend shapes produce clear diagnostics.
+Real Gleam functions using managed values can be compiled to WASM and executed
+in Wasmtime, and unsupported backend shapes produce clear diagnostics.

@@ -25,6 +25,7 @@ pub fn emit(module: ir::Module) -> Result<WasmModule, Diagnostics> {
 
 pub fn emit_wat(module: &ir::Module) -> Result<String, Diagnostics> {
     let mut emitter = Emitter {
+        imports: String::new(),
         functions: String::new(),
         diagnostics: Vec::new(),
         data: Vec::new(),
@@ -59,7 +60,12 @@ pub fn emit_wat(module: &ir::Module) -> Result<String, Diagnostics> {
     }
 
     for function in &module.functions {
-        emitter.function(function);
+        match &function.abi.boundary {
+            ir::CallBoundary::HostImport { .. } | ir::CallBoundary::ModuleImport { .. } => {
+                emitter.import_function(function);
+            }
+            ir::CallBoundary::Internal | ir::CallBoundary::ModuleExport => emitter.function(function),
+        }
     }
 
     if !emitter.diagnostics.is_empty() {
@@ -70,6 +76,7 @@ pub fn emit_wat(module: &ir::Module) -> Result<String, Diagnostics> {
     if emitter.uses_runtime {
         wat.push_str(&runtime_prelude(emitter.config));
     }
+    wat.push_str(&emitter.imports);
     wat.push_str(&emitter.functions);
     for object in emitter.data {
         writeln!(
@@ -85,6 +92,7 @@ pub fn emit_wat(module: &ir::Module) -> Result<String, Diagnostics> {
 }
 
 struct Emitter {
+    imports: String,
     functions: String,
     diagnostics: Diagnostics,
     data: Vec<runtime::StaticObject>,
@@ -104,7 +112,38 @@ impl Emitter {
         }
     }
 
+    fn import_function(&mut self, function: &ir::Function) {
+        let import = match &function.abi.boundary {
+            ir::CallBoundary::HostImport { module, name } => (module.as_str(), name.as_str()),
+            ir::CallBoundary::ModuleImport { module } => (module.as_str(), function.name.as_str()),
+            ir::CallBoundary::Internal | ir::CallBoundary::ModuleExport => return,
+        };
+        if !self.validate_host_abi(function) {
+            return;
+        }
+
+        write!(
+            self.imports,
+            "  (import \"{}\" \"{}\" (func ${}",
+            import.0, import.1, function.name
+        )
+        .expect("write WAT");
+        for param in &function.params {
+            if let Some(type_) = wasm_type(&param.type_) {
+                write!(self.imports, " (param {type_})").expect("write WAT");
+            }
+        }
+        if let Some(return_type) = wasm_type(&function.return_type) {
+            write!(self.imports, " (result {return_type})").expect("write WAT");
+        }
+        self.imports.push_str("))\n");
+    }
+
     fn function(&mut self, function: &ir::Function) {
+        if !self.validate_host_abi(function) {
+            return;
+        }
+
         let return_type = match wasm_type(&function.return_type) {
             Some(return_type) => return_type,
             None if function.return_type == Type::Nil => "",
@@ -115,7 +154,7 @@ impl Emitter {
         };
 
         write!(self.functions, "  (func ${}", function.name).expect("write WAT");
-        if function.public {
+        if matches!(function.abi.boundary, ir::CallBoundary::ModuleExport) {
             write!(self.functions, " (export \"{}\")", function.name).expect("write WAT");
         }
 
@@ -685,6 +724,38 @@ impl Emitter {
         ))
     }
 
+    fn validate_host_abi(&mut self, function: &ir::Function) -> bool {
+        match function.abi.boundary {
+            ir::CallBoundary::Internal => return true,
+            ir::CallBoundary::ModuleExport
+            | ir::CallBoundary::ModuleImport { .. }
+            | ir::CallBoundary::HostImport { .. } => {}
+        }
+
+        let mut supported = true;
+        for param in &function.params {
+            if !is_supported_host_abi_type(&param.type_) {
+                self.unsupported_abi_type(&param.type_, param.span, &function.name);
+                supported = false;
+            }
+        }
+        if !matches!(function.return_type, Type::Nil) && !is_supported_host_abi_type(&function.return_type) {
+            self.unsupported_abi_type(&function.return_type, function.span, &function.name);
+            supported = false;
+        }
+        supported
+    }
+
+    fn unsupported_abi_type(&mut self, type_: &Type, span: crate::source::Span, function: &str) {
+        self.diagnostics.push(
+            Diagnostic::new(
+                DiagnosticCode::WasmError,
+                format!("function `{function}` has unsupported host ABI type `{type_:?}`"),
+            )
+            .with_label(Label::primary(span, "unsupported ABI type here")),
+        );
+    }
+
     fn unsupported_expression(&mut self, expression: &ir::Expression) {
         self.diagnostics.push(
             Diagnostic::new(
@@ -892,6 +963,22 @@ fn bit_array_bytes(bit_array: &ir::BitArrayLiteral) -> Vec<u8> {
     bytes
 }
 
+fn is_supported_host_abi_type(type_: &Type) -> bool {
+    matches!(
+        type_,
+        Type::Int
+            | Type::Float
+            | Type::Bool
+            | Type::String
+            | Type::BitArray
+            | Type::Tuple(_)
+            | Type::List(_)
+            | Type::Record { .. }
+            | Type::Custom { .. }
+            | Type::Function { .. }
+    )
+}
+
 fn wasm_type(type_: &Type) -> Option<&'static str> {
     match type_ {
         Type::Int => Some("i64"),
@@ -921,10 +1008,10 @@ mod tests {
     use crate::{
         ast, ir, parse, resolve,
         runtime::ObjectTag,
-        source::{SourceFile, SourceFileId},
+        source::{SourceFile, SourceFileId, Span},
         types,
     };
-    use wasmtime::{Engine, Instance, Module, Store};
+    use wasmtime::{Engine, Instance, Linker, Module, Store};
 
     fn compile_wasm(source: &str) -> WasmModule {
         let source = SourceFile::new(SourceFileId(0), source);
@@ -934,6 +1021,76 @@ mod tests {
         let typed = types::check(resolved).expect("type check source");
         let ir = ir::lower(typed).expect("lower source");
         emit(ir).expect("emit wasm")
+    }
+
+    fn int_expr(source: &str, span: Span) -> ir::Expression {
+        ir::Expression {
+            type_: Type::Int,
+            span,
+            kind: ExpressionKind::Literal(ir::Literal { kind: LiteralKind::Int, source: source.into() }),
+        }
+    }
+
+    fn int_body(source: &str, span: Span) -> ir::Block {
+        ir::Block { instructions: Vec::new(), result: Box::new(int_expr(source, span)), span }
+    }
+
+    fn ir_module(functions: Vec<ir::Function>, span: Span) -> ir::Module {
+        ir::Module {
+            span,
+            imports: Vec::new(),
+            declarations: Vec::new(),
+            constants: Vec::new(),
+            init: ir::ModuleInit::default(),
+            references: Vec::new(),
+            exports: Vec::new(),
+            functions,
+        }
+    }
+
+    fn host_import_module(span: Span) -> ir::Module {
+        let import_abi = ir::CallAbi {
+            params: vec![ir::AbiValue::from(&Type::Int)],
+            return_: Some(ir::AbiValue::from(&Type::Int)),
+            boundary: ir::CallBoundary::HostImport { module: "env".into(), name: "inc".into() },
+        };
+        let imported = ir::Function {
+            name: "host_inc".into(),
+            public: false,
+            params: vec![ir::Local { id: ir::LocalId(0), name: "x".into(), type_: Type::Int, span }],
+            locals: vec![ir::Local { id: ir::LocalId(0), name: "x".into(), type_: Type::Int, span }],
+            return_type: Type::Int,
+            abi: import_abi.clone(),
+            body: int_body("0", span),
+            span,
+        };
+        let exported = ir::Function {
+            name: "main".into(),
+            public: true,
+            params: Vec::new(),
+            locals: Vec::new(),
+            return_type: Type::Int,
+            abi: ir::CallAbi {
+                params: Vec::new(),
+                return_: Some(ir::AbiValue::from(&Type::Int)),
+                boundary: ir::CallBoundary::ModuleExport,
+            },
+            body: ir::Block {
+                instructions: Vec::new(),
+                result: Box::new(ir::Expression {
+                    type_: Type::Int,
+                    span,
+                    kind: ExpressionKind::DirectCall(ir::DirectCall {
+                        function: "host_inc".into(),
+                        arguments: vec![ir::CallArgument { label: None, value: int_expr("41", span), span }],
+                        abi: import_abi,
+                    }),
+                }),
+                span,
+            },
+            span,
+        };
+        ir_module(vec![imported, exported], span)
     }
 
     #[test]
@@ -961,6 +1118,74 @@ mod tests {
             "i32.const {}",
             runtime::RuntimeConfig::DEFAULT.static_data_start
         )));
+    }
+
+    #[test]
+    fn emits_host_import_before_exported_function() {
+        let module = host_import_module(Span::new(SourceFileId(0), 0, 0));
+
+        insta::assert_snapshot!(emit_wat(&module).expect("emit wat"), @r#"
+(module
+  (import "env" "inc" (func $host_inc (param i64) (result i64)))
+  (func $main (export "main") (result i64)
+    i64.const 41
+    call $host_inc
+  )
+)
+"#);
+    }
+
+    #[test]
+    fn runs_host_import_in_wasmtime() {
+        let wasm = emit(host_import_module(Span::new(SourceFileId(0), 0, 0))).expect("emit wasm");
+        let engine = Engine::default();
+        let module = Module::new(&engine, &wasm.bytes).expect("compile wasm module");
+        let mut store = Store::new(&engine, ());
+        let mut linker = Linker::new(&engine);
+        linker
+            .func_wrap("env", "inc", |value: i64| value + 1)
+            .expect("define import");
+        let instance = linker.instantiate(&mut store, &module).expect("instantiate module");
+        let main = instance
+            .get_typed_func::<(), i64>(&mut store, "main")
+            .expect("get main export");
+
+        assert_eq!(main.call(&mut store, ()).expect("call main"), 42);
+    }
+
+    #[test]
+    fn rejects_unsupported_export_abi_before_wat_assembly() {
+        let span = Span::new(SourceFileId(0), 0, 0);
+        let generic = Type::Generic("value".into());
+        let function = ir::Function {
+            name: "id".into(),
+            public: true,
+            params: vec![ir::Local { id: ir::LocalId(0), name: "x".into(), type_: generic.clone(), span }],
+            locals: vec![ir::Local { id: ir::LocalId(0), name: "x".into(), type_: generic.clone(), span }],
+            return_type: generic.clone(),
+            abi: ir::CallAbi {
+                params: vec![ir::AbiValue::from(&generic)],
+                return_: Some(ir::AbiValue::from(&generic)),
+                boundary: ir::CallBoundary::ModuleExport,
+            },
+            body: ir::Block {
+                instructions: Vec::new(),
+                result: Box::new(ir::Expression {
+                    type_: generic,
+                    span,
+                    kind: ExpressionKind::LocalGet(ir::LocalId(0)),
+                }),
+                span,
+            },
+            span,
+        };
+        let diagnostics = emit_wat(&ir_module(vec![function], span)).expect_err("unsupported ABI");
+
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains("unsupported host ABI"))
+        );
     }
 
     #[test]

@@ -53,7 +53,7 @@ TODO:
 # Development
 
 - [Supported subset](internal/supported_subset.md)
-- [Development changelog](CHANGELOG.md)
+- [Development changelog](./CHANGELOG.md)
 - [Tests & Documentation](internal/testing_docs.md)
 
 # Internal Docs
