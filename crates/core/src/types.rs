@@ -262,6 +262,19 @@ impl TypeChecker {
                     self.bind_pattern(&let_.pattern, &value_type);
                     Type::Nil
                 }
+                Statement::LetAssert(let_assert) => {
+                    let value_type = self.check_expression(&let_assert.value)?;
+                    if let Some(annotation) = &let_assert.type_annotation
+                        && let Some(expected) = self.parse_type_annotation(annotation)
+                    {
+                        self.expect_same(&expected, &value_type, let_assert.span);
+                    }
+                    if let Some(message) = &let_assert.message {
+                        self.check_expression(message);
+                    }
+                    self.bind_pattern(&let_assert.pattern, &value_type);
+                    Type::Nil
+                }
                 Statement::Expression(expression) => self.check_expression(expression)?,
             };
         }
@@ -371,6 +384,11 @@ impl TypeChecker {
                     for (pattern, subject_type) in clause.patterns.iter().zip(subject_types.iter()) {
                         self.bind_pattern(pattern, subject_type);
                     }
+                    if let Some(guard) = &clause.guard
+                        && let Some(guard_type) = self.check_expression(guard)
+                    {
+                        self.expect_same(&Type::Bool, &guard_type, guard.span());
+                    }
                     let clause_type = self.check_expression(&clause.value)?;
                     self.pop_scope();
 
@@ -398,6 +416,51 @@ impl TypeChecker {
             Pattern::String(literal) => self.expect_same(&Type::String, type_, literal.span),
             Pattern::Bool(literal) => self.expect_same(&Type::Bool, type_, literal.span),
             Pattern::Nil(literal) => self.expect_same(&Type::Nil, type_, literal.span),
+            Pattern::Tuple(tuple) => {
+                if let Type::Tuple(elements) = type_ {
+                    if tuple.elements.len() != elements.len() {
+                        self.diagnostics.push(
+                            Diagnostic::new(DiagnosticCode::TypeError, "tuple pattern has the wrong arity")
+                                .with_label(Label::primary(tuple.span, "wrong number of elements")),
+                        );
+                    }
+                    for (pattern, element_type) in tuple.elements.iter().zip(elements.iter()) {
+                        self.bind_pattern(pattern, element_type);
+                    }
+                } else {
+                    self.diagnostics.push(
+                        Diagnostic::new(DiagnosticCode::TypeError, "tuple pattern used with non-tuple value")
+                            .with_label(Label::primary(tuple.span, "tuple pattern here")),
+                    );
+                }
+            }
+            Pattern::List(list) => {
+                let Type::List(element_type) = type_ else {
+                    self.diagnostics.push(
+                        Diagnostic::new(DiagnosticCode::TypeError, "list pattern used with non-list value")
+                            .with_label(Label::primary(list.span, "list pattern here")),
+                    );
+                    return;
+                };
+                for pattern in &list.elements {
+                    self.bind_pattern(pattern, element_type);
+                }
+                if let Some(ast::ListPatternTail::Name(name)) = &list.tail {
+                    self.define(name.text.clone(), Type::List(element_type.clone()));
+                }
+            }
+            Pattern::Constructor(constructor) => self.diagnostics.push(
+                Diagnostic::new(DiagnosticCode::TypeError, "constructor patterns cannot be typed yet")
+                    .with_label(Label::primary(constructor.span, "constructor pattern here")),
+            ),
+            Pattern::Alias(alias) => {
+                self.bind_pattern(&alias.pattern, type_);
+                self.define(alias.alias.text.clone(), type_.clone());
+            }
+            Pattern::BitString(raw) => self.diagnostics.push(
+                Diagnostic::new(DiagnosticCode::TypeError, "bit string patterns cannot be typed yet")
+                    .with_label(Label::primary(raw.span, "bit string pattern here")),
+            ),
             Pattern::Raw(raw) => self.diagnostics.push(
                 Diagnostic::new(DiagnosticCode::TypeError, format!("unsupported pattern `{}`", raw.kind))
                     .with_label(Label::primary(raw.span, "unsupported pattern here")),

@@ -190,6 +190,10 @@ impl Lowerer {
                         ),
                     }
                 }
+                Statement::LetAssert(let_assert) => self.diagnostics.push(
+                    Diagnostic::new(DiagnosticCode::LoweringError, "let assert cannot be lowered")
+                        .with_label(Label::primary(let_assert.span, "unsupported let assert here")),
+                ),
                 Statement::Expression(expression) => result = self.lower_expression(context, expression)?,
             }
         }
@@ -256,6 +260,12 @@ impl Lowerer {
                         .zip(subjects.iter())
                         .map(|(pattern, subject)| self.lower_pattern(context, pattern, &subject.type_))
                         .collect::<Option<Vec<_>>>();
+                    if let Some(guard) = &clause.guard {
+                        self.diagnostics.push(
+                            Diagnostic::new(DiagnosticCode::LoweringError, "case guards cannot be lowered")
+                                .with_label(Label::primary(ast_expression_span(guard), "unsupported guard here")),
+                        );
+                    }
                     let body = self.lower_expression(context, &clause.value)?;
                     context.pop_scope();
                     type_ = body.type_.clone();
@@ -313,6 +323,26 @@ impl Lowerer {
                 kind: LiteralKind::Nil,
                 source: literal.source.clone(),
             })),
+            Pattern::Tuple(tuple) => {
+                self.unsupported_pattern(tuple.span, "tuple pattern");
+                None
+            }
+            Pattern::List(list) => {
+                self.unsupported_pattern(list.span, "list pattern");
+                None
+            }
+            Pattern::Constructor(constructor) => {
+                self.unsupported_pattern(constructor.span, "constructor pattern");
+                None
+            }
+            Pattern::Alias(alias) => {
+                self.unsupported_pattern(alias.span, "alias pattern");
+                None
+            }
+            Pattern::BitString(raw) => {
+                self.unsupported_pattern(raw.span, "bit string pattern");
+                None
+            }
             Pattern::Raw(raw) => {
                 self.diagnostics.push(
                     Diagnostic::new(
@@ -324,6 +354,13 @@ impl Lowerer {
                 None
             }
         }
+    }
+
+    fn unsupported_pattern(&mut self, span: Span, kind: &str) {
+        self.diagnostics.push(
+            Diagnostic::new(DiagnosticCode::LoweringError, format!("{kind} cannot be lowered"))
+                .with_label(Label::primary(span, "unsupported pattern here")),
+        );
     }
 
     fn nil_expression(&self, span: Span) -> Expression {
@@ -373,6 +410,18 @@ impl FunctionContext {
 
     fn pop_scope(&mut self) {
         self.scopes.pop();
+    }
+}
+
+fn ast_expression_span(expression: &AstExpression) -> Span {
+    match expression {
+        AstExpression::Literal(literal) => literal.span,
+        AstExpression::Variable(name) => name.span,
+        AstExpression::Call(call) => call.span,
+        AstExpression::FieldAccess(field_access) => field_access.span,
+        AstExpression::Block(block) => block.span,
+        AstExpression::Case(case) => case.span,
+        AstExpression::Raw(raw) => raw.span,
     }
 }
 

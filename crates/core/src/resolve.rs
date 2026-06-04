@@ -333,6 +333,13 @@ impl Resolver {
                     self.resolve_expression(scope, &let_.value);
                     self.bind_pattern(scope, &let_.pattern, SymbolKind::Local);
                 }
+                Statement::LetAssert(let_assert) => {
+                    self.resolve_expression(scope, &let_assert.value);
+                    if let Some(message) = &let_assert.message {
+                        self.resolve_expression(scope, message);
+                    }
+                    self.bind_pattern(scope, &let_assert.pattern, SymbolKind::Local);
+                }
                 Statement::Expression(expression) => self.resolve_expression(scope, expression),
             }
         }
@@ -362,6 +369,9 @@ impl Resolver {
                     let clause_scope = self.new_scope(Some(scope));
                     for pattern in &clause.patterns {
                         self.bind_pattern(clause_scope, pattern, SymbolKind::Local);
+                    }
+                    if let Some(guard) = &clause.guard {
+                        self.resolve_expression(clause_scope, guard);
                     }
                     self.resolve_expression(clause_scope, &clause.value);
                 }
@@ -417,12 +427,37 @@ impl Resolver {
             Pattern::Name(name) => {
                 self.define(scope, name, Namespace::Value, kind);
             }
+            Pattern::Tuple(tuple) => {
+                for element in &tuple.elements {
+                    self.bind_pattern(scope, element, kind.clone());
+                }
+            }
+            Pattern::List(list) => {
+                for element in &list.elements {
+                    self.bind_pattern(scope, element, kind.clone());
+                }
+                if let Some(ast::ListPatternTail::Name(name)) = &list.tail {
+                    self.define(scope, name, Namespace::Value, kind.clone());
+                }
+            }
+            Pattern::Constructor(constructor) => {
+                for argument in &constructor.arguments {
+                    if let Some(pattern) = &argument.pattern {
+                        self.bind_pattern(scope, pattern, kind.clone());
+                    }
+                }
+            }
+            Pattern::Alias(alias) => {
+                self.bind_pattern(scope, &alias.pattern, kind.clone());
+                self.define(scope, &alias.alias, Namespace::Value, kind);
+            }
             Pattern::Discard(_)
             | Pattern::Integer(_)
             | Pattern::Float(_)
             | Pattern::String(_)
             | Pattern::Bool(_)
             | Pattern::Nil(_)
+            | Pattern::BitString(_)
             | Pattern::Raw(_) => {}
         }
     }

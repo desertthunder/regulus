@@ -84,6 +84,7 @@ pub struct Block {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Statement {
     Let(Let),
+    LetAssert(LetAssert),
     Expression(Expression),
 }
 
@@ -96,6 +97,15 @@ pub struct Let {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LetAssert {
+    pub span: Span,
+    pub pattern: Pattern,
+    pub type_annotation: Option<TypeAnnotation>,
+    pub value: Expression,
+    pub message: Option<Expression>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Pattern {
     Name(Name),
     Discard(Span),
@@ -104,7 +114,59 @@ pub enum Pattern {
     String(Literal),
     Bool(Literal),
     Nil(Literal),
+    Tuple(TuplePattern),
+    List(ListPattern),
+    Constructor(ConstructorPattern),
+    Alias(AliasPattern),
+    BitString(RawSyntax),
     Raw(RawSyntax),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TuplePattern {
+    pub span: Span,
+    pub elements: Vec<Pattern>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListPattern {
+    pub span: Span,
+    pub elements: Vec<Pattern>,
+    pub tail: Option<ListPatternTail>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ListPatternTail {
+    Name(Name),
+    Discard(Span),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConstructorPattern {
+    pub span: Span,
+    pub constructor: ConstructorName,
+    pub arguments: Vec<RecordPatternArgument>,
+    pub spread: Option<Span>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConstructorName {
+    Local(Name),
+    Remote { span: Span, module: Name, name: Name },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecordPatternArgument {
+    pub span: Span,
+    pub label: Option<Name>,
+    pub pattern: Option<Pattern>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AliasPattern {
+    pub span: Span,
+    pub pattern: Box<Pattern>,
+    pub alias: Name,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -166,6 +228,7 @@ pub struct Case {
 pub struct CaseClause {
     pub span: Span,
     pub patterns: Vec<Pattern>,
+    pub guard: Option<Expression>,
     pub value: Expression,
 }
 
@@ -311,6 +374,7 @@ impl AstBuilder<'_> {
     fn statement(&self, node: Node<'_>) -> Result<Statement, Diagnostics> {
         match node.kind() {
             "let" => Ok(Statement::Let(self.let_statement(node)?)),
+            "let_assert" => Ok(Statement::LetAssert(self.let_assert_statement(node)?)),
             _ => Ok(Statement::Expression(self.expression(node)?)),
         }
     }
@@ -328,6 +392,27 @@ impl AstBuilder<'_> {
             pattern: self.pattern(pattern_node)?,
             type_annotation: self.type_field(node, "type")?,
             value: self.expression(value_node)?,
+        })
+    }
+
+    fn let_assert_statement(&self, node: Node<'_>) -> Result<LetAssert, Diagnostics> {
+        let pattern_node = node
+            .child_by_field_name("pattern")
+            .ok_or_else(|| vec![self.missing(node, "let assert pattern")])?;
+        let value_node = node
+            .child_by_field_name("value")
+            .ok_or_else(|| vec![self.missing(node, "let assert value")])?;
+        let message = node
+            .child_by_field_name("message")
+            .map(|message| self.expression(message))
+            .transpose()?;
+
+        Ok(LetAssert {
+            span: self.span(node),
+            pattern: self.pattern(pattern_node)?,
+            type_annotation: self.type_field(node, "type")?,
+            value: self.expression(value_node)?,
+            message,
         })
     }
 
@@ -434,49 +519,203 @@ impl AstBuilder<'_> {
         let value_node = node
             .child_by_field_name("value")
             .ok_or_else(|| vec![self.missing(node, "case clause value")])?;
+        let guard = node
+            .child_by_field_name("guard")
+            .and_then(|guard| self.named_children(guard).into_iter().find(|child| child.is_named()))
+            .map(|guard| self.expression(guard))
+            .transpose()?;
 
         Ok(CaseClause {
             span: self.span(node),
-            patterns: self
-                .named_children(patterns_node)
-                .into_iter()
-                .map(|child| self.case_clause_pattern(child))
-                .collect::<Result<Vec<_>, _>>()?,
+            patterns: self.case_clause_patterns(patterns_node)?,
+            guard,
             value: self.expression(value_node)?,
         })
     }
 
-    fn case_clause_pattern(&self, node: Node<'_>) -> Result<Pattern, Diagnostics> {
-        let child = self
-            .named_children(node)
-            .into_iter()
-            .next()
-            .ok_or_else(|| vec![self.missing(node, "case clause pattern")])?;
-        self.pattern(child)
+    fn case_clause_patterns(&self, node: Node<'_>) -> Result<Vec<Pattern>, Diagnostics> {
+        let mut patterns = Vec::new();
+        for child in self.named_children(node) {
+            if child.kind() == "case_clause_pattern" {
+                patterns.extend(self.case_clause_pattern(child)?);
+            }
+        }
+        Ok(patterns)
+    }
+
+    fn case_clause_pattern(&self, node: Node<'_>) -> Result<Vec<Pattern>, Diagnostics> {
+        self.pattern_sequence(
+            self.named_children(node)
+                .into_iter()
+                .filter(|child| child.kind() != "list_pattern_tail" && child.kind() != "pattern_spread")
+                .collect(),
+        )
     }
 
     fn pattern(&self, node: Node<'_>) -> Result<Pattern, Diagnostics> {
-        match node.kind() {
-            "identifier" => Ok(Pattern::Name(self.name(node))),
-            "discard" => Ok(Pattern::Discard(self.span(node))),
-            "integer" => Ok(Pattern::Integer(self.literal(node, LiteralKind::Int))),
-            "float" => Ok(Pattern::Float(self.literal(node, LiteralKind::Float))),
-            "string" => Ok(Pattern::String(self.literal(node, LiteralKind::String))),
-            "record" | "record_pattern" => match self.text(node) {
-                "True" | "False" => Ok(Pattern::Bool(Literal {
+        let pattern = match node.kind() {
+            "identifier" => Pattern::Name(self.name(node)),
+            "discard" => Pattern::Discard(self.span(node)),
+            "integer" => Pattern::Integer(self.literal(node, LiteralKind::Int)),
+            "float" => Pattern::Float(self.literal(node, LiteralKind::Float)),
+            "string" => Pattern::String(self.literal(node, LiteralKind::String)),
+            "tuple_pattern" => {
+                Pattern::Tuple(TuplePattern { span: self.span(node), elements: self.pattern_children(node)? })
+            }
+            "list_pattern" => self.list_pattern(node)?,
+            "record" | "record_pattern" => self.constructor_pattern(node)?,
+            "bit_string_pattern" => Pattern::BitString(self.raw(node)),
+            _ => Pattern::Raw(self.raw(node)),
+        };
+
+        if let Some(assign) = node.child_by_field_name("assign") {
+            let alias = self
+                .named_children(assign)
+                .into_iter()
+                .find(|child| child.kind() == "identifier")
+                .map(|child| self.name(child))
+                .ok_or_else(|| vec![self.missing(assign, "pattern alias")])?;
+            Ok(Pattern::Alias(AliasPattern {
+                span: self.span(node),
+                pattern: Box::new(pattern),
+                alias,
+            }))
+        } else {
+            Ok(pattern)
+        }
+    }
+
+    fn pattern_children(&self, node: Node<'_>) -> Result<Vec<Pattern>, Diagnostics> {
+        self.pattern_sequence(
+            self.named_children(node)
+                .into_iter()
+                .filter(|child| child.kind() != "list_pattern_tail" && child.kind() != "pattern_spread")
+                .collect(),
+        )
+    }
+
+    fn pattern_sequence(&self, children: Vec<Node<'_>>) -> Result<Vec<Pattern>, Diagnostics> {
+        let mut patterns = Vec::new();
+        let mut index = 0;
+        while index < children.len() {
+            let child = children[index];
+            let pattern = self.pattern(child)?;
+            if let Some(alias_node) = children.get(index + 1).copied()
+                && alias_node.kind() == "identifier"
+                && self
+                    .text_between(child.end_byte(), alias_node.start_byte())
+                    .contains("as")
+            {
+                patterns.push(Pattern::Alias(AliasPattern {
+                    span: Span::new(self.source.id, child.start_byte(), alias_node.end_byte()),
+                    pattern: Box::new(pattern),
+                    alias: self.name(alias_node),
+                }));
+                index += 2;
+            } else {
+                patterns.push(pattern);
+                index += 1;
+            }
+        }
+        Ok(patterns)
+    }
+
+    fn list_pattern(&self, node: Node<'_>) -> Result<Pattern, Diagnostics> {
+        let elements = self.pattern_children(node)?;
+        let tail = self
+            .named_children(node)
+            .into_iter()
+            .find(|child| child.kind() == "list_pattern_tail")
+            .map(|tail| self.list_pattern_tail(tail))
+            .transpose()?;
+
+        Ok(Pattern::List(ListPattern { span: self.span(node), elements, tail }))
+    }
+
+    fn list_pattern_tail(&self, node: Node<'_>) -> Result<ListPatternTail, Diagnostics> {
+        let Some(child) = self.named_children(node).into_iter().next() else {
+            return Ok(ListPatternTail::Discard(self.span(node)));
+        };
+        match child.kind() {
+            "identifier" => Ok(ListPatternTail::Name(self.name(child))),
+            "discard" => Ok(ListPatternTail::Discard(self.span(child))),
+            _ => Err(vec![self.unsupported(child)]),
+        }
+    }
+
+    fn constructor_pattern(&self, node: Node<'_>) -> Result<Pattern, Diagnostics> {
+        match self.text(node) {
+            "True" | "False" => {
+                return Ok(Pattern::Bool(Literal {
                     span: self.span(node),
                     kind: LiteralKind::Bool,
                     source: self.text(node).to_string(),
-                })),
-                "Nil" => Ok(Pattern::Nil(Literal {
+                }));
+            }
+            "Nil" => {
+                return Ok(Pattern::Nil(Literal {
                     span: self.span(node),
                     kind: LiteralKind::Nil,
                     source: self.text(node).to_string(),
-                })),
-                _ => Ok(Pattern::Raw(self.raw(node))),
-            },
-            _ => Ok(Pattern::Raw(self.raw(node))),
+                }));
+            }
+            _ => {}
         }
+
+        let name_node = node
+            .child_by_field_name("name")
+            .ok_or_else(|| vec![self.missing(node, "constructor pattern name")])?;
+        let constructor = self.constructor_name(name_node)?;
+        let arguments_node = node.child_by_field_name("arguments");
+        let arguments = arguments_node
+            .map(|arguments| self.record_pattern_arguments(arguments))
+            .transpose()?
+            .unwrap_or_default();
+        let spread = arguments_node
+            .and_then(|arguments| {
+                self.named_children(arguments)
+                    .into_iter()
+                    .find(|child| child.kind() == "pattern_spread")
+            })
+            .map(|spread| self.span(spread));
+
+        Ok(Pattern::Constructor(ConstructorPattern {
+            span: self.span(node),
+            constructor,
+            arguments,
+            spread,
+        }))
+    }
+
+    fn constructor_name(&self, node: Node<'_>) -> Result<ConstructorName, Diagnostics> {
+        match node.kind() {
+            "constructor_name" => Ok(ConstructorName::Local(self.name(node))),
+            "remote_constructor_name" => {
+                let module = self.required_name_field(node, "module")?;
+                let name = self.required_name_field(node, "name")?;
+                Ok(ConstructorName::Remote { span: self.span(node), module, name })
+            }
+            _ => Err(vec![self.unsupported(node)]),
+        }
+    }
+
+    fn record_pattern_arguments(&self, node: Node<'_>) -> Result<Vec<RecordPatternArgument>, Diagnostics> {
+        self.named_children(node)
+            .into_iter()
+            .filter(|child| child.kind() == "record_pattern_argument")
+            .map(|child| self.record_pattern_argument(child))
+            .collect()
+    }
+
+    fn record_pattern_argument(&self, node: Node<'_>) -> Result<RecordPatternArgument, Diagnostics> {
+        Ok(RecordPatternArgument {
+            span: self.span(node),
+            label: self.name_field(node, "label")?,
+            pattern: node
+                .child_by_field_name("pattern")
+                .map(|pattern| self.pattern(pattern))
+                .transpose()?,
+        })
     }
 
     fn type_field(&self, node: Node<'_>, field: &str) -> Result<Option<TypeAnnotation>, Diagnostics> {
@@ -514,6 +753,10 @@ impl AstBuilder<'_> {
     fn text(&self, node: Node<'_>) -> &str {
         node.utf8_text(self.source.text.as_bytes())
             .expect("tree-sitter node should point at valid source text")
+    }
+
+    fn text_between(&self, start: usize, end: usize) -> &str {
+        &self.source.text[start..end]
     }
 
     fn span(&self, node: Node<'_>) -> Span {
@@ -618,5 +861,12 @@ pub fn main() {
         );
 
         assert_eq!(ast.functions[0].body.statements.len(), 2);
+    }
+
+    #[test]
+    fn represents_pattern_matching_syntax() {
+        let ast = parse_ast(include_str!("../../../fixtures/ast/pattern_matching.gleam"));
+
+        insta::assert_debug_snapshot!(ast.functions[0].body.statements);
     }
 }

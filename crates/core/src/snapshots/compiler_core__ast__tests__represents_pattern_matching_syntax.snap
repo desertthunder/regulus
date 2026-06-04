@@ -1,0 +1,661 @@
+---
+source: crates/core/src/ast.rs
+expression: "ast.functions[0].body.statements"
+---
+[
+    LetAssert(
+        LetAssert {
+            span: Span {
+                file_id: SourceFileId(
+                    0,
+                ),
+                start: 145,
+                end: 196,
+            },
+            pattern: Tuple(
+                TuplePattern {
+                    span: Span {
+                        file_id: SourceFileId(
+                            0,
+                        ),
+                        start: 156,
+                        end: 167,
+                    },
+                    elements: [
+                        Name(
+                            Name {
+                                span: Span {
+                                    file_id: SourceFileId(
+                                        0,
+                                    ),
+                                    start: 158,
+                                    end: 163,
+                                },
+                                text: "first",
+                            },
+                        ),
+                        Discard(
+                            Span {
+                                file_id: SourceFileId(
+                                    0,
+                                ),
+                                start: 165,
+                                end: 166,
+                            },
+                        ),
+                    ],
+                },
+            ),
+            type_annotation: None,
+            value: Variable(
+                Name {
+                    span: Span {
+                        file_id: SourceFileId(
+                            0,
+                        ),
+                        start: 170,
+                        end: 174,
+                    },
+                    text: "pair",
+                },
+            ),
+            message: Some(
+                Literal(
+                    Literal {
+                        span: Span {
+                            file_id: SourceFileId(
+                                0,
+                            ),
+                            start: 178,
+                            end: 196,
+                        },
+                        kind: String,
+                        source: "\"expected a tuple\"",
+                    },
+                ),
+            ),
+        },
+    ),
+    Expression(
+        Case(
+            Case {
+                span: Span {
+                    file_id: SourceFileId(
+                        0,
+                    ),
+                    start: 200,
+                    end: 423,
+                },
+                subjects: [
+                    Variable(
+                        Name {
+                            span: Span {
+                                file_id: SourceFileId(
+                                    0,
+                                ),
+                                start: 205,
+                                end: 210,
+                            },
+                            text: "items",
+                        },
+                    ),
+                    Variable(
+                        Name {
+                            span: Span {
+                                file_id: SourceFileId(
+                                    0,
+                                ),
+                                start: 212,
+                                end: 218,
+                            },
+                            text: "result",
+                        },
+                    ),
+                ],
+                clauses: [
+                    CaseClause {
+                        span: Span {
+                            file_id: SourceFileId(
+                                0,
+                            ),
+                            start: 225,
+                            end: 271,
+                        },
+                        patterns: [
+                            List(
+                                ListPattern {
+                                    span: Span {
+                                        file_id: SourceFileId(
+                                            0,
+                                        ),
+                                        start: 225,
+                                        end: 239,
+                                    },
+                                    elements: [
+                                        Name(
+                                            Name {
+                                                span: Span {
+                                                    file_id: SourceFileId(
+                                                        0,
+                                                    ),
+                                                    start: 226,
+                                                    end: 230,
+                                                },
+                                                text: "head",
+                                            },
+                                        ),
+                                    ],
+                                    tail: Some(
+                                        Name(
+                                            Name {
+                                                span: Span {
+                                                    file_id: SourceFileId(
+                                                        0,
+                                                    ),
+                                                    start: 234,
+                                                    end: 238,
+                                                },
+                                                text: "tail",
+                                            },
+                                        ),
+                                    ),
+                                },
+                            ),
+                            Constructor(
+                                ConstructorPattern {
+                                    span: Span {
+                                        file_id: SourceFileId(
+                                            0,
+                                        ),
+                                        start: 241,
+                                        end: 250,
+                                    },
+                                    constructor: Local(
+                                        Name {
+                                            span: Span {
+                                                file_id: SourceFileId(
+                                                    0,
+                                                ),
+                                                start: 241,
+                                                end: 243,
+                                            },
+                                            text: "Ok",
+                                        },
+                                    ),
+                                    arguments: [
+                                        RecordPatternArgument {
+                                            span: Span {
+                                                file_id: SourceFileId(
+                                                    0,
+                                                ),
+                                                start: 244,
+                                                end: 249,
+                                            },
+                                            label: None,
+                                            pattern: Some(
+                                                Name(
+                                                    Name {
+                                                        span: Span {
+                                                            file_id: SourceFileId(
+                                                                0,
+                                                            ),
+                                                            start: 244,
+                                                            end: 249,
+                                                        },
+                                                        text: "value",
+                                                    },
+                                                ),
+                                            ),
+                                        },
+                                    ],
+                                    spread: None,
+                                },
+                            ),
+                        ],
+                        guard: Some(
+                            Raw(
+                                RawSyntax {
+                                    span: Span {
+                                        file_id: SourceFileId(
+                                            0,
+                                        ),
+                                        start: 254,
+                                        end: 263,
+                                    },
+                                    kind: "binary_expression",
+                                    source: "value > 0",
+                                },
+                            ),
+                        ),
+                        value: Variable(
+                            Name {
+                                span: Span {
+                                    file_id: SourceFileId(
+                                        0,
+                                    ),
+                                    start: 267,
+                                    end: 271,
+                                },
+                                text: "head",
+                            },
+                        ),
+                    },
+                    CaseClause {
+                        span: Span {
+                            file_id: SourceFileId(
+                                0,
+                            ),
+                            start: 276,
+                            end: 312,
+                        },
+                        patterns: [
+                            List(
+                                ListPattern {
+                                    span: Span {
+                                        file_id: SourceFileId(
+                                            0,
+                                        ),
+                                        start: 276,
+                                        end: 287,
+                                    },
+                                    elements: [
+                                        Discard(
+                                            Span {
+                                                file_id: SourceFileId(
+                                                    0,
+                                                ),
+                                                start: 277,
+                                                end: 278,
+                                            },
+                                        ),
+                                        Name(
+                                            Name {
+                                                span: Span {
+                                                    file_id: SourceFileId(
+                                                        0,
+                                                    ),
+                                                    start: 280,
+                                                    end: 286,
+                                                },
+                                                text: "second",
+                                            },
+                                        ),
+                                    ],
+                                    tail: None,
+                                },
+                            ),
+                            Constructor(
+                                ConstructorPattern {
+                                    span: Span {
+                                        file_id: SourceFileId(
+                                            0,
+                                        ),
+                                        start: 289,
+                                        end: 302,
+                                    },
+                                    constructor: Local(
+                                        Name {
+                                            span: Span {
+                                                file_id: SourceFileId(
+                                                    0,
+                                                ),
+                                                start: 289,
+                                                end: 294,
+                                            },
+                                            text: "Error",
+                                        },
+                                    ),
+                                    arguments: [
+                                        RecordPatternArgument {
+                                            span: Span {
+                                                file_id: SourceFileId(
+                                                    0,
+                                                ),
+                                                start: 295,
+                                                end: 301,
+                                            },
+                                            label: None,
+                                            pattern: Some(
+                                                Name(
+                                                    Name {
+                                                        span: Span {
+                                                            file_id: SourceFileId(
+                                                                0,
+                                                            ),
+                                                            start: 295,
+                                                            end: 301,
+                                                        },
+                                                        text: "reason",
+                                                    },
+                                                ),
+                                            ),
+                                        },
+                                    ],
+                                    spread: None,
+                                },
+                            ),
+                        ],
+                        guard: None,
+                        value: Variable(
+                            Name {
+                                span: Span {
+                                    file_id: SourceFileId(
+                                        0,
+                                    ),
+                                    start: 306,
+                                    end: 312,
+                                },
+                                text: "second",
+                            },
+                        ),
+                    },
+                    CaseClause {
+                        span: Span {
+                            file_id: SourceFileId(
+                                0,
+                            ),
+                            start: 317,
+                            end: 354,
+                        },
+                        patterns: [
+                            Constructor(
+                                ConstructorPattern {
+                                    span: Span {
+                                        file_id: SourceFileId(
+                                            0,
+                                        ),
+                                        start: 317,
+                                        end: 343,
+                                    },
+                                    constructor: Local(
+                                        Name {
+                                            span: Span {
+                                                file_id: SourceFileId(
+                                                    0,
+                                                ),
+                                                start: 317,
+                                                end: 323,
+                                            },
+                                            text: "Person",
+                                        },
+                                    ),
+                                    arguments: [
+                                        RecordPatternArgument {
+                                            span: Span {
+                                                file_id: SourceFileId(
+                                                    0,
+                                                ),
+                                                start: 324,
+                                                end: 334,
+                                            },
+                                            label: Some(
+                                                Name {
+                                                    span: Span {
+                                                        file_id: SourceFileId(
+                                                            0,
+                                                        ),
+                                                        start: 324,
+                                                        end: 328,
+                                                    },
+                                                    text: "name",
+                                                },
+                                            ),
+                                            pattern: Some(
+                                                Name(
+                                                    Name {
+                                                        span: Span {
+                                                            file_id: SourceFileId(
+                                                                0,
+                                                            ),
+                                                            start: 330,
+                                                            end: 334,
+                                                        },
+                                                        text: "name",
+                                                    },
+                                                ),
+                                            ),
+                                        },
+                                        RecordPatternArgument {
+                                            span: Span {
+                                                file_id: SourceFileId(
+                                                    0,
+                                                ),
+                                                start: 336,
+                                                end: 342,
+                                            },
+                                            label: Some(
+                                                Name {
+                                                    span: Span {
+                                                        file_id: SourceFileId(
+                                                            0,
+                                                        ),
+                                                        start: 336,
+                                                        end: 339,
+                                                    },
+                                                    text: "age",
+                                                },
+                                            ),
+                                            pattern: Some(
+                                                Discard(
+                                                    Span {
+                                                        file_id: SourceFileId(
+                                                            0,
+                                                        ),
+                                                        start: 341,
+                                                        end: 342,
+                                                    },
+                                                ),
+                                            ),
+                                        },
+                                    ],
+                                    spread: None,
+                                },
+                            ),
+                            Discard(
+                                Span {
+                                    file_id: SourceFileId(
+                                        0,
+                                    ),
+                                    start: 345,
+                                    end: 346,
+                                },
+                            ),
+                        ],
+                        guard: None,
+                        value: Variable(
+                            Name {
+                                span: Span {
+                                    file_id: SourceFileId(
+                                        0,
+                                    ),
+                                    start: 350,
+                                    end: 354,
+                                },
+                                text: "name",
+                            },
+                        ),
+                    },
+                    CaseClause {
+                        span: Span {
+                            file_id: SourceFileId(
+                                0,
+                            ),
+                            start: 359,
+                            end: 374,
+                        },
+                        patterns: [
+                            Tuple(
+                                TuplePattern {
+                                    span: Span {
+                                        file_id: SourceFileId(
+                                            0,
+                                        ),
+                                        start: 359,
+                                        end: 366,
+                                    },
+                                    elements: [
+                                        Name(
+                                            Name {
+                                                span: Span {
+                                                    file_id: SourceFileId(
+                                                        0,
+                                                    ),
+                                                    start: 361,
+                                                    end: 362,
+                                                },
+                                                text: "a",
+                                            },
+                                        ),
+                                        Name(
+                                            Name {
+                                                span: Span {
+                                                    file_id: SourceFileId(
+                                                        0,
+                                                    ),
+                                                    start: 364,
+                                                    end: 365,
+                                                },
+                                                text: "b",
+                                            },
+                                        ),
+                                    ],
+                                },
+                            ),
+                            Discard(
+                                Span {
+                                    file_id: SourceFileId(
+                                        0,
+                                    ),
+                                    start: 368,
+                                    end: 369,
+                                },
+                            ),
+                        ],
+                        guard: None,
+                        value: Variable(
+                            Name {
+                                span: Span {
+                                    file_id: SourceFileId(
+                                        0,
+                                    ),
+                                    start: 373,
+                                    end: 374,
+                                },
+                                text: "a",
+                            },
+                        ),
+                    },
+                    CaseClause {
+                        span: Span {
+                            file_id: SourceFileId(
+                                0,
+                            ),
+                            start: 379,
+                            end: 405,
+                        },
+                        patterns: [
+                            Alias(
+                                AliasPattern {
+                                    span: Span {
+                                        file_id: SourceFileId(
+                                            0,
+                                        ),
+                                        start: 379,
+                                        end: 393,
+                                    },
+                                    pattern: Name(
+                                        Name {
+                                            span: Span {
+                                                file_id: SourceFileId(
+                                                    0,
+                                                ),
+                                                start: 379,
+                                                end: 384,
+                                            },
+                                            text: "value",
+                                        },
+                                    ),
+                                    alias: Name {
+                                        span: Span {
+                                            file_id: SourceFileId(
+                                                0,
+                                            ),
+                                            start: 388,
+                                            end: 393,
+                                        },
+                                        text: "alias",
+                                    },
+                                },
+                            ),
+                            Discard(
+                                Span {
+                                    file_id: SourceFileId(
+                                        0,
+                                    ),
+                                    start: 395,
+                                    end: 396,
+                                },
+                            ),
+                        ],
+                        guard: None,
+                        value: Variable(
+                            Name {
+                                span: Span {
+                                    file_id: SourceFileId(
+                                        0,
+                                    ),
+                                    start: 400,
+                                    end: 405,
+                                },
+                                text: "alias",
+                            },
+                        ),
+                    },
+                    CaseClause {
+                        span: Span {
+                            file_id: SourceFileId(
+                                0,
+                            ),
+                            start: 410,
+                            end: 419,
+                        },
+                        patterns: [
+                            Discard(
+                                Span {
+                                    file_id: SourceFileId(
+                                        0,
+                                    ),
+                                    start: 410,
+                                    end: 411,
+                                },
+                            ),
+                            Discard(
+                                Span {
+                                    file_id: SourceFileId(
+                                        0,
+                                    ),
+                                    start: 413,
+                                    end: 414,
+                                },
+                            ),
+                        ],
+                        guard: None,
+                        value: Literal(
+                            Literal {
+                                span: Span {
+                                    file_id: SourceFileId(
+                                        0,
+                                    ),
+                                    start: 418,
+                                    end: 419,
+                                },
+                                kind: Int,
+                                source: "0",
+                            },
+                        ),
+                    },
+                ],
+            },
+        ),
+    ),
+]

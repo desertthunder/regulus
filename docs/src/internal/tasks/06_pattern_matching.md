@@ -24,15 +24,15 @@ generation.
 
 ### AST and parsing
 
-- [ ] Replace raw executable pattern handling with explicit AST pattern nodes for
+- [x] Replace raw executable pattern handling with explicit AST pattern nodes for
       tuple, list, record, constructor, nested, spread/rest, and aliased patterns
       where Gleam allows them.
-- [ ] Represent guards on case clauses with source spans.
-- [ ] Represent `let assert` as a pattern-bearing binding form, including its
+- [x] Represent guards on case clauses with source spans.
+- [x] Represent `let assert` as a pattern-bearing binding form, including its
       failure semantics.
-- [ ] Preserve source spans for each pattern node, constructor name, field name,
+- [x] Preserve source spans for each pattern node, constructor name, field name,
       and bound variable.
-- [ ] Add AST fixtures/snapshots for nested, constructor, record, list, tuple,
+- [x] Add AST fixtures/snapshots for nested, constructor, record, list, tuple,
       guard, multi-subject, and `let assert` patterns.
 
 ### Name resolution
