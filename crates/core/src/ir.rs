@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 
 use crate::{
-    ast::{self, Expression as AstExpression, LiteralKind, Pattern, Statement},
+    ast::{self, Declaration as AstDeclaration, Expression as AstExpression, LiteralKind, Pattern, Statement},
     diagnostic::{Diagnostic, DiagnosticCode, Diagnostics, Label},
+    resolve::{ReferenceTarget, SymbolKind},
     source::Span,
     types::{Type, TypedModule},
 };
@@ -11,9 +12,148 @@ use crate::{
 pub struct LocalId(pub u32);
 
 /// Core IR module.
+///
+/// This is the first compiler-owned representation after parsing, name
+/// resolution, and type checking. It keeps module-level structure explicit so
+/// later backends do not need to inspect parser-specific declarations.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Module {
+    pub span: Span,
+    pub imports: Vec<Import>,
+    pub declarations: Vec<DeclarationMetadata>,
+    pub constants: Vec<Constant>,
+    pub init: ModuleInit,
+    pub references: Vec<Reference>,
+    pub exports: Vec<Export>,
     pub functions: Vec<Function>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ConstantId(pub u32);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Import {
+    pub module: String,
+    pub alias: Option<String>,
+    pub unqualified: Vec<UnqualifiedImport>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnqualifiedImport {
+    pub name: String,
+    pub alias: Option<String>,
+    pub kind: ImportKind,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ImportKind {
+    Value,
+    TypeOrConstructor,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeclarationMetadata {
+    pub name: Option<String>,
+    pub kind: DeclarationKind,
+    pub visibility: Visibility,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DeclarationKind {
+    Import,
+    Function,
+    Constant,
+    ExternalFunction,
+    ExternalType,
+    TypeAlias,
+    TypeDefinition,
+    Attribute,
+    TargetGroup,
+    Statement,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Visibility {
+    Public,
+    Private,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Constant {
+    pub id: ConstantId,
+    pub name: String,
+    pub public: bool,
+    pub value: ConstantValue,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConstantValue {
+    Literal(Literal),
+    Raw(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ModuleInit {
+    pub steps: Vec<InitStep>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InitStep {
+    RuntimeSetup { span: Span },
+    Constant { constant: ConstantId, span: Span },
+    StaticData { name: String, span: Span },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Reference {
+    pub name: String,
+    pub target: ReferenceTargetName,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReferenceTargetName {
+    LocalSymbol {
+        name: String,
+        kind: ReferenceKind,
+    },
+    QualifiedMember {
+        module: String,
+        member: String,
+        resolved: Option<String>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReferenceKind {
+    Function,
+    Import,
+    Imported,
+    Parameter,
+    Local,
+    Type,
+    Constructor,
+    Field,
+    Prelude,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Export {
+    pub name: String,
+    pub kind: ExportKind,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExportKind {
+    Function,
+    Constant,
+    Type,
+    Constructor,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -52,8 +192,20 @@ pub enum Instruction {
     AssertMatch {
         value: Expression,
         pattern: IrPattern,
+        failure: FailurePath,
         span: Span,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FailurePath {
+    pub reason: FailureReason,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FailureReason {
+    AssertMatch,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -123,14 +275,115 @@ impl Lowerer {
     }
 
     fn lower(mut self) -> Result<Module, Diagnostics> {
+        let ast = self.module.resolved.ast.clone();
+        let imports = ast.imports.iter().map(lower_import).collect();
+        let declarations = ast.declarations.iter().map(DeclarationMetadata::from).collect();
+        let references = self.lower_references();
+        let mut exports = self.lower_exports();
+        let mut constants = Vec::new();
+        let mut init = ModuleInit::default();
+        if ast
+            .declarations
+            .iter()
+            .any(|declaration| matches!(declaration, AstDeclaration::Constant(_)))
+        {
+            init.steps.push(InitStep::RuntimeSetup { span: ast.span });
+        }
+
+        for declaration in &ast.declarations {
+            if let AstDeclaration::Constant(raw) = declaration {
+                let id = ConstantId(constants.len() as u32);
+                let constant = lower_constant(id, raw);
+                if constant.public {
+                    exports.push(Export {
+                        name: constant.name.clone(),
+                        kind: ExportKind::Constant,
+                        span: constant.span,
+                    });
+                }
+                if matches!(
+                    constant.value,
+                    ConstantValue::Literal(Literal { kind: LiteralKind::String, .. })
+                ) {
+                    init.steps
+                        .push(InitStep::StaticData { name: constant.name.clone(), span: constant.span });
+                }
+                init.steps
+                    .push(InitStep::Constant { constant: id, span: constant.span });
+                constants.push(constant);
+            }
+        }
+
         let mut functions = Vec::new();
-        for function in self.module.resolved.ast.functions.clone() {
+        for function in ast.functions {
             if let Some(function) = self.lower_function(&function) {
                 functions.push(function);
             }
         }
 
-        if self.diagnostics.is_empty() { Ok(Module { functions }) } else { Err(self.diagnostics) }
+        if self.diagnostics.is_empty() {
+            Ok(Module { span: ast.span, imports, declarations, constants, init, references, exports, functions })
+        } else {
+            Err(self.diagnostics)
+        }
+    }
+
+    fn lower_exports(&self) -> Vec<Export> {
+        let mut exports = Vec::new();
+        for function in &self.module.resolved.ast.functions {
+            if function.public {
+                exports.push(Export {
+                    name: function.name.text.clone(),
+                    kind: ExportKind::Function,
+                    span: function.name.span,
+                });
+            }
+        }
+        for declaration in &self.module.resolved.ast.declarations {
+            match declaration {
+                AstDeclaration::TypeDefinition(raw) if is_public_declaration(&raw.source) => {
+                    for name in exported_type_names(&raw.source) {
+                        exports.push(Export { name, kind: ExportKind::Type, span: raw.span });
+                    }
+                }
+                AstDeclaration::TypeAlias(raw) if is_public_declaration(&raw.source) => {
+                    if let Some(name) = declaration_name(&raw.source, "type") {
+                        exports.push(Export { name, kind: ExportKind::Type, span: raw.span });
+                    }
+                }
+                _ => {}
+            }
+        }
+        exports
+    }
+
+    fn lower_references(&self) -> Vec<Reference> {
+        self.module
+            .resolved
+            .references
+            .iter()
+            .map(|reference| {
+                let target = match &reference.target {
+                    ReferenceTarget::Symbol(id) => {
+                        let symbol = self.module.resolved.symbols.symbol(*id);
+                        ReferenceTargetName::LocalSymbol {
+                            name: symbol.name.clone(),
+                            kind: ReferenceKind::from(&symbol.kind),
+                        }
+                    }
+                    ReferenceTarget::QualifiedMember { module, member, symbol } => {
+                        let module_symbol = self.module.resolved.symbols.symbol(*module);
+                        let resolved = symbol.map(|id| self.module.resolved.symbols.symbol(id).name.clone());
+                        ReferenceTargetName::QualifiedMember {
+                            module: module_symbol.name.clone(),
+                            member: member.text.clone(),
+                            resolved,
+                        }
+                    }
+                };
+                Reference { name: reference.name.text.clone(), target, span: reference.name.span }
+            })
+            .collect()
     }
 
     fn lower_function(&mut self, function: &ast::Function) -> Option<Function> {
@@ -194,6 +447,7 @@ impl Lowerer {
                     instructions.push(Instruction::AssertMatch {
                         value: value.clone(),
                         pattern: pattern.clone(),
+                        failure: FailurePath { reason: FailureReason::AssertMatch, span: let_assert.span },
                         span: let_assert.span,
                     });
                     self.bind_assert_pattern(context, &mut instructions, &value, &pattern, let_assert.span);
@@ -442,6 +696,134 @@ fn type_for_literal(kind: LiteralKind) -> Type {
     }
 }
 
+fn lower_import(import: &ast::Import) -> Import {
+    Import {
+        module: import.module.text.clone(),
+        alias: import.alias.as_ref().map(|alias| alias.text.clone()),
+        unqualified: import
+            .unqualified
+            .iter()
+            .map(|item| UnqualifiedImport {
+                name: item.name.text.clone(),
+                alias: item.alias.as_ref().map(|alias| alias.text.clone()),
+                kind: match item.kind {
+                    ast::UnqualifiedImportKind::Value => ImportKind::Value,
+                    ast::UnqualifiedImportKind::TypeOrConstructor => ImportKind::TypeOrConstructor,
+                },
+                span: item.span,
+            })
+            .collect(),
+        span: import.span,
+    }
+}
+
+impl From<&AstDeclaration> for DeclarationMetadata {
+    fn from(declaration: &AstDeclaration) -> Self {
+        match declaration {
+            AstDeclaration::Import(import) => Self {
+                name: Some(import.module.text.clone()),
+                kind: DeclarationKind::Import,
+                visibility: Visibility::Private,
+                span: import.span,
+            },
+            AstDeclaration::Function(function) => Self {
+                name: Some(function.name.text.clone()),
+                kind: DeclarationKind::Function,
+                visibility: visibility(function.public),
+                span: function.span,
+            },
+            AstDeclaration::Constant(raw) => raw_metadata(raw, DeclarationKind::Constant, "const"),
+            AstDeclaration::ExternalFunction(raw) => raw_metadata(raw, DeclarationKind::ExternalFunction, "fn"),
+            AstDeclaration::ExternalType(raw) => raw_metadata(raw, DeclarationKind::ExternalType, "type"),
+            AstDeclaration::TypeAlias(raw) => raw_metadata(raw, DeclarationKind::TypeAlias, "type"),
+            AstDeclaration::TypeDefinition(raw) => raw_metadata(raw, DeclarationKind::TypeDefinition, "type"),
+            AstDeclaration::Attribute(raw) => raw_metadata(raw, DeclarationKind::Attribute, "@"),
+            AstDeclaration::TargetGroup(raw) => raw_metadata(raw, DeclarationKind::TargetGroup, "target"),
+            AstDeclaration::Statement(raw) => raw_metadata(raw, DeclarationKind::Statement, ""),
+        }
+    }
+}
+
+fn raw_metadata(raw: &ast::RawSyntax, kind: DeclarationKind, keyword: &str) -> DeclarationMetadata {
+    DeclarationMetadata {
+        name: declaration_name(&raw.source, keyword),
+        kind,
+        visibility: visibility(is_public_declaration(&raw.source)),
+        span: raw.span,
+    }
+}
+
+fn lower_constant(id: ConstantId, raw: &ast::RawSyntax) -> Constant {
+    let name = declaration_name(&raw.source, "const").unwrap_or_else(|| format!("__constant_{}", id.0));
+    Constant {
+        id,
+        name,
+        public: is_public_declaration(&raw.source),
+        value: constant_value(&raw.source),
+        span: raw.span,
+    }
+}
+
+fn constant_value(source: &str) -> ConstantValue {
+    let Some(value) = source.split_once('=').map(|(_, value)| value.trim()) else {
+        return ConstantValue::Raw(source.trim().into());
+    };
+    if value == "True" || value == "False" {
+        return ConstantValue::Literal(Literal { kind: LiteralKind::Bool, source: value.into() });
+    }
+    if value == "Nil" {
+        return ConstantValue::Literal(Literal { kind: LiteralKind::Nil, source: value.into() });
+    }
+    if value.starts_with('"') && value.ends_with('"') {
+        return ConstantValue::Literal(Literal { kind: LiteralKind::String, source: value.into() });
+    }
+    if value.parse::<i64>().is_ok() {
+        return ConstantValue::Literal(Literal { kind: LiteralKind::Int, source: value.into() });
+    }
+    if value.parse::<f64>().is_ok() && value.contains('.') {
+        return ConstantValue::Literal(Literal { kind: LiteralKind::Float, source: value.into() });
+    }
+    ConstantValue::Raw(value.into())
+}
+
+fn declaration_name(source: &str, keyword: &str) -> Option<String> {
+    let source = source.trim_start();
+    let source = source.strip_prefix("pub ").unwrap_or(source).trim_start();
+    let source = if keyword.is_empty() { source } else { source.strip_prefix(keyword)?.trim_start() };
+    source
+        .split(|character: char| !matches!(character, '_' | 'a'..='z' | 'A'..='Z' | '0'..='9'))
+        .find(|part| !part.is_empty())
+        .map(str::to_string)
+}
+
+fn exported_type_names(source: &str) -> Vec<String> {
+    declaration_name(source, "type").into_iter().collect()
+}
+
+fn is_public_declaration(source: &str) -> bool {
+    source.trim_start().starts_with("pub ")
+}
+
+fn visibility(public: bool) -> Visibility {
+    if public { Visibility::Public } else { Visibility::Private }
+}
+
+impl From<&SymbolKind> for ReferenceKind {
+    fn from(kind: &SymbolKind) -> Self {
+        match kind {
+            SymbolKind::Function { .. } => Self::Function,
+            SymbolKind::Import { .. } => Self::Import,
+            SymbolKind::Imported { .. } => Self::Imported,
+            SymbolKind::Parameter => Self::Parameter,
+            SymbolKind::Local => Self::Local,
+            SymbolKind::Type => Self::Type,
+            SymbolKind::Constructor => Self::Constructor,
+            SymbolKind::Field => Self::Field,
+            SymbolKind::Prelude => Self::Prelude,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -486,6 +868,36 @@ mod tests {
         let main = &module.functions[0];
 
         assert!(matches!(main.body.result.kind, ExpressionKind::Branch(_)));
+    }
+
+    #[test]
+    fn lowers_module_constants_and_initialization_order() {
+        let module = lower_source("pub const answer = 42\nconst greeting = \"hi\"\nfn main() { 1 }");
+
+        assert_eq!(module.constants.len(), 2);
+        assert_eq!(module.constants[0].name, "answer");
+        assert!(module.constants[0].public);
+        assert_eq!(module.constants[1].name, "greeting");
+        assert_eq!(
+            module.init.steps,
+            vec![
+                InitStep::RuntimeSetup { span: module.span },
+                InitStep::Constant { constant: ConstantId(0), span: module.constants[0].span },
+                InitStep::StaticData { name: "greeting".into(), span: module.constants[1].span },
+                InitStep::Constant { constant: ConstantId(1), span: module.constants[1].span },
+            ]
+        );
+        assert!(module.exports.iter().any(|export| export.name == "answer"));
+    }
+
+    #[test]
+    fn records_declaration_metadata_exports_and_references() {
+        let module = lower_source("pub const answer = 42\npub fn main(x: Int) { x }");
+
+        assert!(matches!(module.declarations[0].kind, DeclarationKind::Constant));
+        assert_eq!(module.declarations[0].visibility, Visibility::Public);
+        assert!(module.exports.iter().any(|export| export.name == "main"));
+        assert!(module.references.iter().any(|reference| reference.name == "x"));
     }
 
     #[test]

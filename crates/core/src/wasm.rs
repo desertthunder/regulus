@@ -116,7 +116,7 @@ impl Emitter {
                     self.expression(value);
                     writeln!(self.functions, "    local.set ${}", local.0).expect("write WAT");
                 }
-                Instruction::AssertMatch { value, pattern, span } => {
+                Instruction::AssertMatch { value, pattern, span, .. } => {
                     self.pattern_test(value, pattern, *span);
                     writeln!(self.functions, "    if").expect("write WAT");
                     writeln!(self.functions, "    else").expect("write WAT");

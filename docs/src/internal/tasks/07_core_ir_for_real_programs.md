@@ -9,13 +9,13 @@ values without depending on parser or resolver syntax details.
 
 ### Module structure and declarations
 
-- [ ] Add IR support for constants and constant evaluation order.
-- [ ] Add module initialization for constants, static data, and runtime setup.
-- [ ] Represent imports, exports, and module-qualified references in a form the
+- [x] Add IR support for constants and constant evaluation order.
+- [x] Add module initialization for constants, static data, and runtime setup.
+- [x] Represent imports, exports, and module-qualified references in a form the
       backend can emit or reject with targeted diagnostics.
-- [ ] Represent public/private declaration metadata needed by build outputs and
+- [x] Represent public/private declaration metadata needed by build outputs and
       debug dumps.
-- [ ] Preserve source spans for declarations, expressions, and generated failure
+- [x] Preserve source spans for declarations, expressions, and generated failure
       paths.
 
 ### Values and representation types
