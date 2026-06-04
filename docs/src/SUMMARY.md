@@ -17,6 +17,7 @@
 - [WebAssembly code generation](./chapter_5.md)
 - [The Gleam Programming Language](./chapter_6.md)
   - [Modules, imports, and packages](./chapter_6/mods_imports_pkgs.md)
+  - [Functional programming in Gleam](./chapter_6/functional_programming.md)
   - [Functions, values, and expressions](./chapter_6/functions_values_expressions.md)
   - [Custom types, records, tuples, and lists](./chapter_6/custom_types_records_tuples_lists.md)
   - [Pattern matching](./chapter_6/pattern_matching.md)
@@ -26,12 +27,6 @@
 
 <!--
 TODO:
-- A tour of Gleam
-  - Gleam modules, imports, and packages
-  - Gleam functions, values, and expressions
-  - Gleam custom types, records, tuples, and lists
-  - Gleam pattern matching
-  - Gleam's type system and inference model
 - WebAssembly
   - WebAssembly modules and the stack machine
   - WebAssembly text format and binary format
