@@ -69,9 +69,9 @@ original Gleam code to underline. Lists in the AST keep source order, while
 comments, whitespace, and punctuation that no longer carry meaning are left
 behind in the concrete tree.
 
-Names are still just names at this point. If the source says `message`, the AST
-stores the text `message` and where it appeared. Deciding which binding that
-name refers to is a separate job.
+At this point, names are text plus source locations. If the source says
+`message`, the AST stores the text `message` and where it appeared. Deciding
+which binding that name refers to is a separate job.
 
 ## Concrete vs abstract syntax trees
 
@@ -95,3 +95,60 @@ every bit of punctuation along.
 
 This project keeps both views. Tree-sitter gives us the CST. The compiler then
 builds an AST that is smaller and easier to use for the rest of the work.
+
+## Building an AST
+
+Parser generators can attach actions to grammar productions, and those actions
+often build AST nodes as syntax is recognized.[^1] This project uses two steps:
+
+```text
+tree-sitter CST
+  -> AST builder
+  -> compiler-owned AST
+```
+
+The AST builder walks named tree-sitter nodes and converts each recognized Gleam
+construct into a Rust data structure. For example, an `import` node becomes an
+`Import` with a module name, optional alias, and unqualified imports. A
+`function` node becomes a `Function` with visibility, name, parameters, return
+annotation, and body.
+
+This compiler-owned AST is deliberately smaller than the CST. It keeps the
+information that later diagnostics need. Every node that can produce an error
+keeps a span.
+
+## Raw syntax
+
+The AST does not need executable support for every Gleam feature before the
+parser can accept real modules. For syntax that is recognized by tree-sitter but
+not yet lowered or type checked, the AST can store a raw syntax node:
+
+```text
+RawSyntax {
+  kind: "type_definition",
+  source: "pub type User { ... }",
+  span: bytes 40..92,
+}
+```
+
+Raw syntax lets the compiler preserve source order and spans while support grows
+feature by feature. Later passes can either handle the raw form, report a
+targeted unsupported-feature diagnostic, or use it as module-interface data.
+
+This helps with top-level Gleam syntax such as constants, type definitions, type
+aliases, external declarations, attributes, and target groups. The parser and AST
+builder can keep them in the module instead of pretending they do not exist.
+
+## Source order
+
+The AST keeps declarations and statements in source order, even when a later pass
+is allowed to collect some declarations before checking bodies. Diagnostics
+should follow the user's source order, and generated dumps are easier to read
+when they resemble the input module.
+
+The AST also keeps separate lists for imports and functions because many passes
+want direct access to those common declarations. This is a convenience view over
+the same source module, not a second language.
+
+[^1]: Cornell CS 4120, "Building ASTs and Handling Errors":
+    https://www.cs.cornell.edu/courses/cs4120/2022sp/notes.html?id=ast

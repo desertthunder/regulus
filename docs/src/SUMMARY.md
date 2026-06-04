@@ -38,9 +38,7 @@ TODO:
   - WebAssembly memory, tables, imports, and exports
   - Running WebAssembly in Wasmtime and the browser
 - Compiler architecture from source to executable
-- Lexing, parsing, and syntax trees
 - Diagnostics and source spans
-- Name resolution and scopes
 - Type checking and type inference
 - Lowering and intermediate representations
 - Runtime value representation
