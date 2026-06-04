@@ -20,15 +20,15 @@ values without depending on parser or resolver syntax details.
 
 ### Values and representation types
 
-- [ ] Add IR representation types for scalar values and heap-managed values.
-- [ ] Add IR forms for strings, tuples, lists, records, and custom-type
+- [x] Add IR representation types for scalar values and heap-managed values.
+- [x] Add IR forms for strings, tuples, lists, records, and custom-type
       constructors.
-- [ ] Add IR forms for record field access and record updates.
-- [ ] Add IR forms for list construction, list deconstruction, and tuple element
+- [x] Add IR forms for record field access and record updates.
+- [x] Add IR forms for list construction, list deconstruction, and tuple element
       access.
-- [ ] Add IR forms for equality and comparison operations, including runtime
+- [x] Add IR forms for equality and comparison operations, including runtime
       equality calls for managed values.
-- [ ] Add explicit memory-operation forms needed by the WASM backend.
+- [x] Add explicit memory-operation forms needed by the WASM backend.
 
 ### Functions and calls
 

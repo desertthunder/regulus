@@ -155,6 +155,18 @@ impl Emitter {
                 writeln!(self.functions, "    call ${function}").expect("write WAT");
             }
             ExpressionKind::Branch(branch) => self.branch(branch, &expression.type_, expression.span),
+            ExpressionKind::Tuple(_)
+            | ExpressionKind::List(_)
+            | ExpressionKind::Record(_)
+            | ExpressionKind::Constructor(_)
+            | ExpressionKind::FieldAccess { .. }
+            | ExpressionKind::RecordUpdate { .. }
+            | ExpressionKind::ListCons { .. }
+            | ExpressionKind::ListDeconstruct { .. }
+            | ExpressionKind::TupleElement { .. }
+            | ExpressionKind::Compare { .. }
+            | ExpressionKind::RuntimeEquality { .. }
+            | ExpressionKind::Memory(_) => self.unsupported_expression(expression),
         }
     }
 
@@ -293,6 +305,16 @@ impl Emitter {
         self.next_static_offset = self.config.layout.align_to(object.offset + object.bytes.len() as u32);
         self.data.push(object);
         pointer
+    }
+
+    fn unsupported_expression(&mut self, expression: &ir::Expression) {
+        self.diagnostics.push(
+            Diagnostic::new(
+                DiagnosticCode::WasmError,
+                format!("IR expression `{:?}` cannot be emitted yet", expression.kind),
+            )
+            .with_label(Label::primary(expression.span, "unsupported IR expression here")),
+        );
     }
 
     fn unsupported_type(&mut self, type_: &Type, span: crate::source::Span) {

@@ -11,6 +11,31 @@ use crate::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct LocalId(pub u32);
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RepresentationType {
+    Scalar(ScalarRepresentation),
+    HeapManaged(HeapRepresentation),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ScalarRepresentation {
+    I64,
+    F64,
+    I32,
+    Unit,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HeapRepresentation {
+    String,
+    Tuple,
+    List,
+    Record,
+    Custom,
+    Function,
+    Opaque,
+}
+
 /// Core IR module.
 ///
 /// This is the first compiler-owned representation after parsing, name
@@ -224,6 +249,84 @@ pub enum ExpressionKind {
         arguments: Vec<Expression>,
     },
     Branch(Branch),
+    Tuple(Vec<Expression>),
+    List(Vec<Expression>),
+    Record(RecordValue),
+    Constructor(ConstructorValue),
+    FieldAccess {
+        record: Box<Expression>,
+        field: String,
+    },
+    RecordUpdate {
+        record: Box<Expression>,
+        updates: Vec<RecordFieldValue>,
+    },
+    ListCons {
+        head: Box<Expression>,
+        tail: Box<Expression>,
+    },
+    ListDeconstruct {
+        list: Box<Expression>,
+        head: LocalId,
+        tail: LocalId,
+    },
+    TupleElement {
+        tuple: Box<Expression>,
+        index: usize,
+    },
+    Compare {
+        op: ComparisonOp,
+        left: Box<Expression>,
+        right: Box<Expression>,
+    },
+    RuntimeEquality {
+        left: Box<Expression>,
+        right: Box<Expression>,
+    },
+    Memory(MemoryOperation),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecordValue {
+    pub name: String,
+    pub fields: Vec<RecordFieldValue>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConstructorValue {
+    pub name: String,
+    pub arguments: Vec<Expression>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecordFieldValue {
+    pub name: String,
+    pub value: Expression,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ComparisonOp {
+    Equal,
+    NotEqual,
+    Less,
+    LessEqual,
+    Greater,
+    GreaterEqual,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MemoryOperation {
+    Allocate {
+        bytes: Box<Expression>,
+    },
+    Load {
+        address: Box<Expression>,
+        type_: RepresentationType,
+    },
+    Store {
+        address: Box<Expression>,
+        value: Box<Expression>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -261,6 +364,7 @@ pub fn lower(module: TypedModule) -> Result<Module, Diagnostics> {
 struct Lowerer {
     module: TypedModule,
     function_types: HashMap<String, Type>,
+    expression_types: HashMap<Span, Type>,
     diagnostics: Diagnostics,
 }
 
@@ -271,7 +375,12 @@ impl Lowerer {
             .iter()
             .map(|function| (function.name.text.clone(), function.type_.clone()))
             .collect();
-        Self { module, function_types, diagnostics: Vec::new() }
+        let expression_types = module
+            .expressions
+            .iter()
+            .map(|expression| (expression.span, expression.type_.clone()))
+            .collect();
+        Self { module, function_types, expression_types, diagnostics: Vec::new() }
     }
 
     fn lower(mut self) -> Result<Module, Diagnostics> {
@@ -527,11 +636,27 @@ impl Lowerer {
                 Some(Expression { type_, span: case.span, kind: ExpressionKind::Branch(Branch { subjects, clauses }) })
             }
             AstExpression::FieldAccess(field_access) => {
-                self.diagnostics.push(
-                    Diagnostic::new(DiagnosticCode::LoweringError, "field access cannot be lowered")
-                        .with_label(Label::primary(field_access.span, "unsupported field access here")),
-                );
-                None
+                let record = self.lower_expression(context, &field_access.record)?;
+                let type_ = self.typed_expression_type(field_access.span).unwrap_or(Type::Nil);
+                Some(Expression {
+                    type_,
+                    span: field_access.span,
+                    kind: ExpressionKind::FieldAccess {
+                        record: Box::new(record),
+                        field: field_access.field.text.clone(),
+                    },
+                })
+            }
+            AstExpression::Raw(raw) if raw.kind == "record" => {
+                let type_ = self.typed_expression_type(raw.span).unwrap_or(Type::Nil);
+                Some(Expression {
+                    type_,
+                    span: raw.span,
+                    kind: ExpressionKind::Constructor(ConstructorValue {
+                        name: raw.source.split(['(', ' ']).next().unwrap_or(&raw.source).into(),
+                        arguments: Vec::new(),
+                    }),
+                })
             }
             AstExpression::Raw(raw) => {
                 self.diagnostics.push(
@@ -636,6 +761,10 @@ impl Lowerer {
         );
     }
 
+    fn typed_expression_type(&self, span: Span) -> Option<Type> {
+        self.expression_types.get(&span).cloned()
+    }
+
     fn nil_expression(&self, span: Span) -> Expression {
         Expression {
             type_: Type::Nil,
@@ -693,6 +822,24 @@ fn type_for_literal(kind: LiteralKind) -> Type {
         LiteralKind::String => Type::String,
         LiteralKind::Bool => Type::Bool,
         LiteralKind::Nil => Type::Nil,
+    }
+}
+
+impl From<&Type> for RepresentationType {
+    fn from(type_: &Type) -> Self {
+        match type_ {
+            Type::Int => Self::Scalar(ScalarRepresentation::I64),
+            Type::Float => Self::Scalar(ScalarRepresentation::F64),
+            Type::Bool => Self::Scalar(ScalarRepresentation::I32),
+            Type::Nil => Self::Scalar(ScalarRepresentation::Unit),
+            Type::String => Self::HeapManaged(HeapRepresentation::String),
+            Type::Tuple(_) => Self::HeapManaged(HeapRepresentation::Tuple),
+            Type::List(_) => Self::HeapManaged(HeapRepresentation::List),
+            Type::Record { .. } => Self::HeapManaged(HeapRepresentation::Record),
+            Type::Custom { .. } => Self::HeapManaged(HeapRepresentation::Custom),
+            Type::Function { .. } => Self::HeapManaged(HeapRepresentation::Function),
+            Type::Generic(_) | Type::Opaque { .. } => Self::HeapManaged(HeapRepresentation::Opaque),
+        }
     }
 }
 
@@ -898,6 +1045,33 @@ mod tests {
         assert_eq!(module.declarations[0].visibility, Visibility::Public);
         assert!(module.exports.iter().any(|export| export.name == "main"));
         assert!(module.references.iter().any(|reference| reference.name == "x"));
+    }
+
+    #[test]
+    fn represents_runtime_managed_value_types() {
+        assert_eq!(
+            RepresentationType::from(&Type::Int),
+            RepresentationType::Scalar(ScalarRepresentation::I64)
+        );
+        assert_eq!(
+            RepresentationType::from(&Type::List(Box::new(Type::Int))),
+            RepresentationType::HeapManaged(HeapRepresentation::List)
+        );
+        assert_eq!(
+            RepresentationType::from(&Type::String),
+            RepresentationType::HeapManaged(HeapRepresentation::String)
+        );
+    }
+
+    #[test]
+    fn lowers_custom_type_constructors_to_managed_value_forms() {
+        let module = lower_source("type Box { Box }\nfn main() { Box }");
+        let main = &module.functions[0];
+
+        assert!(matches!(
+            main.body.result.kind,
+            ExpressionKind::Constructor(ConstructorValue { ref name, .. }) if name == "Box"
+        ));
     }
 
     #[test]
