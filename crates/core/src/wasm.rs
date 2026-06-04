@@ -150,10 +150,113 @@ impl Emitter {
                 }
                 writeln!(self.functions, "    call ${function}").expect("write WAT");
             }
-            ExpressionKind::Branch(_) => self.diagnostics.push(
-                Diagnostic::new(DiagnosticCode::WasmError, "branch code generation is not supported")
-                    .with_label(Label::primary(expression.span, "branch expression here")),
-            ),
+            ExpressionKind::Branch(branch) => self.branch(branch, &expression.type_, expression.span),
+        }
+    }
+
+    fn branch(&mut self, branch: &ir::Branch, type_: &Type, span: crate::source::Span) {
+        if branch
+            .subjects
+            .iter()
+            .any(|subject| wasm_type(&subject.type_).is_none())
+        {
+            self.diagnostics.push(
+                Diagnostic::new(DiagnosticCode::WasmError, "branch subject type is not supported")
+                    .with_label(Label::primary(span, "unsupported branch here")),
+            );
+            return;
+        }
+
+        self.branch_clause(branch, 0, type_, span);
+    }
+
+    fn branch_clause(&mut self, branch: &ir::Branch, index: usize, type_: &Type, span: crate::source::Span) {
+        let result_type = wasm_type(type_).unwrap_or("");
+        let Some(clause) = branch.clauses.get(index) else {
+            writeln!(self.functions, "    unreachable").expect("write WAT");
+            return;
+        };
+
+        self.branch_test(&branch.subjects, &clause.patterns, clause.span);
+        if result_type.is_empty() {
+            writeln!(self.functions, "    if").expect("write WAT");
+        } else {
+            writeln!(self.functions, "    if (result {result_type})").expect("write WAT");
+        }
+        for (subject, pattern) in branch.subjects.iter().zip(&clause.patterns) {
+            if let ir::IrPattern::Binding(local) = pattern {
+                self.expression(subject);
+                writeln!(self.functions, "    local.set ${}", local.0).expect("write WAT");
+            }
+        }
+        self.expression(&clause.body);
+        writeln!(self.functions, "    else").expect("write WAT");
+
+        self.branch_clause(branch, index + 1, type_, span);
+        writeln!(self.functions, "    end").expect("write WAT");
+    }
+
+    fn branch_test(&mut self, subjects: &[ir::Expression], patterns: &[ir::IrPattern], span: crate::source::Span) {
+        if subjects.len() != patterns.len() {
+            self.diagnostics.push(
+                Diagnostic::new(DiagnosticCode::WasmError, "branch subject and pattern counts differ")
+                    .with_label(Label::primary(span, "invalid branch here")),
+            );
+            writeln!(self.functions, "    i32.const 0").expect("write WAT");
+            return;
+        }
+
+        let mut emitted_any = false;
+        for (subject, pattern) in subjects.iter().zip(patterns) {
+            self.pattern_test(subject, pattern, span);
+            if emitted_any {
+                writeln!(self.functions, "    i32.and").expect("write WAT");
+            }
+            emitted_any = true;
+        }
+
+        if !emitted_any {
+            writeln!(self.functions, "    i32.const 1").expect("write WAT");
+        }
+    }
+
+    fn pattern_test(&mut self, subject: &ir::Expression, pattern: &ir::IrPattern, span: crate::source::Span) {
+        match pattern {
+            ir::IrPattern::Discard | ir::IrPattern::Binding(_) => {
+                writeln!(self.functions, "    i32.const 1").expect("write WAT");
+            }
+            ir::IrPattern::Literal(literal) => {
+                self.expression(subject);
+                self.literal(literal);
+                match subject.type_ {
+                    Type::Int => writeln!(self.functions, "    i64.eq").expect("write WAT"),
+                    Type::Float => writeln!(self.functions, "    f64.eq").expect("write WAT"),
+                    Type::Bool | Type::String => writeln!(self.functions, "    i32.eq").expect("write WAT"),
+                    Type::Nil => writeln!(self.functions, "    i32.const 1").expect("write WAT"),
+                    _ => self.diagnostics.push(
+                        Diagnostic::new(DiagnosticCode::WasmError, "pattern type is not supported")
+                            .with_label(Label::primary(span, "unsupported pattern here")),
+                    ),
+                }
+            }
+        }
+    }
+
+    fn literal(&mut self, literal: &ir::Literal) {
+        match literal.kind {
+            LiteralKind::Int => writeln!(self.functions, "    i64.const {}", literal.source).expect("write WAT"),
+            LiteralKind::Float => writeln!(self.functions, "    f64.const {}", literal.source).expect("write WAT"),
+            LiteralKind::Bool => writeln!(
+                self.functions,
+                "    i32.const {}",
+                if literal.source == "True" { 1 } else { 0 }
+            )
+            .expect("write WAT"),
+            LiteralKind::Nil => {}
+            LiteralKind::String => {
+                let pointer = self.static_string(&literal.source);
+                writeln!(self.functions, "    i32.const {pointer}").expect("write WAT");
+            }
         }
     }
 
@@ -260,16 +363,14 @@ fn local_name(local: &ir::Local) -> String {
 
 #[cfg(test)]
 mod tests {
-    use wasmtime::{Engine, Instance, Module, Store};
-
+    use super::*;
     use crate::{
         ast, ir, parse, resolve,
         runtime::ObjectTag,
         source::{SourceFile, SourceFileId},
         types,
     };
-
-    use super::*;
+    use wasmtime::{Engine, Instance, Module, Store};
 
     fn compile_wasm(source: &str) -> WasmModule {
         let source = SourceFile::new(SourceFileId(0), source);
@@ -320,6 +421,50 @@ mod tests {
             .expect("get id export");
 
         assert_eq!(id.call(&mut store, 42).expect("call id"), 42);
+    }
+
+    #[test]
+    fn runs_scalar_case_expression() {
+        let wasm = compile_wasm("pub fn choose(x: Int) -> Int { case x { 0 -> 1 _ -> 2 } }");
+        let engine = Engine::default();
+        let module = Module::new(&engine, &wasm.bytes).expect("compile wasm module");
+        let mut store = Store::new(&engine, ());
+        let instance = Instance::new(&mut store, &module, &[]).expect("instantiate module");
+        let choose = instance
+            .get_typed_func::<i64, i64>(&mut store, "choose")
+            .expect("get choose export");
+
+        assert_eq!(choose.call(&mut store, 0).expect("call choose"), 1);
+        assert_eq!(choose.call(&mut store, 42).expect("call choose"), 2);
+    }
+
+    #[test]
+    fn runs_bool_case_expression() {
+        let wasm = compile_wasm("pub fn bit(x: Bool) -> Int { case x { True -> 1 False -> 0 } }");
+        let engine = Engine::default();
+        let module = Module::new(&engine, &wasm.bytes).expect("compile wasm module");
+        let mut store = Store::new(&engine, ());
+        let instance = Instance::new(&mut store, &module, &[]).expect("instantiate module");
+        let bit = instance
+            .get_typed_func::<i32, i64>(&mut store, "bit")
+            .expect("get bit export");
+
+        assert_eq!(bit.call(&mut store, 1).expect("call bit"), 1);
+        assert_eq!(bit.call(&mut store, 0).expect("call bit"), 0);
+    }
+
+    #[test]
+    fn binds_case_pattern_values() {
+        let wasm = compile_wasm("pub fn keep(x: Int) -> Int { case x { y -> y } }");
+        let engine = Engine::default();
+        let module = Module::new(&engine, &wasm.bytes).expect("compile wasm module");
+        let mut store = Store::new(&engine, ());
+        let instance = Instance::new(&mut store, &module, &[]).expect("instantiate module");
+        let keep = instance
+            .get_typed_func::<i64, i64>(&mut store, "keep")
+            .expect("get keep export");
+
+        assert_eq!(keep.call(&mut store, 42).expect("call keep"), 42);
     }
 
     #[test]

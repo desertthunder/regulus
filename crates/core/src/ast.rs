@@ -102,6 +102,8 @@ pub enum Pattern {
     Integer(Literal),
     Float(Literal),
     String(Literal),
+    Bool(Literal),
+    Nil(Literal),
     Raw(RawSyntax),
 }
 
@@ -460,6 +462,19 @@ impl AstBuilder<'_> {
             "integer" => Ok(Pattern::Integer(self.literal(node, LiteralKind::Int))),
             "float" => Ok(Pattern::Float(self.literal(node, LiteralKind::Float))),
             "string" => Ok(Pattern::String(self.literal(node, LiteralKind::String))),
+            "record" | "record_pattern" => match self.text(node) {
+                "True" | "False" => Ok(Pattern::Bool(Literal {
+                    span: self.span(node),
+                    kind: LiteralKind::Bool,
+                    source: self.text(node).to_string(),
+                })),
+                "Nil" => Ok(Pattern::Nil(Literal {
+                    span: self.span(node),
+                    kind: LiteralKind::Nil,
+                    source: self.text(node).to_string(),
+                })),
+                _ => Ok(Pattern::Raw(self.raw(node))),
+            },
             _ => Ok(Pattern::Raw(self.raw(node))),
         }
     }

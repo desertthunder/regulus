@@ -417,7 +417,13 @@ impl Resolver {
             Pattern::Name(name) => {
                 self.define(scope, name, Namespace::Value, kind);
             }
-            Pattern::Discard(_) | Pattern::Integer(_) | Pattern::Float(_) | Pattern::String(_) | Pattern::Raw(_) => {}
+            Pattern::Discard(_)
+            | Pattern::Integer(_)
+            | Pattern::Float(_)
+            | Pattern::String(_)
+            | Pattern::Bool(_)
+            | Pattern::Nil(_)
+            | Pattern::Raw(_) => {}
         }
     }
 

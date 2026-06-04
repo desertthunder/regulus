@@ -100,6 +100,7 @@ pub struct BranchClause {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IrPattern {
     Discard,
+    Binding(LocalId),
     Literal(Literal),
 }
 
@@ -176,15 +177,17 @@ impl Lowerer {
             match statement {
                 Statement::Let(let_) => {
                     let value = self.lower_expression(context, &let_.value)?;
-                    if let Pattern::Name(name) = &let_.pattern {
-                        let local = context.allocate(name, value.type_.clone());
-                        context.bind(name.text.clone(), local.id);
-                        instructions.push(Instruction::LocalSet { local: local.id, value, span: let_.span });
-                    } else {
-                        self.diagnostics.push(
+                    match &let_.pattern {
+                        Pattern::Name(name) => {
+                            let local = context.allocate(name, value.type_.clone());
+                            context.bind(name.text.clone(), local.id);
+                            instructions.push(Instruction::LocalSet { local: local.id, value, span: let_.span });
+                        }
+                        Pattern::Discard(_) => {}
+                        _ => self.diagnostics.push(
                             Diagnostic::new(DiagnosticCode::LoweringError, "unsupported let pattern")
                                 .with_label(Label::primary(let_.span, "unsupported pattern here")),
-                        );
+                        ),
                     }
                 }
                 Statement::Expression(expression) => result = self.lower_expression(context, expression)?,
@@ -247,7 +250,12 @@ impl Lowerer {
                 let mut type_ = Type::Nil;
                 for clause in &case.clauses {
                     context.push_scope();
-                    let patterns = clause.patterns.iter().map(lower_pattern).collect::<Option<Vec<_>>>();
+                    let patterns = clause
+                        .patterns
+                        .iter()
+                        .zip(subjects.iter())
+                        .map(|(pattern, subject)| self.lower_pattern(context, pattern, &subject.type_))
+                        .collect::<Option<Vec<_>>>();
                     let body = self.lower_expression(context, &clause.value)?;
                     context.pop_scope();
                     type_ = body.type_.clone();
@@ -269,6 +277,49 @@ impl Lowerer {
                         format!("expression `{}` cannot be lowered", raw.kind),
                     )
                     .with_label(Label::primary(raw.span, "unsupported expression here")),
+                );
+                None
+            }
+        }
+    }
+
+    fn lower_pattern(
+        &mut self, context: &mut FunctionContext, pattern: &Pattern, subject_type: &Type,
+    ) -> Option<IrPattern> {
+        match pattern {
+            Pattern::Discard(_) => Some(IrPattern::Discard),
+            Pattern::Name(name) => {
+                let local = context.allocate(name, subject_type.clone());
+                context.bind(name.text.clone(), local.id);
+                Some(IrPattern::Binding(local.id))
+            }
+            Pattern::Integer(literal) => Some(IrPattern::Literal(Literal {
+                kind: LiteralKind::Int,
+                source: literal.source.clone(),
+            })),
+            Pattern::Float(literal) => Some(IrPattern::Literal(Literal {
+                kind: LiteralKind::Float,
+                source: literal.source.clone(),
+            })),
+            Pattern::String(literal) => Some(IrPattern::Literal(Literal {
+                kind: LiteralKind::String,
+                source: literal.source.clone(),
+            })),
+            Pattern::Bool(literal) => Some(IrPattern::Literal(Literal {
+                kind: LiteralKind::Bool,
+                source: literal.source.clone(),
+            })),
+            Pattern::Nil(literal) => Some(IrPattern::Literal(Literal {
+                kind: LiteralKind::Nil,
+                source: literal.source.clone(),
+            })),
+            Pattern::Raw(raw) => {
+                self.diagnostics.push(
+                    Diagnostic::new(
+                        DiagnosticCode::LoweringError,
+                        format!("pattern `{}` cannot be lowered", raw.kind),
+                    )
+                    .with_label(Label::primary(raw.span, "unsupported pattern here")),
                 );
                 None
             }
@@ -322,25 +373,6 @@ impl FunctionContext {
 
     fn pop_scope(&mut self) {
         self.scopes.pop();
-    }
-}
-
-fn lower_pattern(pattern: &Pattern) -> Option<IrPattern> {
-    match pattern {
-        Pattern::Discard(_) | Pattern::Name(_) => Some(IrPattern::Discard),
-        Pattern::Integer(literal) => Some(IrPattern::Literal(Literal {
-            kind: LiteralKind::Int,
-            source: literal.source.clone(),
-        })),
-        Pattern::Float(literal) => Some(IrPattern::Literal(Literal {
-            kind: LiteralKind::Float,
-            source: literal.source.clone(),
-        })),
-        Pattern::String(literal) => Some(IrPattern::Literal(Literal {
-            kind: LiteralKind::String,
-            source: literal.source.clone(),
-        })),
-        Pattern::Raw(_) => None,
     }
 }
 

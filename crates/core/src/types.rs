@@ -396,6 +396,8 @@ impl TypeChecker {
             Pattern::Integer(literal) => self.expect_same(&Type::Int, type_, literal.span),
             Pattern::Float(literal) => self.expect_same(&Type::Float, type_, literal.span),
             Pattern::String(literal) => self.expect_same(&Type::String, type_, literal.span),
+            Pattern::Bool(literal) => self.expect_same(&Type::Bool, type_, literal.span),
+            Pattern::Nil(literal) => self.expect_same(&Type::Nil, type_, literal.span),
             Pattern::Raw(raw) => self.diagnostics.push(
                 Diagnostic::new(DiagnosticCode::TypeError, format!("unsupported pattern `{}`", raw.kind))
                     .with_label(Label::primary(raw.span, "unsupported pattern here")),
