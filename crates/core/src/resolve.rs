@@ -1,12 +1,8 @@
 use std::collections::HashMap;
 
-use crate::{
-    ast::{self, Declaration, Expression, Pattern, Statement, UnqualifiedImportKind},
-    diagnostic::{Diagnostic, DiagnosticCode, Diagnostics, Label},
-    parse,
-    project::Project,
-    source::Span,
-};
+use crate::ast::{self, Declaration, Expression, Pattern, Statement, UnqualifiedImportKind};
+use crate::diagnostic::{Diagnostic, DiagnosticCode, Diagnostics, Label};
+use crate::{parse, project::Project, source::Span};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SymbolId(pub u32);
@@ -96,7 +92,7 @@ pub struct ResolvedProject {
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 struct ModuleInterface {
-    values: HashMap<String, ModuleMember>,
+    members: HashMap<(Namespace, String), ModuleMember>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -384,7 +380,7 @@ impl Resolver {
             && let Some(module) = self.lookup(scope, Namespace::Module, &record.text)
             && let SymbolKind::Import { module: module_name } = &self.symbols[module.0 as usize].kind.clone()
         {
-            let symbol = self.resolve_project_member(module_name, &field_access.field);
+            let symbol = self.resolve_project_member(module_name, Namespace::Value, &field_access.field);
             self.references.push(ResolvedReference {
                 name: record.clone(),
                 target: ReferenceTarget::QualifiedMember { module, member: field_access.field.clone(), symbol },
@@ -395,11 +391,13 @@ impl Resolver {
         self.resolve_expression(scope, &field_access.record);
     }
 
-    fn resolve_project_member(&mut self, module_name: &str, member: &ast::Name) -> Option<SymbolId> {
+    fn resolve_project_member(
+        &mut self, module_name: &str, namespace: Namespace, member: &ast::Name,
+    ) -> Option<SymbolId> {
         let Some(interface) = self.project_modules.get(module_name) else {
             return None;
         };
-        let Some(found) = interface.values.get(&member.text).cloned() else {
+        let Some(found) = interface.members.get(&(namespace, member.text.clone())).cloned() else {
             self.diagnostics.push(
                 Diagnostic::new(
                     DiagnosticCode::ResolveError,
@@ -423,33 +421,42 @@ impl Resolver {
     }
 
     fn bind_pattern(&mut self, scope: ScopeId, pattern: &Pattern, kind: SymbolKind) {
+        let mut names = HashMap::new();
+        self.bind_pattern_inner(scope, pattern, kind, &mut names);
+    }
+
+    fn bind_pattern_inner(
+        &mut self, scope: ScopeId, pattern: &Pattern, kind: SymbolKind, names: &mut HashMap<String, Span>,
+    ) {
         match pattern {
-            Pattern::Name(name) => {
-                self.define(scope, name, Namespace::Value, kind);
-            }
+            Pattern::Name(name) => self.define_pattern_name(scope, name, kind, names),
             Pattern::Tuple(tuple) => {
                 for element in &tuple.elements {
-                    self.bind_pattern(scope, element, kind.clone());
+                    self.bind_pattern_inner(scope, element, kind.clone(), names);
                 }
             }
             Pattern::List(list) => {
                 for element in &list.elements {
-                    self.bind_pattern(scope, element, kind.clone());
+                    self.bind_pattern_inner(scope, element, kind.clone(), names);
                 }
                 if let Some(ast::ListPatternTail::Name(name)) = &list.tail {
-                    self.define(scope, name, Namespace::Value, kind.clone());
+                    self.define_pattern_name(scope, name, kind.clone(), names);
                 }
             }
             Pattern::Constructor(constructor) => {
+                self.resolve_constructor_pattern(scope, constructor);
                 for argument in &constructor.arguments {
+                    self.resolve_record_pattern_field(scope, argument);
                     if let Some(pattern) = &argument.pattern {
-                        self.bind_pattern(scope, pattern, kind.clone());
+                        self.bind_pattern_inner(scope, pattern, kind.clone(), names);
+                    } else if let Some(label) = &argument.label {
+                        self.define_pattern_name(scope, label, kind.clone(), names);
                     }
                 }
             }
             Pattern::Alias(alias) => {
-                self.bind_pattern(scope, &alias.pattern, kind.clone());
-                self.define(scope, &alias.alias, Namespace::Value, kind);
+                self.bind_pattern_inner(scope, &alias.pattern, kind.clone(), names);
+                self.define_pattern_name(scope, &alias.alias, kind, names);
             }
             Pattern::Discard(_)
             | Pattern::Integer(_)
@@ -459,6 +466,83 @@ impl Resolver {
             | Pattern::Nil(_)
             | Pattern::BitString(_)
             | Pattern::Raw(_) => {}
+        }
+    }
+
+    fn define_pattern_name(
+        &mut self, scope: ScopeId, name: &ast::Name, kind: SymbolKind, names: &mut HashMap<String, Span>,
+    ) {
+        if let Some(previous) = names.insert(name.text.clone(), name.span) {
+            self.diagnostics.push(
+                Diagnostic::new(
+                    DiagnosticCode::ResolveError,
+                    format!("duplicate pattern binding `{}`", name.text),
+                )
+                .with_label(Label::primary(name.span, "bound again here"))
+                .with_label(Label::primary(previous, "previously bound here")),
+            );
+            return;
+        }
+        self.define(scope, name, Namespace::Value, kind);
+    }
+
+    fn resolve_constructor_pattern(&mut self, scope: ScopeId, constructor: &ast::ConstructorPattern) {
+        match &constructor.constructor {
+            ast::ConstructorName::Local(name) => {
+                self.resolve_pattern_symbol(scope, Namespace::Constructor, name, "constructor");
+            }
+            ast::ConstructorName::Remote { module, name, .. } => {
+                let Some(module_symbol) = self.lookup(scope, Namespace::Module, &module.text) else {
+                    self.diagnostics.push(
+                        Diagnostic::new(
+                            DiagnosticCode::ResolveError,
+                            format!("unknown module `{}`", module.text),
+                        )
+                        .with_label(Label::primary(module.span, "module not found")),
+                    );
+                    return;
+                };
+                if let SymbolKind::Import { module: module_name } = &self.symbols[module_symbol.0 as usize].kind.clone()
+                {
+                    let symbol = self.resolve_project_member(module_name, Namespace::Constructor, name);
+                    self.references.push(ResolvedReference {
+                        name: module.clone(),
+                        target: ReferenceTarget::QualifiedMember {
+                            module: module_symbol,
+                            member: name.clone(),
+                            symbol,
+                        },
+                    });
+                }
+            }
+        }
+    }
+
+    fn resolve_record_pattern_field(&mut self, scope: ScopeId, argument: &ast::RecordPatternArgument) {
+        if let Some(label) = &argument.label {
+            self.resolve_pattern_symbol(scope, Namespace::Field, label, "field");
+        }
+    }
+
+    fn resolve_pattern_symbol(
+        &mut self, scope: ScopeId, namespace: Namespace, name: &ast::Name, label: &str,
+    ) -> Option<SymbolId> {
+        match self.lookup(scope, namespace, &name.text) {
+            Some(symbol) => {
+                if let SymbolKind::Imported { module, .. } = &self.symbols[symbol.0 as usize].kind.clone() {
+                    self.resolve_project_member(module, namespace, name);
+                }
+                self.references
+                    .push(ResolvedReference { name: name.clone(), target: ReferenceTarget::Symbol(symbol) });
+                Some(symbol)
+            }
+            None => {
+                self.diagnostics.push(
+                    Diagnostic::new(DiagnosticCode::ResolveError, format!("unknown {label} `{}`", name.text))
+                        .with_label(Label::primary(name.span, format!("{label} not found"))),
+                );
+                None
+            }
         }
     }
 
@@ -519,17 +603,46 @@ impl Resolver {
 }
 
 fn module_interface(module: &ast::Module) -> ModuleInterface {
-    let values = module
-        .functions
-        .iter()
-        .map(|function| {
-            (
-                function.name.text.clone(),
-                ModuleMember { public: function.public, span: function.name.span },
-            )
-        })
-        .collect();
-    ModuleInterface { values }
+    let mut members = HashMap::new();
+
+    for function in &module.functions {
+        members.insert(
+            (Namespace::Value, function.name.text.clone()),
+            ModuleMember { public: function.public, span: function.name.span },
+        );
+    }
+
+    for declaration in &module.declarations {
+        match declaration {
+            Declaration::TypeDefinition(raw) => {
+                let public = raw.source.trim_start().starts_with("pub ");
+                if let Some(name) = type_name(&raw.source) {
+                    members.insert((Namespace::Type, name.into()), ModuleMember { public, span: raw.span });
+                }
+                for constructor in constructors(&raw.source) {
+                    members.insert(
+                        (Namespace::Constructor, constructor.into()),
+                        ModuleMember { public, span: raw.span },
+                    );
+                }
+                for field in fields(&raw.source) {
+                    members.insert(
+                        (Namespace::Field, field.into()),
+                        ModuleMember { public, span: raw.span },
+                    );
+                }
+            }
+            Declaration::TypeAlias(raw) => {
+                let public = raw.source.trim_start().starts_with("pub ");
+                if let Some(name) = type_name(&raw.source) {
+                    members.insert((Namespace::Type, name.into()), ModuleMember { public, span: raw.span });
+                }
+            }
+            _ => {}
+        }
+    }
+
+    ModuleInterface { members }
 }
 
 fn raw_name(raw: &ast::RawSyntax, name: &str) -> ast::Name {
@@ -571,16 +684,13 @@ fn fields(source: &str) -> Vec<&str> {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, path::Path};
-
-    use tempfile::tempdir;
-
+    use super::*;
     use crate::{
         ast, parse, project,
         source::{SourceFile, SourceFileId},
     };
-
-    use super::*;
+    use std::{fs, path::Path};
+    use tempfile::tempdir;
 
     fn resolve_source(source: &str) -> Result<ResolvedModule, Diagnostics> {
         let source = SourceFile::new(SourceFileId(0), source);
@@ -706,6 +816,61 @@ fn user(value) { value }
     }
 
     #[test]
+    fn resolves_nested_pattern_bindings_constructors_fields_and_guards() {
+        let resolved = resolve_source(include_str!("../../../fixtures/resolve/pattern_bindings.gleam"))
+            .expect("resolve pattern names");
+
+        assert!(resolved.references.iter().any(|reference| reference.name.text == "Ok"));
+        assert!(
+            resolved
+                .references
+                .iter()
+                .any(|reference| reference.name.text == "Person")
+        );
+        assert!(resolved.references.iter().any(|reference| reference.name.text == "age"));
+
+        let value_references = resolved
+            .references
+            .iter()
+            .filter(|reference| reference.name.text == "value")
+            .count();
+        assert_eq!(value_references, 2);
+    }
+
+    #[test]
+    fn reports_duplicate_bindings_in_one_pattern() {
+        let diagnostics = resolve_source("fn main(pair) { case pair { #(x, x) -> x } }")
+            .expect_err("duplicate pattern binding should fail");
+
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains("duplicate pattern binding `x`"))
+        );
+    }
+
+    #[test]
+    fn reports_unknown_constructors_and_fields_in_patterns() {
+        let diagnostics = resolve_source(
+            r#"pub type Person { Person(name: String) }
+fn main(person) { case person { Missing(age: value) -> value } }
+"#,
+        )
+        .expect_err("unknown pattern names should fail");
+
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains("unknown constructor `Missing`"))
+        );
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains("unknown field `age`"))
+        );
+    }
+
+    #[test]
     fn reports_ambiguous_unqualified_imports() {
         let diagnostics = resolve_source("import one.{id}\nimport two.{id}\nfn main() { id(1) }")
             .expect_err("ambiguous import should fail");
@@ -760,5 +925,66 @@ fn user(value) { value }
         let resolved = resolve_project(&project).expect("resolve project");
 
         assert_eq!(resolved.modules.len(), 2);
+    }
+
+    #[test]
+    fn resolves_qualified_constructor_patterns_across_project_modules() {
+        let dir = tempdir().expect("tempdir");
+        write(
+            &dir.path().join("gleam.toml"),
+            "name = \"sample\"\nversion = \"1.0.0\"\n",
+        );
+        write(&dir.path().join("src/app.gleam"), "pub type Boxed { Boxed(Int) }\n");
+        write(
+            &dir.path().join("src/main.gleam"),
+            "import app\nfn main(value) { case value { app.Boxed(inner) -> inner } }\n",
+        );
+        let project = project::load_project(dir.path()).expect("load project");
+
+        let resolved = resolve_project(&project).expect("resolve project");
+
+        assert_eq!(resolved.modules.len(), 2);
+    }
+
+    #[test]
+    fn resolves_unqualified_imported_constructor_patterns() {
+        let dir = tempdir().expect("tempdir");
+        write(
+            &dir.path().join("gleam.toml"),
+            "name = \"sample\"\nversion = \"1.0.0\"\n",
+        );
+        write(&dir.path().join("src/app.gleam"), "pub type Boxed { Boxed(Int) }\n");
+        write(
+            &dir.path().join("src/main.gleam"),
+            "import app.{type Boxed}\nfn main(value) { case value { Boxed(inner) -> inner } }\n",
+        );
+        let project = project::load_project(dir.path()).expect("load project");
+
+        let resolved = resolve_project(&project).expect("resolve project");
+
+        assert_eq!(resolved.modules.len(), 2);
+    }
+
+    #[test]
+    fn rejects_private_qualified_constructor_patterns_across_project_modules() {
+        let dir = tempdir().expect("tempdir");
+        write(
+            &dir.path().join("gleam.toml"),
+            "name = \"sample\"\nversion = \"1.0.0\"\n",
+        );
+        write(&dir.path().join("src/app.gleam"), "type Boxed { Boxed(Int) }\n");
+        write(
+            &dir.path().join("src/main.gleam"),
+            "import app\nfn main(value) { case value { app.Boxed(inner) -> inner } }\n",
+        );
+        let project = project::load_project(dir.path()).expect("load project");
+
+        let diagnostics = resolve_project(&project).expect_err("private constructor should fail");
+
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains("member `Boxed` is private"))
+        );
     }
 }

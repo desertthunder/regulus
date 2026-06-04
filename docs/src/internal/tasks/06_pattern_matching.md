@@ -37,17 +37,17 @@ generation.
 
 ### Name resolution
 
-- [ ] Bind names introduced by tuple, list, record, constructor, nested, and
+- [x] Bind names introduced by tuple, list, record, constructor, nested, and
       `let assert` patterns.
-- [ ] Resolve constructor names in patterns separately from variable bindings.
-- [ ] Resolve record fields used in record patterns.
-- [ ] Resolve qualified and imported constructors in patterns, including public
+- [x] Resolve constructor names in patterns separately from variable bindings.
+- [x] Resolve record fields used in record patterns.
+- [x] Resolve qualified and imported constructors in patterns, including public
       and private visibility checks.
-- [ ] Reject duplicate variable bindings in one pattern where Gleam disallows
+- [x] Reject duplicate variable bindings in one pattern where Gleam disallows
       them.
-- [ ] Ensure branch-local bindings are visible to the guard and branch body, but
+- [x] Ensure branch-local bindings are visible to the guard and branch body, but
       not outside the branch.
-- [ ] Add resolver fixtures for shadowing, imported constructors, branch-local
+- [x] Add resolver fixtures for shadowing, imported constructors, branch-local
       names, and invalid duplicate bindings.
 
 ### Type checking and diagnostics

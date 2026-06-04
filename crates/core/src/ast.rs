@@ -732,7 +732,9 @@ impl AstBuilder<'_> {
     fn name_field(&self, node: Node<'_>, field: &str) -> Result<Option<Name>, Diagnostics> {
         node.child_by_field_name(field)
             .map(|child| match child.kind() {
-                "identifier" | "type_identifier" | "label" | "module" | "discard" => Ok(self.name(child)),
+                "identifier" | "type_identifier" | "constructor_name" | "label" | "module" | "discard" => {
+                    Ok(self.name(child))
+                }
                 _ => Err(vec![self.unsupported(child)]),
             })
             .transpose()
