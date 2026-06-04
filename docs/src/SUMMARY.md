@@ -53,6 +53,7 @@ TODO:
 # Development
 
 - [Supported subset](internal/supported_subset.md)
+- [Development changelog](CHANGELOG.md)
 - [Tests & Documentation](internal/testing_docs.md)
 
 # Internal Docs
@@ -69,13 +70,6 @@ TODO:
   - [Standard library and host interop](internal/specs/09_stdlib_and_host_interop.md)
   - [CLI and build outputs](internal/specs/10_cli_and_build_outputs.md)
 - [Tasks]()
-  - [Project model and modules](internal/tasks/01_project_model_and_modules.md)
-  - [Full Gleam syntax](internal/tasks/02_full_gleam_syntax.md)
-  - [Full name resolution](internal/tasks/03_full_name_resolution.md)
-  - [Gleam types and interfaces](internal/tasks/04_gleam_types_and_interfaces.md)
-  - [Runtime representation](internal/tasks/05_runtime_representation.md)
-  - [Pattern matching](internal/tasks/06_pattern_matching.md)
-  - [Core IR for real programs](internal/tasks/07_core_ir_for_real_programs.md)
   - [WASM backend and runtime](internal/tasks/08_wasm_backend_and_runtime.md)
   - [Standard library and host interop](internal/tasks/09_stdlib_and_host_interop.md)
   - [CLI and build outputs](internal/tasks/10_cli_and_build_outputs.md)
