@@ -91,6 +91,7 @@ body,
 .content main {
   color: var(--book-text);
   font-family: "Switzer", system-ui, sans-serif;
+  font-size: 18px;
 }
 
 h1,
@@ -141,6 +142,84 @@ pre,
 blockquote {
   background: rgba(255, 175, 243, 0.08);
   border-color: var(--book-accent);
+}
+
+/*
+  Tufte-style margin notes for mdBook chapters (wip).
+   Usage:
+   <label for="sn-id" class="margin-toggle sidenote-number"></label>
+   <input type="checkbox" id="sn-id" class="margin-toggle" />
+   <span class="sidenote">Note text.</span>
+
+   Use .marginnote instead of .sidenote for an unnumbered note.
+
+   TODO: syntax extension for markdown
+   TODO: alignment/collapsible
+   TODO: give this its own file (tufte-note.css?) and import it
+*/
+.content main {
+  counter-reset: sidenote-counter;
+}
+
+.sidenote,
+.marginnote {
+  clear: right;
+  float: right;
+  width: 16rem;
+  margin-right: -18rem;
+  margin-bottom: 0.7rem;
+  color: rgba(254, 254, 252, 0.78);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.footnote-definition,
+.footnote-definition p {
+  font-size: 15px;
+  line-height: 1.4;
+}
+
+.sidenote-number {
+  counter-increment: sidenote-counter;
+}
+
+.sidenote::before,
+.sidenote-number::after {
+  color: var(--book-accent);
+  content: counter(sidenote-counter);
+  font-feature-settings: "sups";
+  font-size: 0.75rem;
+  vertical-align: super;
+}
+
+.sidenote::before {
+  margin-right: 0.35rem;
+}
+
+.sidenote-number::after {
+  cursor: pointer;
+  margin-left: 0.15rem;
+}
+
+.margin-toggle {
+  display: none;
+}
+
+.marginnote code,
+.sidenote code {
+  font-size: 0.75rem;
+}
+
+@media (max-width: 1200px) {
+  .sidenote,
+  .marginnote {
+    float: none;
+    width: auto;
+    margin: 0.7rem 0;
+    padding: 0.75rem 1rem;
+    background: rgba(255, 175, 243, 0.08);
+    border-left: 0.18rem solid var(--book-accent);
+  }
 }
 
 #theme-list,

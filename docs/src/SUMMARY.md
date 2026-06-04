@@ -1,7 +1,11 @@
 # Summary
 
 - [Introduction](./introduction.md)
-- [Syntax trees and Gleam](./chapter_1.md)
+- [Lexing, parsing, and syntax trees](./chapter_1.md)
+  - [Lexing](./chapter_1/lexing.md)
+  - [Parsing](./chapter_1/parsing.md)
+  - [Concrete and abstract syntax trees](./chapter_1/syntax_trees.md)
+  - [Gleam's grammar](./chapter_1/gleam_grammar.md)
 - [Name resolution](./chapter_2.md)
 - [Type systems](./chapter_3.md)
 - [Intermediate representations and lowering](./chapter_4.md)
