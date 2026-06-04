@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    ast::{self, Expression as AstExpression, LiteralKind as AstLiteralKind, Pattern, Statement},
+    ast::{self, Expression as AstExpression, LiteralKind, Pattern, Statement},
     diagnostic::{Diagnostic, DiagnosticCode, Diagnostics, Label},
     source::Span,
     types::{Type, TypedModule},
@@ -49,6 +49,11 @@ pub enum Instruction {
         value: Expression,
         span: Span,
     },
+    AssertMatch {
+        value: Expression,
+        pattern: IrPattern,
+        span: Span,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -76,15 +81,6 @@ pub struct Literal {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum LiteralKind {
-    Int,
-    Float,
-    String,
-    Bool,
-    Nil,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Branch {
     pub subjects: Vec<Expression>,
     pub clauses: Vec<BranchClause>,
@@ -93,6 +89,7 @@ pub struct Branch {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BranchClause {
     pub patterns: Vec<IrPattern>,
+    pub guard: Option<Expression>,
     pub body: Box<Expression>,
     pub span: Span,
 }
@@ -101,6 +98,7 @@ pub struct BranchClause {
 pub enum IrPattern {
     Discard,
     Binding(LocalId),
+    Alias { pattern: Box<IrPattern>, local: LocalId },
     Literal(Literal),
 }
 
@@ -190,10 +188,16 @@ impl Lowerer {
                         ),
                     }
                 }
-                Statement::LetAssert(let_assert) => self.diagnostics.push(
-                    Diagnostic::new(DiagnosticCode::LoweringError, "let assert cannot be lowered")
-                        .with_label(Label::primary(let_assert.span, "unsupported let assert here")),
-                ),
+                Statement::LetAssert(let_assert) => {
+                    let value = self.lower_expression(context, &let_assert.value)?;
+                    let pattern = self.lower_pattern(context, &let_assert.pattern, &value.type_)?;
+                    instructions.push(Instruction::AssertMatch {
+                        value: value.clone(),
+                        pattern: pattern.clone(),
+                        span: let_assert.span,
+                    });
+                    self.bind_assert_pattern(context, &mut instructions, &value, &pattern, let_assert.span);
+                }
                 Statement::Expression(expression) => result = self.lower_expression(context, expression)?,
             }
         }
@@ -208,10 +212,7 @@ impl Lowerer {
             AstExpression::Literal(literal) => Some(Expression {
                 type_: type_for_literal(literal.kind.clone()),
                 span: literal.span,
-                kind: ExpressionKind::Literal(Literal {
-                    kind: literal_kind(literal.kind.clone()),
-                    source: literal.source.clone(),
-                }),
+                kind: ExpressionKind::Literal(Literal { kind: literal.kind.clone(), source: literal.source.clone() }),
             }),
             AstExpression::Variable(name) => {
                 let local = context.lookup(&name.text)?;
@@ -260,16 +261,14 @@ impl Lowerer {
                         .zip(subjects.iter())
                         .map(|(pattern, subject)| self.lower_pattern(context, pattern, &subject.type_))
                         .collect::<Option<Vec<_>>>();
-                    if let Some(guard) = &clause.guard {
-                        self.diagnostics.push(
-                            Diagnostic::new(DiagnosticCode::LoweringError, "case guards cannot be lowered")
-                                .with_label(Label::primary(ast_expression_span(guard), "unsupported guard here")),
-                        );
-                    }
+                    let guard = match &clause.guard {
+                        Some(guard) => Some(self.lower_expression(context, guard)?),
+                        None => None,
+                    };
                     let body = self.lower_expression(context, &clause.value)?;
                     context.pop_scope();
                     type_ = body.type_.clone();
-                    clauses.push(BranchClause { patterns: patterns?, body: Box::new(body), span: clause.span });
+                    clauses.push(BranchClause { patterns: patterns?, guard, body: Box::new(body), span: clause.span });
                 }
                 Some(Expression { type_, span: case.span, kind: ExpressionKind::Branch(Branch { subjects, clauses }) })
             }
@@ -336,8 +335,10 @@ impl Lowerer {
                 None
             }
             Pattern::Alias(alias) => {
-                self.unsupported_pattern(alias.span, "alias pattern");
-                None
+                let inner = self.lower_pattern(context, &alias.pattern, subject_type)?;
+                let local = context.allocate(&alias.alias, subject_type.clone());
+                context.bind(alias.alias.text.clone(), local.id);
+                Some(IrPattern::Alias { pattern: Box::new(inner), local: local.id })
             }
             Pattern::BitString(raw) => {
                 self.unsupported_pattern(raw.span, "bit string pattern");
@@ -352,6 +353,24 @@ impl Lowerer {
                     .with_label(Label::primary(raw.span, "unsupported pattern here")),
                 );
                 None
+            }
+        }
+    }
+
+    fn bind_assert_pattern(
+        &mut self, context: &mut FunctionContext, instructions: &mut Vec<Instruction>, value: &Expression,
+        pattern: &IrPattern, span: Span,
+    ) {
+        match pattern {
+            IrPattern::Binding(local) => {
+                instructions.push(Instruction::LocalSet { local: *local, value: value.clone(), span })
+            }
+            IrPattern::Alias { pattern, local } => {
+                self.bind_assert_pattern(context, instructions, value, pattern, span);
+                instructions.push(Instruction::LocalSet { local: *local, value: value.clone(), span });
+            }
+            IrPattern::Discard | IrPattern::Literal(_) => {
+                let _ = context;
             }
         }
     }
@@ -413,47 +432,21 @@ impl FunctionContext {
     }
 }
 
-fn ast_expression_span(expression: &AstExpression) -> Span {
-    match expression {
-        AstExpression::Literal(literal) => literal.span,
-        AstExpression::Variable(name) => name.span,
-        AstExpression::Call(call) => call.span,
-        AstExpression::FieldAccess(field_access) => field_access.span,
-        AstExpression::Block(block) => block.span,
-        AstExpression::Case(case) => case.span,
-        AstExpression::Raw(raw) => raw.span,
-    }
-}
-
-fn type_for_literal(kind: AstLiteralKind) -> Type {
+fn type_for_literal(kind: LiteralKind) -> Type {
     match kind {
-        AstLiteralKind::Int => Type::Int,
-        AstLiteralKind::Float => Type::Float,
-        AstLiteralKind::String => Type::String,
-        AstLiteralKind::Bool => Type::Bool,
-        AstLiteralKind::Nil => Type::Nil,
-    }
-}
-
-fn literal_kind(kind: AstLiteralKind) -> LiteralKind {
-    match kind {
-        AstLiteralKind::Int => LiteralKind::Int,
-        AstLiteralKind::Float => LiteralKind::Float,
-        AstLiteralKind::String => LiteralKind::String,
-        AstLiteralKind::Bool => LiteralKind::Bool,
-        AstLiteralKind::Nil => LiteralKind::Nil,
+        LiteralKind::Int => Type::Int,
+        LiteralKind::Float => Type::Float,
+        LiteralKind::String => Type::String,
+        LiteralKind::Bool => Type::Bool,
+        LiteralKind::Nil => Type::Nil,
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        ast, parse, resolve,
-        source::{SourceFile, SourceFileId},
-        types,
-    };
-
     use super::*;
+    use crate::source::{SourceFile, SourceFileId};
+    use crate::{ast, parse, resolve, types};
 
     fn lower_source(source: &str) -> Module {
         let source = SourceFile::new(SourceFileId(0), source);

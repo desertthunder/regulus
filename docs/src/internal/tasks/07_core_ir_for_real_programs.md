@@ -42,6 +42,8 @@ values without depending on parser or resolver syntax details.
 ### Control flow and failures
 
 - [ ] Add lowered pattern-matching control flow for all supported pattern forms.
+- [ ] Lower tuple, list, record, constructor, and nested managed-value patterns
+      once IR can construct and inspect those runtime values.
 - [ ] Represent guards, branch fallthrough, successful bindings, and failure
       paths explicitly.
 - [ ] Represent `let assert`, `panic`, `todo`, and `assert` failure paths.

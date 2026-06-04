@@ -1,11 +1,8 @@
 use std::fmt::Write;
 
-use crate::{
-    diagnostic::{Diagnostic, DiagnosticCode, Diagnostics, Label},
-    ir::{self, ExpressionKind, Instruction, LiteralKind},
-    runtime,
-    types::Type,
-};
+use crate::diagnostic::{Diagnostic, DiagnosticCode, Diagnostics, Label};
+use crate::ir::{self, ExpressionKind, Instruction};
+use crate::{ast::LiteralKind, runtime, types::Type};
 
 /// WebAssembly output from the backend.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -119,6 +116,13 @@ impl Emitter {
                     self.expression(value);
                     writeln!(self.functions, "    local.set ${}", local.0).expect("write WAT");
                 }
+                Instruction::AssertMatch { value, pattern, span } => {
+                    self.pattern_test(value, pattern, *span);
+                    writeln!(self.functions, "    if").expect("write WAT");
+                    writeln!(self.functions, "    else").expect("write WAT");
+                    writeln!(self.functions, "    unreachable").expect("write WAT");
+                    writeln!(self.functions, "    end").expect("write WAT");
+                }
             }
         }
         self.expression(&block.result);
@@ -177,17 +181,14 @@ impl Emitter {
             return;
         };
 
-        self.branch_test(&branch.subjects, &clause.patterns, clause.span);
+        self.branch_test(&branch.subjects, &clause.patterns, clause.guard.as_ref(), clause.span);
         if result_type.is_empty() {
             writeln!(self.functions, "    if").expect("write WAT");
         } else {
             writeln!(self.functions, "    if (result {result_type})").expect("write WAT");
         }
         for (subject, pattern) in branch.subjects.iter().zip(&clause.patterns) {
-            if let ir::IrPattern::Binding(local) = pattern {
-                self.expression(subject);
-                writeln!(self.functions, "    local.set ${}", local.0).expect("write WAT");
-            }
+            self.bind_pattern_values(subject, pattern);
         }
         self.expression(&clause.body);
         writeln!(self.functions, "    else").expect("write WAT");
@@ -196,7 +197,10 @@ impl Emitter {
         writeln!(self.functions, "    end").expect("write WAT");
     }
 
-    fn branch_test(&mut self, subjects: &[ir::Expression], patterns: &[ir::IrPattern], span: crate::source::Span) {
+    fn branch_test(
+        &mut self, subjects: &[ir::Expression], patterns: &[ir::IrPattern], guard: Option<&ir::Expression>,
+        span: crate::source::Span,
+    ) {
         if subjects.len() != patterns.len() {
             self.diagnostics.push(
                 Diagnostic::new(DiagnosticCode::WasmError, "branch subject and pattern counts differ")
@@ -218,6 +222,26 @@ impl Emitter {
         if !emitted_any {
             writeln!(self.functions, "    i32.const 1").expect("write WAT");
         }
+
+        if let Some(guard) = guard {
+            self.expression(guard);
+            writeln!(self.functions, "    i32.and").expect("write WAT");
+        }
+    }
+
+    fn bind_pattern_values(&mut self, subject: &ir::Expression, pattern: &ir::IrPattern) {
+        match pattern {
+            ir::IrPattern::Binding(local) => {
+                self.expression(subject);
+                writeln!(self.functions, "    local.set ${}", local.0).expect("write WAT");
+            }
+            ir::IrPattern::Alias { pattern, local } => {
+                self.bind_pattern_values(subject, pattern);
+                self.expression(subject);
+                writeln!(self.functions, "    local.set ${}", local.0).expect("write WAT");
+            }
+            ir::IrPattern::Discard | ir::IrPattern::Literal(_) => {}
+        }
     }
 
     fn pattern_test(&mut self, subject: &ir::Expression, pattern: &ir::IrPattern, span: crate::source::Span) {
@@ -225,6 +249,7 @@ impl Emitter {
             ir::IrPattern::Discard | ir::IrPattern::Binding(_) => {
                 writeln!(self.functions, "    i32.const 1").expect("write WAT");
             }
+            ir::IrPattern::Alias { pattern, .. } => self.pattern_test(subject, pattern, span),
             ir::IrPattern::Literal(literal) => {
                 self.expression(subject);
                 self.literal(literal);
@@ -464,6 +489,53 @@ mod tests {
             .get_typed_func::<i64, i64>(&mut store, "keep")
             .expect("get keep export");
 
+        assert_eq!(keep.call(&mut store, 42).expect("call keep"), 42);
+    }
+
+    #[test]
+    fn runs_guarded_case_expression() {
+        let wasm =
+            compile_wasm("pub fn choose(flag: Bool, other: Bool) -> Int { case flag { True if other -> 1 _ -> 0 } }");
+        let engine = Engine::default();
+        let module = Module::new(&engine, &wasm.bytes).expect("compile wasm module");
+        let mut store = Store::new(&engine, ());
+        let instance = Instance::new(&mut store, &module, &[]).expect("instantiate module");
+        let choose = instance
+            .get_typed_func::<(i32, i32), i64>(&mut store, "choose")
+            .expect("get choose export");
+
+        assert_eq!(choose.call(&mut store, (1, 1)).expect("call choose"), 1);
+        assert_eq!(choose.call(&mut store, (1, 0)).expect("call choose"), 0);
+        assert_eq!(choose.call(&mut store, (0, 1)).expect("call choose"), 0);
+    }
+
+    #[test]
+    fn traps_failed_let_assert() {
+        let wasm = compile_wasm("pub fn require_true(flag: Bool) -> Int { let assert True = flag 1 }");
+        let engine = Engine::default();
+        let module = Module::new(&engine, &wasm.bytes).expect("compile wasm module");
+        let mut store = Store::new(&engine, ());
+        let instance = Instance::new(&mut store, &module, &[]).expect("instantiate module");
+        let require_true = instance
+            .get_typed_func::<i32, i64>(&mut store, "require_true")
+            .expect("get require_true export");
+
+        assert_eq!(require_true.call(&mut store, 1).expect("call require_true"), 1);
+        assert!(require_true.call(&mut store, 0).is_err());
+    }
+
+    #[test]
+    fn binds_alias_patterns() {
+        let wasm = compile_wasm("pub fn keep(x: Int) -> Int { case x { 1 as one -> one other -> other } }");
+        let engine = Engine::default();
+        let module = Module::new(&engine, &wasm.bytes).expect("compile wasm module");
+        let mut store = Store::new(&engine, ());
+        let instance = Instance::new(&mut store, &module, &[]).expect("instantiate module");
+        let keep = instance
+            .get_typed_func::<i64, i64>(&mut store, "keep")
+            .expect("get keep export");
+
+        assert_eq!(keep.call(&mut store, 1).expect("call keep"), 1);
         assert_eq!(keep.call(&mut store, 42).expect("call keep"), 42);
     }
 

@@ -75,15 +75,14 @@ generation.
 
 ### Lowering and WebAssembly
 
-- [ ] Lower tuple, list, record, constructor, nested, guard, multi-subject, and
-      `let assert` patterns into explicit matching IR.
-- [ ] Ensure lowered matching logic no longer depends on Gleam pattern syntax.
-- [ ] Emit runtime-backed tests for tuple, list, record, and custom-type
-      constructor patterns.
-- [ ] Emit guard checks after structural pattern tests and before branch bodies.
-- [ ] Emit fallback code for non-matching branches and `let assert` failures.
-- [ ] Add Wasmtime tests for nested matches, constructor matches, guards,
-      multi-subject matches, and assertion failures.
+- [x] Lower supported scalar, alias, guard, multi-subject, and `let assert`
+      patterns into explicit matching IR.
+- [x] Ensure lowered matching logic for supported patterns no longer depends on
+      Gleam pattern syntax.
+- [x] Emit guard checks after structural pattern tests and before branch bodies.
+- [x] Emit fallback code for non-matching branches and `let assert` failures.
+- [x] Add Wasmtime tests for scalar alias patterns, guards, multi-subject
+      matches, and assertion failures.
 
 ## Done when
 

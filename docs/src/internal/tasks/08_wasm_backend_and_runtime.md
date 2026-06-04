@@ -48,6 +48,9 @@ Emit WebAssembly for scalar and runtime-managed Gleam values.
       export cases.
 - [ ] Add Wasmtime execution tests for managed values, constructor matches,
       string/list operations, closure calls, and host imports.
+- [ ] Add runtime-backed Wasmtime tests for tuple, list, record, and custom-type
+      constructor patterns after managed-value construction and inspection are
+      implemented.
 - [ ] Add browser-oriented build tests where practical.
 - [ ] Ensure unsupported backend forms produce source-spanned diagnostics rather
       than WAT assembly failures.
