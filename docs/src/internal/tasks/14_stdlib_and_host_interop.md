@@ -14,8 +14,11 @@ Support useful standard library modules and host calls.
 - [ ] Load or model dependency package metadata needed for stdlib modules.
 - [ ] Resolve stdlib module interfaces consistently with project module
       interfaces.
+- [ ] Load external module interfaces from dependency metadata where available.
 - [ ] Type-check selected stdlib functions using the same interface data as user
       modules.
+- [ ] Type-check dependency functions, constructors, and types through imported
+      module interface schemes.
 - [ ] Add diagnostics for unsupported stdlib modules, functions, types, or
       target combinations.
 

@@ -74,7 +74,7 @@ TODO:
   - [Pattern matching](internal/development/pattern_matching.md)
   - [Core IR](internal/development/core_ir_for_real_programs.md)
   - [WASM backend and runtime](internal/development/wasm_backend_and_runtime.md)
-  - [Backend completeness](internal/development/wasm_backend_completeness.md)
+  - [CLI and build outputs](internal/development/cli_and_build_outputs.md)
 
 <!--
 TODO:

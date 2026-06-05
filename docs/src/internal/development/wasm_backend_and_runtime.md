@@ -20,7 +20,11 @@ WAT and execute the bytes in Wasmtime.
 ## Runtime prelude
 
 Generated modules include the runtime prelude only when a runtime-managed value
-or helper is used. The prelude currently provides:
+or helper is used. Runtime snippets live in
+`crates/core/src/wasm/helpers.rs` and are inserted by the `RuntimePrelude`
+builder.
+
+The prelude currently provides:
 
 - exported linear memory
 - a mutable bump-allocation heap pointer
@@ -31,13 +35,11 @@ or helper is used. The prelude currently provides:
 - list construction and deconstruction
 - tuple, record, custom, closure, opaque, error, and panic-value allocation
 - field access helpers
-- equality and ordering helpers
+- equality and scalar ordering helpers
 - panic, assertion, match-failure, and debug helpers
 
 The prelude is not user code and it is not emitted for modules that only need
-plain scalar WebAssembly. Runtime helper snippets live in
-`crates/core/src/wasm/helpers.rs` and are inserted by the `RuntimePrelude`
-builder.
+plain scalar WebAssembly.
 
 Static managed literals are emitted as data segments before the dynamic heap.
 The object layout is documented in
@@ -62,6 +64,20 @@ The backend emits:
 
 Unsupported forms produce source-spanned `WasmError` diagnostics rather than
 letting WAT assembly fail.
+
+## Current limits
+
+The backend is complete for the current typed IR surface, not for the whole
+Gleam language. These areas still need design or implementation before every
+accepted source program can execute with full Gleam semantics:
+
+- long-term heap growth, lifetime, and allocation failure behavior
+- recursive equality and ordering for every comparable managed value
+- full debug rendering and host-readable panic/error payloads
+- scalar captures in closure environments
+- full bit-string deconstruction semantics
+- target-specific browser and WASI adapters
+- standard library and dependency-backed imports
 
 ## ABI rules
 

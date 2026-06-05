@@ -41,9 +41,22 @@ Replace placeholder semantics for represented language forms with full behavior.
 ### Record updates
 
 - [ ] Resolve and type-check updated fields against declaration order.
+- [ ] Infer field access and record-update field types from known record
+      declarations.
+- [ ] Decide whether open-record-style inference is supported or rejected with
+      diagnostics.
 - [ ] Lower record updates into explicit field copy and replacement operations.
 - [ ] Emit Wasm allocation for updated records/custom values.
 - [ ] Add tests for scalar and managed field updates.
+
+### Type checker soundness
+
+- [ ] Replace approximate local generalization with outer-scope free-variable
+      handling.
+- [ ] Prevent generic or ambiguous types from reaching IR and Wasm phases that
+      need concrete runtime representation.
+- [ ] Add type-checker tests for local generalization, field inference, and
+      generic leakage into lowering.
 
 ## Done when
 

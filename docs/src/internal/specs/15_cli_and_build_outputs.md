@@ -1,18 +1,18 @@
-# CLI and build outputs
+# Open CLI and build outputs
 
-The CLI should compile projects and produce artifacts that are useful for users,
-tests, and contributors inspecting the compiler.
+Current single-file CLI behavior is documented in
+[CLI and build outputs](../development/cli_and_build_outputs.md). This spec
+tracks the remaining work for project compilation and richer user-facing
+artifacts.
 
-## Responsibilities
+## Remaining responsibilities
 
-- Compile a Gleam project from `gleam.toml` into linked Wasm output.
-- Compile single files for small tests and examples.
 - Discover package/dependency metadata needed for project compilation.
-- Write `.wasm` output.
-- Optionally write WAT, AST, resolved AST, typed output, and IR dumps.
-- Choose target settings such as Wasmtime, browser, or WASI where supported.
 - Render diagnostics with source snippets.
-- Return useful exit codes for automation.
+- Compile a Gleam project from `gleam.toml` into linked Wasm output.
+- Choose concrete target adapters for Wasmtime, browser, and WASI.
+- Keep generated artifact names deterministic for multi-module projects.
+- Avoid partial final artifacts after failed project compilation.
 
 ## Artifacts
 
@@ -27,3 +27,7 @@ Suggested outputs:
 
 Commands should be boring and predictable. Debug output should be opt-in, and
 normal compilation should focus on the final artifact and diagnostics.
+
+## Active tasks
+
+See [CLI and build outputs tasks](../tasks/15_cli_and_build_outputs.md).

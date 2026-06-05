@@ -1,8 +1,8 @@
-# Remaining language semantics
+# Open language semantics
 
-Some syntax and IR forms are represented and emitted today with intentionally
-small semantics. This spec tracks the language behavior needed to remove those
-approximations.
+Syntax, resolution, type checking, pattern matching, and IR lowering are
+documented in the development notes. This spec tracks represented forms that
+still need full Gleam semantics rather than placeholder or partial behavior.
 
 ## Target groups
 
@@ -36,7 +36,6 @@ Record update should allocate or construct a new record/custom value with
 updated fields while preserving unchanged fields in declaration order. It must
 work for managed and scalar fields.
 
-## Done when
+## Active tasks
 
-These forms no longer rely on placeholder backend behavior and execute with
-Gleam-compatible semantics or fail with precise diagnostics.
+See [Language semantics tasks](../tasks/13_remaining_language_semantics.md).

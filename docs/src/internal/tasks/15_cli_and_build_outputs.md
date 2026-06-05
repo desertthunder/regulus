@@ -33,6 +33,8 @@ Make the CLI compile projects and produce useful artifacts.
 
 - [ ] Render diagnostics with source snippets, labels, notes, and file paths.
 - [ ] Group diagnostics across project modules in a stable order.
+- [ ] Improve type-inference diagnostics for local generalization, ambiguous
+      types, recursive types, constructor fields, and branch mismatches.
 - [x] Show unsupported-feature diagnostics from AST, resolver, type, lowering,
       backend, stdlib, and ABI stages without losing source spans.
 - [x] Keep normal compile output concise; make debug output opt-in.

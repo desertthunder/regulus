@@ -1,7 +1,8 @@
-# Standard library and host interop
+# Open standard library and host interop
 
-A useful compiler needs a plan for Gleam's standard library and for host
-functions supplied by Wasmtime, WASI, or the browser.
+The backend has a raw scalar and managed-pointer ABI for current tests. This
+spec tracks the work needed for useful standard library modules and concrete
+host interfaces for Wasmtime, WASI, and the browser.
 
 ## Strategies
 
@@ -36,3 +37,7 @@ combinations.
 Unsupported stdlib modules, dependency modules, host calls, ABI shapes, or
 target combinations should produce clear diagnostics rather than failing during
 WASM assembly.
+
+## Active tasks
+
+See [Stdlib and host interop tasks](../tasks/14_stdlib_and_host_interop.md).

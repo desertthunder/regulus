@@ -1,12 +1,13 @@
-# Runtime memory and value semantics
+# Open runtime memory and value semantics
 
-The current runtime uses a bump allocator and minimal helper semantics. Complete
-runtime support needs explicit memory management choices and full value helper
-behavior.
+Current runtime layout and helper behavior are documented in
+[Runtime representation](../development/runtime_representation.md) and
+[WASM backend and runtime](../development/wasm_backend_and_runtime.md). This
+spec tracks the remaining design decisions.
 
 ## Memory management
 
-The runtime must choose and document a long-term strategy for managed values:
+Choose and document a long-term strategy for managed values:
 
 - bump allocation with explicit reset points
 - reference counting
@@ -19,8 +20,9 @@ lifetime, ownership across host boundaries, and whether values can move.
 
 ## Equality and ordering
 
-Runtime equality should match Gleam semantics for all comparable values. Managed
-values need recursive structural equality with cycle-safe or acyclic guarantees.
+Runtime equality should match Gleam semantics for all comparable values.
+Managed values need recursive structural equality with cycle-safe or acyclic
+guarantees.
 
 Ordering helpers should support every type Gleam allows to be ordered and should
 reject unsupported ordering before code generation when possible.
@@ -38,8 +40,6 @@ Panic, todo, assert, pattern-match failure, and runtime error paths should carry
 a structured payload when useful. Hosts should be able to inspect or render the
 payload without knowing compiler internals.
 
-## Done when
+## Active tasks
 
-Runtime-managed programs can allocate, compare, order, inspect, debug, and
-report failures consistently without relying on pointer identity or unbounded
-unchecked heap growth.
+See [Runtime memory tasks](../tasks/12_runtime_memory_and_semantics.md).
