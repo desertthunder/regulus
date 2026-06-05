@@ -16,8 +16,8 @@ Support useful standard library modules and host calls.
       interfaces.
 - [ ] Type-check selected stdlib functions using the same interface data as user
       modules.
-- [ ] Add diagnostics for unsupported stdlib modules, functions, types, or target
-      combinations.
+- [ ] Add diagnostics for unsupported stdlib modules, functions, types, or
+      target combinations.
 
 ### Host ABI
 

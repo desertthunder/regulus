@@ -9,11 +9,11 @@ Gleam language support.
 
 ### Value representation
 
-- [ ] Define final WASM representations for all scalar and managed Gleam values.
-- [ ] Support strings, bit arrays, lists, tuples, records, custom types,
+- [x] Define final WASM representations for all scalar and managed Gleam values.
+- [x] Support strings, bit arrays, lists, tuples, records, custom types,
       closures, opaque values, results, options, errors, and panics.
-- [ ] Document memory layout, tags, alignment, ownership, and lifetime rules.
-- [ ] Add layout tests for every managed value kind.
+- [x] Document memory layout, tags, alignment, ownership, and lifetime rules.
+- [x] Add layout tests for every managed value kind.
 
 ### Runtime helpers
 

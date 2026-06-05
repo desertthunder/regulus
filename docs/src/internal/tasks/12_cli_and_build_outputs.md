@@ -50,5 +50,5 @@ Make the CLI compile projects and produce useful artifacts.
 ## Done when
 
 A user can run one command against a Gleam project and receive a `.wasm` file or
-clear source-rendered diagnostics, with optional deterministic debug artifacts for
-compiler contributors.
+clear source-rendered diagnostics, with optional deterministic debug artifacts
+for compiler contributors.

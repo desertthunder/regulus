@@ -23,8 +23,11 @@ The backend must define and implement WASM representations for:
 - function values, closures, captures, and indirect calls
 - opaque and dependency-defined runtime values
 
-Managed values should use the documented runtime object layout unless a later
-representation replaces it with an equivalent contract.
+Managed values use the layout in
+[Runtime representation](../development/runtime_representation.md). `Result`
+and `Option` are ordinary custom values. Runtime errors, panic payloads, and
+opaque values use dedicated runtime tags so helpers can distinguish them from
+user variants.
 
 ## Runtime operations
 
