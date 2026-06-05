@@ -1,5 +1,6 @@
 pub mod ast;
 pub mod diagnostic;
+pub mod inference;
 pub mod ir;
 pub mod parse;
 pub mod project;

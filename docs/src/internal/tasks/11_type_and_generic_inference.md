@@ -8,12 +8,12 @@ Infer full Gleam expression, function, pattern, and module interface types.
 
 ### Inference core
 
-- [ ] Add inference variables distinct from named generic parameters.
-- [ ] Add type schemes for generalized values and functions.
-- [ ] Implement substitutions and type walking.
-- [ ] Implement unification for scalar, tuple, list, record, custom, opaque,
+- [x] Add inference variables distinct from named generic parameters.
+- [x] Add type schemes for generalized values and functions.
+- [x] Implement substitutions and type walking.
+- [x] Implement unification for scalar, tuple, list, record, custom, opaque,
       function, and variable types.
-- [ ] Implement occurs checks for recursive/infinite type rejection.
+- [x] Implement occurs checks for recursive/infinite type rejection.
 
 ### Constraint generation
 
