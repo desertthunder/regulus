@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use crate::{
     ast::{self, Declaration as AstDeclaration, Expression as AstExpression, LiteralKind, Pattern, Statement},
     diagnostic::{Diagnostic, DiagnosticCode, Diagnostics, Label},
-    labels::{FunctionLabelMap, function_label_map, use_callback_placement},
+    labels::{FunctionLabelMap, call_argument_order, function_label_map, use_callback_placement},
     resolve::{ReferenceTarget, SymbolKind},
     source::Span,
     types::{Type, TypedModule},
@@ -114,6 +114,74 @@ pub struct DeclarationMetadata {
     pub span: Span,
 }
 
+impl From<&AstDeclaration> for DeclarationMetadata {
+    fn from(declaration: &AstDeclaration) -> Self {
+        match declaration {
+            AstDeclaration::Import(import) => Self {
+                name: Some(import.module.text.clone()),
+                kind: DeclarationKind::Import,
+                visibility: Visibility::Private,
+                span: import.span,
+            },
+            AstDeclaration::Function(function) => Self {
+                name: Some(function.name.text.clone()),
+                kind: DeclarationKind::Function,
+                visibility: visibility(function.public),
+                span: function.span,
+            },
+            AstDeclaration::Constant(constant) => Self {
+                name: Some(constant.name.text.clone()),
+                kind: DeclarationKind::Constant,
+                visibility: visibility(constant.public),
+                span: constant.span,
+            },
+            AstDeclaration::ExternalFunction(function) => Self {
+                name: Some(function.name.text.clone()),
+                kind: DeclarationKind::ExternalFunction,
+                visibility: visibility(function.public),
+                span: function.span,
+            },
+            AstDeclaration::ExternalType(type_) => Self {
+                name: Some(type_.name.text.clone()),
+                kind: DeclarationKind::ExternalType,
+                visibility: visibility(type_.public),
+                span: type_.span,
+            },
+            AstDeclaration::TypeAlias(alias) => Self {
+                name: Some(alias.name.text.clone()),
+                kind: DeclarationKind::TypeAlias,
+                visibility: visibility(alias.public),
+                span: alias.span,
+            },
+            AstDeclaration::TypeDefinition(type_) => Self {
+                name: Some(type_.name.text.clone()),
+                kind: DeclarationKind::TypeDefinition,
+                visibility: visibility(type_.public),
+                span: type_.span,
+            },
+            AstDeclaration::Attribute(attribute) => Self {
+                name: Some(attribute.name.text.clone()),
+                kind: DeclarationKind::Attribute,
+                visibility: Visibility::Private,
+                span: attribute.span,
+            },
+            AstDeclaration::TargetGroup(group) => Self {
+                name: Some(group.target.text.clone()),
+                kind: DeclarationKind::TargetGroup,
+                visibility: Visibility::Private,
+                span: group.span,
+            },
+            AstDeclaration::Comment(comment) => Self {
+                name: None,
+                kind: DeclarationKind::Statement,
+                visibility: Visibility::Private,
+                span: comment.span,
+            },
+            AstDeclaration::Statement(raw) => raw_metadata(raw, DeclarationKind::Statement, ""),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DeclarationKind {
     Import,
@@ -194,6 +262,24 @@ pub enum ReferenceKind {
     Field,
     Label,
     Prelude,
+}
+
+impl From<&SymbolKind> for ReferenceKind {
+    fn from(kind: &SymbolKind) -> Self {
+        match kind {
+            SymbolKind::Function { .. } | SymbolKind::ExternalFunction { .. } => Self::Function,
+            SymbolKind::Constant { .. } => Self::Constant,
+            SymbolKind::Import { .. } => Self::Import,
+            SymbolKind::Imported { .. } => Self::Imported,
+            SymbolKind::Parameter => Self::Parameter,
+            SymbolKind::Local => Self::Local,
+            SymbolKind::Type { .. } => Self::Type,
+            SymbolKind::Constructor { .. } => Self::Constructor,
+            SymbolKind::Field { .. } => Self::Field,
+            SymbolKind::Label => Self::Label,
+            SymbolKind::Prelude => Self::Prelude,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -563,6 +649,7 @@ pub fn lower(module: TypedModule) -> Result<Module, Diagnostics> {
     Lowerer::new(module).lower()
 }
 
+// TODO: move to ir/lowerer.rs
 struct Lowerer {
     module: TypedModule,
     function_types: HashMap<String, Type>,
@@ -601,7 +688,28 @@ impl Lowerer {
 
     fn lower(mut self) -> Result<Module, Diagnostics> {
         let ast = self.module.resolved.ast.clone();
-        let imports = ast.imports.iter().map(lower_import).collect();
+        let imports = ast
+            .imports
+            .iter()
+            .map(|import| Import {
+                module: import.module.text.clone(),
+                alias: import.alias.as_ref().map(|alias| alias.text.clone()),
+                unqualified: import
+                    .unqualified
+                    .iter()
+                    .map(|item| UnqualifiedImport {
+                        name: item.name.text.clone(),
+                        alias: item.alias.as_ref().map(|alias| alias.text.clone()),
+                        kind: match item.kind {
+                            ast::UnqualifiedImportKind::Value => ImportKind::Value,
+                            ast::UnqualifiedImportKind::TypeOrConstructor => ImportKind::TypeOrConstructor,
+                        },
+                        span: item.span,
+                    })
+                    .collect(),
+                span: import.span,
+            })
+            .collect();
         let declarations = ast.declarations.iter().map(DeclarationMetadata::from).collect();
         let references = self.lower_references();
         let mut exports = self.lower_exports();
@@ -1092,7 +1200,9 @@ impl Lowerer {
         };
         let callback_index = match use_.value.as_ref() {
             AstExpression::Call(call) => {
-                use_callback_placement(self.call_function_labels(call), &call.arguments, params.len())?.callback_index
+                use_callback_placement(self.call_function_labels(call), &call.arguments, params.len())
+                    .ok()?
+                    .callback_index
             }
             _ => 0,
         };
@@ -1176,7 +1286,7 @@ impl Lowerer {
         let param_count = self
             .call_function_labels(call)
             .map_or(call.arguments.len() + 1, <[_]>::len);
-        let placement = use_callback_placement(self.call_function_labels(call), &call.arguments, param_count)?;
+        let placement = use_callback_placement(self.call_function_labels(call), &call.arguments, param_count).ok()?;
         if !placement.has_labels {
             let mut arguments = self.lower_call_arguments(context, &call.arguments)?;
             arguments.push(CallArgument { label: None, value: callback, span: call.span });
@@ -1311,7 +1421,7 @@ impl Lowerer {
                 span: call.span,
                 kind: ExpressionKind::DirectCall(DirectCall {
                     function: function_name.text.clone(),
-                    arguments: self.lower_call_arguments(context, &call.arguments)?,
+                    arguments: self.lower_ordered_call_arguments(context, call)?,
                     abi: call_abi(&function_type, CallBoundary::Internal),
                 }),
             });
@@ -1331,10 +1441,19 @@ impl Lowerer {
             span: call.span,
             kind: ExpressionKind::IndirectCall(IndirectCall {
                 callee: Box::new(callee),
-                arguments: self.lower_call_arguments(context, &call.arguments)?,
+                arguments: self.lower_ordered_call_arguments(context, call)?,
                 abi: call_abi(&callee_type, CallBoundary::Internal),
             }),
         })
+    }
+
+    fn lower_ordered_call_arguments(
+        &mut self, context: &mut FunctionContext, call: &ast::Call,
+    ) -> Option<Vec<CallArgument>> {
+        let arguments = self.lower_call_arguments(context, &call.arguments)?;
+        let param_count = self.call_function_labels(call).map_or(arguments.len(), <[_]>::len);
+        let order = call_argument_order(self.call_function_labels(call), &call.arguments, param_count).ok()?;
+        self.order_call_arguments(arguments, order.indices, order.has_labels)
     }
 
     fn lower_call_arguments(
@@ -1350,6 +1469,22 @@ impl Lowerer {
                 })
             })
             .collect()
+    }
+
+    fn order_call_arguments(
+        &self, arguments: Vec<CallArgument>, indices: Vec<usize>, has_labels: bool,
+    ) -> Option<Vec<CallArgument>> {
+        if !has_labels {
+            return Some(arguments);
+        }
+        let mut ordered = vec![None; indices.len()];
+        for (argument, index) in arguments.into_iter().zip(indices) {
+            if index >= ordered.len() {
+                ordered.resize_with(index + 1, || None);
+            }
+            ordered[index] = Some(argument);
+        }
+        Some(ordered.into_iter().flatten().collect())
     }
 
     fn lower_pattern(
@@ -1709,104 +1844,13 @@ fn abi_return(type_: &Type) -> Option<AbiValue> {
     if matches!(type_, Type::Nil) { None } else { Some(AbiValue::from(type_)) }
 }
 
-fn lower_import(import: &ast::Import) -> Import {
-    Import {
-        module: import.module.text.clone(),
-        alias: import.alias.as_ref().map(|alias| alias.text.clone()),
-        unqualified: import
-            .unqualified
-            .iter()
-            .map(|item| UnqualifiedImport {
-                name: item.name.text.clone(),
-                alias: item.alias.as_ref().map(|alias| alias.text.clone()),
-                kind: match item.kind {
-                    ast::UnqualifiedImportKind::Value => ImportKind::Value,
-                    ast::UnqualifiedImportKind::TypeOrConstructor => ImportKind::TypeOrConstructor,
-                },
-                span: item.span,
-            })
-            .collect(),
-        span: import.span,
-    }
-}
-
-impl From<&AstDeclaration> for DeclarationMetadata {
-    fn from(declaration: &AstDeclaration) -> Self {
-        match declaration {
-            AstDeclaration::Import(import) => Self {
-                name: Some(import.module.text.clone()),
-                kind: DeclarationKind::Import,
-                visibility: Visibility::Private,
-                span: import.span,
-            },
-            AstDeclaration::Function(function) => Self {
-                name: Some(function.name.text.clone()),
-                kind: DeclarationKind::Function,
-                visibility: visibility(function.public),
-                span: function.span,
-            },
-            AstDeclaration::Constant(constant) => Self {
-                name: Some(constant.name.text.clone()),
-                kind: DeclarationKind::Constant,
-                visibility: visibility(constant.public),
-                span: constant.span,
-            },
-            AstDeclaration::ExternalFunction(function) => Self {
-                name: Some(function.name.text.clone()),
-                kind: DeclarationKind::ExternalFunction,
-                visibility: visibility(function.public),
-                span: function.span,
-            },
-            AstDeclaration::ExternalType(type_) => Self {
-                name: Some(type_.name.text.clone()),
-                kind: DeclarationKind::ExternalType,
-                visibility: visibility(type_.public),
-                span: type_.span,
-            },
-            AstDeclaration::TypeAlias(alias) => Self {
-                name: Some(alias.name.text.clone()),
-                kind: DeclarationKind::TypeAlias,
-                visibility: visibility(alias.public),
-                span: alias.span,
-            },
-            AstDeclaration::TypeDefinition(type_) => Self {
-                name: Some(type_.name.text.clone()),
-                kind: DeclarationKind::TypeDefinition,
-                visibility: visibility(type_.public),
-                span: type_.span,
-            },
-            AstDeclaration::Attribute(attribute) => Self {
-                name: Some(attribute.name.text.clone()),
-                kind: DeclarationKind::Attribute,
-                visibility: Visibility::Private,
-                span: attribute.span,
-            },
-            AstDeclaration::TargetGroup(group) => Self {
-                name: Some(group.target.text.clone()),
-                kind: DeclarationKind::TargetGroup,
-                visibility: Visibility::Private,
-                span: group.span,
-            },
-            AstDeclaration::Comment(comment) => Self {
-                name: None,
-                kind: DeclarationKind::Statement,
-                visibility: Visibility::Private,
-                span: comment.span,
-            },
-            AstDeclaration::Statement(raw) => raw_metadata(raw, DeclarationKind::Statement, ""),
-        }
-    }
-}
-
 fn raw_metadata(raw: &ast::RawSyntax, kind: DeclarationKind, keyword: &str) -> DeclarationMetadata {
-    DeclarationMetadata {
-        name: declaration_name(&raw.source, keyword),
-        kind,
-        visibility: visibility(is_public_declaration(&raw.source)),
-        span: raw.span,
-    }
+    let source = &raw.source;
+    let visibility = visibility(source.trim_start().starts_with("pub "));
+    DeclarationMetadata { name: declaration_name(source, keyword), kind, visibility, span: raw.span }
 }
 
+// TODO: move to ir/lowerer.rs & include in Lowerer impl
 fn lower_constant(id: ConstantId, constant: &ast::Constant) -> Constant {
     Constant {
         id,
@@ -1836,30 +1880,8 @@ fn declaration_name(source: &str, keyword: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-fn is_public_declaration(source: &str) -> bool {
-    source.trim_start().starts_with("pub ")
-}
-
 fn visibility(public: bool) -> Visibility {
     if public { Visibility::Public } else { Visibility::Private }
-}
-
-impl From<&SymbolKind> for ReferenceKind {
-    fn from(kind: &SymbolKind) -> Self {
-        match kind {
-            SymbolKind::Function { .. } | SymbolKind::ExternalFunction { .. } => Self::Function,
-            SymbolKind::Constant { .. } => Self::Constant,
-            SymbolKind::Import { .. } => Self::Import,
-            SymbolKind::Imported { .. } => Self::Imported,
-            SymbolKind::Parameter => Self::Parameter,
-            SymbolKind::Local => Self::Local,
-            SymbolKind::Type { .. } => Self::Type,
-            SymbolKind::Constructor { .. } => Self::Constructor,
-            SymbolKind::Field { .. } => Self::Field,
-            SymbolKind::Label => Self::Label,
-            SymbolKind::Prelude => Self::Prelude,
-        }
-    }
 }
 
 #[cfg(test)]

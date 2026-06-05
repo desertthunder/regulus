@@ -2,16 +2,32 @@
 /// call arguments onto parameter positions across compiler phases.
 use std::collections::HashMap;
 
-use crate::ast::{self, Declaration};
+use crate::{
+    ast::{self, Declaration},
+    source::Span,
+};
 
 pub(crate) type ParameterLabels = Vec<Option<String>>;
 pub(crate) type FunctionLabelMap = HashMap<String, ParameterLabels>;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CallArgumentOrder {
+    pub indices: Vec<usize>,
+    pub has_labels: bool,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct UseCallbackPlacement {
     pub argument_indices: Vec<usize>,
     pub callback_index: usize,
     pub has_labels: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ArgumentLabelError {
+    UnknownLabel { label: String, span: Span },
+    DuplicateLabel { label: String, span: Span },
+    TooManyArguments { span: Span },
 }
 
 pub(crate) fn function_label_map(module: &ast::Module) -> FunctionLabelMap {
@@ -42,39 +58,64 @@ fn parameter_labels(parameters: &[ast::Parameter]) -> ParameterLabels {
         .collect()
 }
 
-pub(crate) fn use_callback_placement(
+pub(crate) fn call_argument_order(
     labels: Option<&[Option<String>]>, arguments: &[ast::Argument], param_count: usize,
-) -> Option<UseCallbackPlacement> {
+) -> Result<CallArgumentOrder, ArgumentLabelError> {
     let Some(labels) = labels else {
-        return Some(UseCallbackPlacement {
-            argument_indices: (0..arguments.len()).collect(),
-            callback_index: arguments.len(),
-            has_labels: false,
-        });
+        return Ok(CallArgumentOrder { indices: (0..arguments.len()).collect(), has_labels: false });
     };
+    if arguments.iter().all(|argument| argument.label.is_none()) {
+        return Ok(CallArgumentOrder { indices: (0..arguments.len()).collect(), has_labels: false });
+    }
 
     let mut occupied = vec![false; param_count];
-    let mut argument_indices = Vec::with_capacity(arguments.len());
+    let mut indices = Vec::with_capacity(arguments.len());
     for (fallback, argument) in arguments.iter().enumerate() {
-        let index = call_argument_index(labels, &occupied, argument)
-            .or_else(|| (fallback < param_count).then_some(fallback))?;
+        let index = match &argument.label {
+            Some(label) => labelled_argument_index(labels, &occupied, label, argument.span)?,
+            None => occupied
+                .iter()
+                .position(|occupied| !occupied)
+                .or_else(|| (fallback < param_count).then_some(fallback))
+                .ok_or(ArgumentLabelError::TooManyArguments { span: argument.span })?,
+        };
         occupied[index] = true;
-        argument_indices.push(index);
+        indices.push(index);
     }
-    let callback_index = occupied.iter().position(|occupied| !occupied)?;
-    Some(UseCallbackPlacement { argument_indices, callback_index, has_labels: true })
+    Ok(CallArgumentOrder { indices, has_labels: true })
 }
 
-fn call_argument_index(labels: &[Option<String>], occupied: &[bool], argument: &ast::Argument) -> Option<usize> {
-    if let Some(label) = &argument.label {
-        labels
-            .iter()
-            .enumerate()
-            .find(|(index, param_label)| {
-                !occupied.get(*index).copied().unwrap_or(true) && param_label.as_deref() == Some(label.text.as_str())
-            })
-            .map(|(index, _)| index)
+pub(crate) fn use_callback_placement(
+    labels: Option<&[Option<String>]>, arguments: &[ast::Argument], param_count: usize,
+) -> Result<UseCallbackPlacement, ArgumentLabelError> {
+    let order = call_argument_order(labels, arguments, param_count)?;
+    let mut occupied = vec![false; param_count];
+    for index in &order.indices {
+        if let Some(slot) = occupied.get_mut(*index) {
+            *slot = true;
+        }
+    }
+    let callback_index = occupied
+        .iter()
+        .position(|occupied| !occupied)
+        .unwrap_or(arguments.len());
+    Ok(UseCallbackPlacement { argument_indices: order.indices, callback_index, has_labels: order.has_labels })
+}
+
+fn labelled_argument_index(
+    labels: &[Option<String>], occupied: &[bool], label: &ast::Name, span: Span,
+) -> Result<usize, ArgumentLabelError> {
+    if let Some(index) = labels
+        .iter()
+        .enumerate()
+        .find_map(|(index, param_label)| (param_label.as_deref() == Some(label.text.as_str())).then_some(index))
+    {
+        if occupied.get(index).copied().unwrap_or(true) {
+            Err(ArgumentLabelError::DuplicateLabel { label: label.text.clone(), span })
+        } else {
+            Ok(index)
+        }
     } else {
-        occupied.iter().position(|occupied| !occupied)
+        Err(ArgumentLabelError::UnknownLabel { label: label.text.clone(), span })
     }
 }

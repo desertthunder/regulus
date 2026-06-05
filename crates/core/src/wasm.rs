@@ -1935,6 +1935,24 @@ pub fn main() -> Int {
     }
 
     #[test]
+    fn runs_labelled_calls_in_parameter_order() {
+        let wasm = compile_wasm(
+            r#"fn subtract(left x: Int, right y: Int) -> Int { x - y }
+pub fn main() -> Int { subtract(right: 2, left: 44) }
+"#,
+        );
+        let engine = Engine::default();
+        let module = Module::new(&engine, &wasm.bytes).expect("compile wasm module");
+        let mut store = Store::new(&engine, ());
+        let instance = Instance::new(&mut store, &module, &[]).expect("instantiate module");
+        let main = instance
+            .get_typed_func::<(), i64>(&mut store, "main")
+            .expect("get main export");
+
+        assert_eq!(main.call(&mut store, ()).expect("call main"), 42);
+    }
+
+    #[test]
     fn runs_use_with_labelled_callback_insertion() {
         let wasm = compile_wasm(
             r#"fn labelled(callback f: fn(Int) -> Int, value x: Int) -> Int { f(x) }

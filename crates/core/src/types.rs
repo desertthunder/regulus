@@ -18,7 +18,7 @@ use crate::{
         ConstraintGenerationError, ConstraintGenerator, Environment, Field, InferenceVariable, Scheme, Substitutions,
         TypeTerm, UnificationError, Unifier,
     },
-    labels::{FunctionLabelMap, function_label_map, use_callback_placement},
+    labels::{ArgumentLabelError, FunctionLabelMap, call_argument_order, function_label_map, use_callback_placement},
     project::Project,
     resolve::{self, ResolvedModule},
     source::Span,
@@ -540,6 +540,24 @@ impl TypeChecker {
                 Diagnostic::new(DiagnosticCode::TypeError, "tuple index is out of bounds")
                     .with_label(Label::primary(span, "out of bounds")),
             ),
+            ConstraintGenerationError::ArgumentLabel(error) => self.push_argument_label_error(error),
+        }
+    }
+
+    fn push_argument_label_error(&mut self, error: ArgumentLabelError) {
+        match error {
+            ArgumentLabelError::UnknownLabel { label, span } => self.diagnostics.push(
+                Diagnostic::new(DiagnosticCode::TypeError, format!("unknown argument label `{label}`"))
+                    .with_label(Label::primary(span, "unknown label")),
+            ),
+            ArgumentLabelError::DuplicateLabel { label, span } => self.diagnostics.push(
+                Diagnostic::new(DiagnosticCode::TypeError, format!("duplicate argument label `{label}`"))
+                    .with_label(Label::primary(span, "duplicate label")),
+            ),
+            ArgumentLabelError::TooManyArguments { span } => self.diagnostics.push(
+                Diagnostic::new(DiagnosticCode::TypeError, "too many labelled call arguments")
+                    .with_label(Label::primary(span, "extra argument")),
+            ),
         }
     }
 
@@ -839,8 +857,17 @@ impl TypeChecker {
             return None;
         }
 
-        for (argument, expected) in call.arguments.iter().zip(params.iter()) {
-            if let Some(actual) = self.check_expression(&argument.value) {
+        let order = match call_argument_order(self.call_function_labels(call), &call.arguments, params.len()) {
+            Ok(order) => order,
+            Err(error) => {
+                self.push_argument_label_error(error);
+                return None;
+            }
+        };
+        for (argument, index) in call.arguments.iter().zip(order.indices) {
+            if let Some(expected) = params.get(index)
+                && let Some(actual) = self.check_expression(&argument.value)
+            {
                 self.expect_same(expected, &actual, argument.span);
             }
         }
@@ -1081,7 +1108,14 @@ impl TypeChecker {
 
         let callback_index = match use_.value.as_ref() {
             Expression::Call(call) => {
-                let placement = use_callback_placement(self.call_function_labels(call), &call.arguments, params.len())?;
+                let placement =
+                    match use_callback_placement(self.call_function_labels(call), &call.arguments, params.len()) {
+                        Ok(placement) => placement,
+                        Err(error) => {
+                            self.push_argument_label_error(error);
+                            return None;
+                        }
+                    };
                 for (argument, index) in call.arguments.iter().zip(placement.argument_indices.iter().copied()) {
                     if let Some(expected) = params.get(index)
                         && let Some(actual) = self.check_expression(&argument.value)
@@ -2275,6 +2309,33 @@ mod tests {
         assert_eq!(
             main.type_,
             Type::Function { params: Vec::new(), return_type: Box::new(Type::Int) }
+        );
+    }
+
+    #[test]
+    fn reports_invalid_labelled_call_arguments() {
+        let unknown = check_source(
+            r#"fn id(value x: Int) -> Int { x }
+fn main() { id(other: 1) }
+"#,
+        )
+        .expect_err("unknown label should fail");
+        assert!(
+            unknown
+                .iter()
+                .any(|diagnostic| diagnostic.message == "unknown argument label `other`")
+        );
+
+        let duplicate = check_source(
+            r#"fn add(left x: Int, right y: Int) -> Int { x + y }
+fn main() { add(left: 1, left: 2) }
+"#,
+        )
+        .expect_err("duplicate label should fail");
+        assert!(
+            duplicate
+                .iter()
+                .any(|diagnostic| diagnostic.message == "duplicate argument label `left`")
         );
     }
 

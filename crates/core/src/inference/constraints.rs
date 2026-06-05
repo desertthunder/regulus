@@ -4,7 +4,7 @@ use super::substitutions::Substitutions;
 use super::unification::UnificationError;
 use super::{TypeTerm, Unifier};
 use crate::ast::{self, Expression, LiteralKind, Pattern, Statement};
-use crate::labels::{FunctionLabelMap, use_callback_placement};
+use crate::labels::{ArgumentLabelError, FunctionLabelMap, call_argument_order, use_callback_placement};
 use crate::source::Span;
 use crate::types::{ConstructorInfo, Type};
 use std::collections::HashMap;
@@ -68,6 +68,7 @@ pub enum ConstraintGenerationError {
     UnknownConstructor { name: String, span: Span },
     UnsupportedAnnotation { source: String, span: Span },
     TupleIndexOutOfBounds { index: usize, span: Span },
+    ArgumentLabel(ArgumentLabelError),
 }
 
 pub type Result<T> = std::result::Result<T, ConstraintGenerationError>;
@@ -306,11 +307,7 @@ impl ConstraintGenerator {
 
     fn infer_call(&mut self, call: &ast::Call) -> Result<TypeTerm> {
         let function = self.infer_expression(&call.function)?;
-        let params = call
-            .arguments
-            .iter()
-            .map(|argument| self.infer_expression(&argument.value))
-            .collect::<Result<Vec<_>>>()?;
+        let params = self.infer_call_params(call)?;
         let return_type = self.supply.fresh_type();
         self.constraints.push(
             function,
@@ -318,6 +315,25 @@ impl ConstraintGenerator {
             call.span,
         );
         Ok(return_type)
+    }
+
+    fn infer_call_params(&mut self, call: &ast::Call) -> Result<Vec<TypeTerm>> {
+        let argument_types = call
+            .arguments
+            .iter()
+            .map(|argument| self.infer_expression(&argument.value))
+            .collect::<Result<Vec<_>>>()?;
+        let param_count = self.call_function_labels(call).map_or(argument_types.len(), <[_]>::len);
+        let order = call_argument_order(self.call_function_labels(call), &call.arguments, param_count)
+            .map_err(ConstraintGenerationError::ArgumentLabel)?;
+        if !order.has_labels {
+            return Ok(argument_types);
+        }
+        let mut ordered = vec![None; param_count];
+        for (index, type_) in order.indices.into_iter().zip(argument_types) {
+            ordered[index] = Some(type_);
+        }
+        Ok(ordered.into_iter().flatten().collect())
     }
 
     fn infer_field_access(&mut self, access: &ast::FieldAccess) -> Result<TypeTerm> {
@@ -506,12 +522,8 @@ impl ConstraintGenerator {
         let param_count = self
             .call_function_labels(call)
             .map_or(argument_types.len() + 1, <[_]>::len);
-        let Some(placement) = use_callback_placement(self.call_function_labels(call), &call.arguments, param_count)
-        else {
-            let mut params = argument_types;
-            params.push(callback);
-            return Ok(params);
-        };
+        let placement = use_callback_placement(self.call_function_labels(call), &call.arguments, param_count)
+            .map_err(ConstraintGenerationError::ArgumentLabel)?;
         if !placement.has_labels {
             let mut params = argument_types;
             params.push(callback);
@@ -520,6 +532,9 @@ impl ConstraintGenerator {
         let mut ordered = vec![None; param_count];
         for (index, type_) in placement.argument_indices.into_iter().zip(argument_types) {
             ordered[index] = Some(type_);
+        }
+        if placement.callback_index >= ordered.len() {
+            ordered.resize_with(placement.callback_index + 1, || None);
         }
         ordered[placement.callback_index] = Some(callback);
         Ok(ordered.into_iter().flatten().collect())
