@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use crate::{
     ast::{self, Declaration as AstDeclaration, Expression as AstExpression, LiteralKind, Pattern, Statement},
     diagnostic::{Diagnostic, DiagnosticCode, Diagnostics, Label},
+    labels::{FunctionLabelMap, function_label_map, use_callback_placement},
     resolve::{ReferenceTarget, SymbolKind},
     source::Span,
     types::{Type, TypedModule},
@@ -565,6 +566,7 @@ pub fn lower(module: TypedModule) -> Result<Module, Diagnostics> {
 struct Lowerer {
     module: TypedModule,
     function_types: HashMap<String, Type>,
+    function_labels: FunctionLabelMap,
     expression_types: HashMap<Span, Type>,
     diagnostics: Diagnostics,
     lifted_functions: Vec<Function>,
@@ -579,6 +581,8 @@ impl Lowerer {
             .map(|function| (function.name.text.clone(), function.type_.clone()))
             .collect::<HashMap<_, _>>();
         function_types.extend(module.interface.functions.clone());
+        let mut function_labels = function_label_map(&module.resolved.ast);
+        function_labels.extend(module.function_labels.clone());
         let expression_types = module
             .expressions
             .iter()
@@ -587,6 +591,7 @@ impl Lowerer {
         Self {
             module,
             function_types,
+            function_labels,
             expression_types,
             diagnostics: Vec::new(),
             lifted_functions: Vec::new(),
@@ -782,6 +787,10 @@ impl Lowerer {
                     });
                     self.bind_assert_pattern(context, &mut instructions, &value, &pattern, let_assert.span);
                 }
+                Statement::Expression(AstExpression::Use(use_)) => {
+                    result = self.lower_use(context, use_, &block.statements[index + 1..], block.span)?;
+                    break;
+                }
                 Statement::Expression(expression) => {
                     let value = self.lower_expression(context, expression)?;
                     if last_statement {
@@ -975,7 +984,7 @@ impl Lowerer {
             AstExpression::BinaryOperation(operation) => self.lower_binary_operation(context, operation),
             AstExpression::Pipeline(pipeline) => self.lower_pipeline(context, pipeline),
             AstExpression::UnaryOperation(operation) => self.lower_unary_operation(context, operation),
-            AstExpression::Use(use_) => self.lower_use(context, use_),
+            AstExpression::Use(use_) => self.lower_use(context, use_, &[], use_.span),
             AstExpression::AnonymousFunction(function) => self.lower_anonymous_function(context, function),
             AstExpression::Capture(capture) => self.lower_capture(context, capture),
             AstExpression::RecordUpdate(update) => self.lower_record_update(context, update),
@@ -1050,30 +1059,186 @@ impl Lowerer {
         })
     }
 
-    fn lower_use(&mut self, context: &mut FunctionContext, use_: &ast::Use) -> Option<Expression> {
-        let call = self.lower_expression(context, &use_.value)?;
-        let type_ = self
-            .typed_expression_type(use_.span)
-            .unwrap_or_else(|| call.type_.clone());
-        let callback = Expression {
-            type_: Type::Function { params: Vec::new(), return_type: Box::new(type_.clone()) },
-            span: use_.span,
-            kind: ExpressionKind::AnonymousFunction(AnonymousFunction {
-                name: String::new(),
-                params: Vec::new(),
-                captures: Vec::new(),
-                body: Block {
-                    instructions: Vec::new(),
-                    result: Box::new(self.nil_expression(use_.span)),
+    fn lower_use(
+        &mut self, context: &mut FunctionContext, use_: &ast::Use, continuation: &[Statement], block_span: Span,
+    ) -> Option<Expression> {
+        let (callback_type, return_type) = self.use_callback_and_return_types(use_)?;
+        let callback = self.lower_use_callback(context, use_, continuation, block_span, callback_type)?;
+        match use_.value.as_ref() {
+            AstExpression::Call(call) => self.lower_call_with_callback(context, call, callback, return_type),
+            value => {
+                let callee = self.lower_expression(context, value)?;
+                let callee_type = callee.type_.clone();
+                Some(Expression {
+                    type_: return_type,
                     span: use_.span,
-                },
-                abi: CallAbi { params: Vec::new(), return_: abi_return(&type_), boundary: CallBoundary::Internal },
-            }),
+                    kind: ExpressionKind::IndirectCall(IndirectCall {
+                        callee: Box::new(callee),
+                        arguments: vec![CallArgument { label: None, value: callback, span: use_.span }],
+                        abi: call_abi(&callee_type, CallBoundary::Internal),
+                    }),
+                })
+            }
+        }
+    }
+
+    fn use_callback_and_return_types(&mut self, use_: &ast::Use) -> Option<(Type, Type)> {
+        let function_type = match use_.value.as_ref() {
+            AstExpression::Call(call) => self.ast_function_type(&call.function)?,
+            value => self.typed_expression_type(Span::from(value))?,
         };
+        let Type::Function { params, return_type } = function_type else {
+            return None;
+        };
+        let callback_index = match use_.value.as_ref() {
+            AstExpression::Call(call) => {
+                use_callback_placement(self.call_function_labels(call), &call.arguments, params.len())?.callback_index
+            }
+            _ => 0,
+        };
+        let callback_type = params.get(callback_index)?.clone();
+        Some((callback_type, *return_type))
+    }
+
+    fn ast_function_type(&self, expression: &AstExpression) -> Option<Type> {
+        match expression {
+            AstExpression::Variable(name) => self.function_types.get(&name.text).cloned(),
+            expression => self.typed_expression_type(Span::from(expression)),
+        }
+    }
+
+    fn lower_use_callback(
+        &mut self, context: &mut FunctionContext, use_: &ast::Use, continuation: &[Statement], block_span: Span,
+        callback_type: Type,
+    ) -> Option<Expression> {
+        let Type::Function { params, return_type } = callback_type.clone() else {
+            return None;
+        };
+        let outer_local_count = context.locals.len();
+        context.push_scope();
+        let mut original_params = Vec::new();
+        let mut instructions = Vec::new();
+        for (index, assignment) in use_.assignments.iter().enumerate() {
+            let param_type = params.get(index).cloned().unwrap_or(Type::Nil);
+            match &assignment.pattern {
+                Pattern::Name(name) => {
+                    let local = context.allocate(name, param_type);
+                    context.bind(name.text.clone(), local.id);
+                    original_params.push(local);
+                }
+                Pattern::Discard(span) => {
+                    let name = ast::Name { span: *span, text: format!("_use_{index}") };
+                    original_params.push(context.allocate(&name, param_type));
+                }
+                pattern => {
+                    let name = ast::Name { span: assignment.span, text: format!("_use_{index}") };
+                    let local = context.allocate(&name, param_type.clone());
+                    let value = Expression {
+                        type_: param_type.clone(),
+                        span: assignment.span,
+                        kind: ExpressionKind::LocalGet(local.id),
+                    };
+                    let pattern = self.lower_pattern(context, pattern, &param_type)?;
+                    instructions.push(Instruction::AssertMatch {
+                        value: value.clone(),
+                        pattern: pattern.clone(),
+                        failure: FailurePath { reason: FailureReason::AssertMatch, span: assignment.span },
+                        span: assignment.span,
+                    });
+                    self.bind_assert_pattern(context, &mut instructions, &value, &pattern, assignment.span);
+                    original_params.push(local);
+                }
+            }
+        }
+        let mut body = self.lower_block(
+            context,
+            &ast::Block { span: block_span, statements: continuation.to_vec() },
+        )?;
+        context.pop_scope();
+        instructions.append(&mut body.instructions);
+        body.instructions = instructions;
+        body.span = use_.span;
+        body.result.type_ = *return_type.clone();
+        Some(closure::lower_synthetic_anonymous_function(
+            self,
+            context,
+            use_.span,
+            outer_local_count,
+            original_params,
+            body,
+            Type::Function { params, return_type },
+        ))
+    }
+
+    fn lower_use_call_arguments(
+        &mut self, context: &mut FunctionContext, call: &ast::Call, callback: Expression,
+    ) -> Option<Vec<CallArgument>> {
+        let param_count = self
+            .call_function_labels(call)
+            .map_or(call.arguments.len() + 1, <[_]>::len);
+        let placement = use_callback_placement(self.call_function_labels(call), &call.arguments, param_count)?;
+        if !placement.has_labels {
+            let mut arguments = self.lower_call_arguments(context, &call.arguments)?;
+            arguments.push(CallArgument { label: None, value: callback, span: call.span });
+            return Some(arguments);
+        }
+        let labels = self.call_function_labels(call)?.to_vec();
+        let mut ordered = vec![None; labels.len()];
+        for (argument, index) in call.arguments.iter().zip(placement.argument_indices) {
+            ordered[index] = Some(CallArgument {
+                label: argument.label.as_ref().map(|label| label.text.clone()),
+                value: self.lower_expression(context, &argument.value)?,
+                span: argument.span,
+            });
+        }
+        ordered[placement.callback_index] =
+            Some(CallArgument { label: labels[placement.callback_index].clone(), value: callback, span: call.span });
+        Some(ordered.into_iter().flatten().collect())
+    }
+
+    fn call_function_labels(&self, call: &ast::Call) -> Option<&[Option<String>]> {
+        match call.function.as_ref() {
+            AstExpression::Variable(name) => self.function_labels.get(&name.text).map(Vec::as_slice),
+            AstExpression::FieldAccess(access) => match access.record.as_ref() {
+                AstExpression::Variable(module) => self
+                    .function_labels
+                    .get(&format!("{}.{}", module.text, access.field.text))
+                    .map(Vec::as_slice),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    fn lower_call_with_callback(
+        &mut self, context: &mut FunctionContext, call: &ast::Call, callback: Expression, return_type: Type,
+    ) -> Option<Expression> {
+        if let AstExpression::Variable(function_name) = call.function.as_ref()
+            && let Some(function_type) = self.function_types.get(&function_name.text).cloned()
+        {
+            let arguments = self.lower_use_call_arguments(context, call, callback)?;
+            return Some(Expression {
+                type_: return_type,
+                span: call.span,
+                kind: ExpressionKind::DirectCall(DirectCall {
+                    function: function_name.text.clone(),
+                    arguments,
+                    abi: call_abi(&function_type, CallBoundary::Internal),
+                }),
+            });
+        }
+
+        let callee = self.lower_expression(context, &call.function)?;
+        let callee_type = callee.type_.clone();
+        let arguments = self.lower_use_call_arguments(context, call, callback)?;
         Some(Expression {
-            type_,
-            span: use_.span,
-            kind: ExpressionKind::Use(UseLowering { callback: Box::new(callback), call: Box::new(call) }),
+            type_: return_type,
+            span: call.span,
+            kind: ExpressionKind::IndirectCall(IndirectCall {
+                callee: Box::new(callee),
+                arguments,
+                abi: call_abi(&callee_type, CallBoundary::Internal),
+            }),
         })
     }
 

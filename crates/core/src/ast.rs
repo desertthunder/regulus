@@ -1068,6 +1068,7 @@ impl AstBuilder<'_> {
             .map(|child| {
                 let pattern = child
                     .child_by_field_name("pattern")
+                    .or_else(|| self.named_children(child).into_iter().next())
                     .ok_or_else(|| vec![self.missing(child, "use pattern")])?;
                 Ok(UseAssignment {
                     span: self.span(child),

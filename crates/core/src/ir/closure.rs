@@ -2,7 +2,7 @@ mod remapping;
 
 use super::{
     AbiValue, AnonymousFunction, Block, CallAbi, CallArgument, CallBoundary, Expression, ExpressionKind, Function,
-    FunctionContext, IndirectCall, Lowerer, Type, abi_return, ast, call_abi,
+    FunctionContext, IndirectCall, Local, Lowerer, Type, abi_return, ast, call_abi,
 };
 use remapping::{LiftedLocalPolicy, captured_locals, lift_closure_body};
 
@@ -188,6 +188,59 @@ pub(super) fn lower_capture(
             body: empty_body(lowerer, capture.span),
         }),
     })
+}
+
+pub(super) fn lower_synthetic_anonymous_function(
+    lowerer: &mut Lowerer, context: &mut FunctionContext, span: super::Span, outer_local_count: usize,
+    original_params: Vec<Local>, mut body: Block, type_: Type,
+) -> Expression {
+    let name = lowerer.next_anonymous_name();
+    let captures = captured_locals(context, &body, outer_local_count);
+    let lifted = lift_closure_body(
+        context,
+        &mut body,
+        outer_local_count,
+        &original_params,
+        &captures,
+        LiftedLocalPolicy::IncludeBodyLocals,
+    );
+    let return_type = match &type_ {
+        Type::Function { return_type, .. } => *return_type.clone(),
+        _ => body.result.type_.clone(),
+    };
+    lowerer.lifted_functions.push(Function {
+        name: name.clone(),
+        public: false,
+        closure_captures: captures.iter().map(|capture| capture.type_.clone()).collect(),
+        params: lifted.params,
+        locals: lifted.locals,
+        return_type: return_type.clone(),
+        abi: call_abi(
+            &Type::Function {
+                params: captures
+                    .iter()
+                    .map(|capture| capture.type_.clone())
+                    .chain(lifted.original_params.iter().map(|param| param.type_.clone()))
+                    .collect(),
+                return_type: Box::new(return_type),
+            },
+            CallBoundary::Internal,
+        ),
+        body,
+        span,
+    });
+    context.locals.truncate(outer_local_count);
+    Expression {
+        type_: type_.clone(),
+        span,
+        kind: ExpressionKind::AnonymousFunction(AnonymousFunction {
+            name,
+            params: original_params,
+            captures,
+            abi: call_abi(&type_, CallBoundary::Internal),
+            body: empty_body(lowerer, span),
+        }),
+    }
 }
 
 fn empty_body(lowerer: &Lowerer, span: super::Span) -> Block {

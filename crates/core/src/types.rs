@@ -18,6 +18,7 @@ use crate::{
         ConstraintGenerationError, ConstraintGenerator, Environment, Field, InferenceVariable, Scheme, Substitutions,
         TypeTerm, UnificationError, Unifier,
     },
+    labels::{FunctionLabelMap, function_label_map, use_callback_placement},
     project::Project,
     resolve::{self, ResolvedModule},
     source::Span,
@@ -97,6 +98,7 @@ impl From<ast::TypeAlias> for TypeDeclaration {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ModuleInterface {
     pub functions: HashMap<String, Type>,
+    pub function_labels: FunctionLabelMap,
     pub types: HashMap<String, TypeDeclaration>,
     pub constructors: HashMap<String, ConstructorInfo>,
 }
@@ -119,6 +121,7 @@ pub struct TypedModule {
     pub resolved: ResolvedModule,
     pub functions: Vec<TypedFunction>,
     pub expressions: Vec<TypedExpression>,
+    pub function_labels: FunctionLabelMap,
     pub interface: ModuleInterface,
 }
 
@@ -134,11 +137,12 @@ pub fn check(module: ResolvedModule) -> Result<TypedModule, Diagnostics> {
 
 fn check_with_externals(
     module: ResolvedModule, external_constructors: HashMap<String, ConstructorInfo>,
-    external_values: HashMap<String, Type>,
+    external_values: HashMap<String, Type>, external_function_labels: FunctionLabelMap,
 ) -> Result<TypedModule, Diagnostics> {
     TypeChecker::new(module)
         .with_external_constructors(external_constructors)
         .with_external_values(external_values)
+        .with_external_function_labels(external_function_labels)
         .check()
 }
 
@@ -158,13 +162,27 @@ pub fn check_project(project: &Project) -> Result<TypedProject, Diagnostics> {
         .iter()
         .flat_map(|module| values_from_ast(&module.ast))
         .collect::<HashMap<_, _>>();
+    let mut external_function_labels = resolved
+        .modules
+        .iter()
+        .flat_map(|module| function_label_map(&module.ast))
+        .collect::<HashMap<_, _>>();
 
     for (module_info, module) in project.graph.modules.iter().zip(resolved.modules) {
-        match check_with_externals(module, external_constructors.clone(), external_values.clone()) {
+        match check_with_externals(
+            module,
+            external_constructors.clone(),
+            external_values.clone(),
+            external_function_labels.clone(),
+        ) {
             Ok(typed) => {
                 for (name, type_) in &typed.interface.functions {
                     external_values.insert(name.clone(), type_.clone());
                     external_values.insert(format!("{}.{}", module_info.name, name), type_.clone());
+                }
+                for (name, labels) in &typed.interface.function_labels {
+                    external_function_labels.insert(name.clone(), labels.clone());
+                    external_function_labels.insert(format!("{}.{}", module_info.name, name), labels.clone());
                 }
                 interfaces.insert(module_info.name.clone(), typed.interface.clone());
                 modules.push(typed);
@@ -187,6 +205,7 @@ struct TypeChecker {
     function_types: HashMap<String, Type>,
     external_values: HashMap<String, Type>,
     constructors: HashMap<String, ConstructorInfo>,
+    function_labels: HashMap<String, Vec<Option<String>>>,
     interface: ModuleInterface,
     functions: Vec<TypedFunction>,
     expressions: Vec<TypedExpression>,
@@ -198,11 +217,13 @@ struct TypeChecker {
 
 impl TypeChecker {
     fn new(module: ResolvedModule) -> Self {
+        let function_labels = function_label_map(&module.ast);
         Self {
             module,
             function_types: HashMap::new(),
             external_values: HashMap::new(),
             constructors: HashMap::new(),
+            function_labels,
             interface: ModuleInterface::default(),
             functions: Vec::new(),
             expressions: Vec::new(),
@@ -220,6 +241,11 @@ impl TypeChecker {
 
     fn with_external_values(mut self, values: HashMap<String, Type>) -> Self {
         self.external_values.extend(values);
+        self
+    }
+
+    fn with_external_function_labels(mut self, labels: FunctionLabelMap) -> Self {
+        self.function_labels.extend(labels);
         self
     }
 
@@ -243,6 +269,7 @@ impl TypeChecker {
                 resolved: self.module,
                 functions: self.functions,
                 expressions: self.expressions,
+                function_labels: self.function_labels,
                 interface: self.interface,
             })
         } else {
@@ -294,6 +321,11 @@ impl TypeChecker {
                 self.interface
                     .functions
                     .insert(function.name.text.clone(), type_.clone());
+                if let Some(labels) = self.function_labels.get(&function.name.text).cloned() {
+                    self.interface
+                        .function_labels
+                        .insert(function.name.text.clone(), labels);
+                }
                 self.function_types.insert(function.name.text, type_);
             }
         }
@@ -307,6 +339,11 @@ impl TypeChecker {
                         self.interface
                             .functions
                             .insert(function.name.text.clone(), type_.clone());
+                        if let Some(labels) = self.function_labels.get(&function.name.text).cloned() {
+                            self.interface
+                                .function_labels
+                                .insert(function.name.text.clone(), labels);
+                        }
                         self.function_types.insert(function.name.text, type_);
                     }
                 }
@@ -318,6 +355,11 @@ impl TypeChecker {
                             self.interface
                                 .functions
                                 .insert(function.name.text.clone(), type_.clone());
+                            if let Some(labels) = self.function_labels.get(&function.name.text).cloned() {
+                                self.interface
+                                    .function_labels
+                                    .insert(function.name.text.clone(), labels);
+                            }
                             self.function_types.insert(function.name.text, type_);
                         }
                     }
@@ -360,8 +402,9 @@ impl TypeChecker {
     }
 
     fn check_function(&mut self, function: &ast::Function) {
-        let mut generator =
-            ConstraintGenerator::new(self.inference_environment()).with_constructors(self.constructors.clone());
+        let mut generator = ConstraintGenerator::new(self.inference_environment())
+            .with_constructors(self.constructors.clone())
+            .with_function_labels(self.function_labels.clone());
         let function_type = match generator.infer_function(function) {
             Ok(type_) => type_,
             Err(error) => {
@@ -571,8 +614,12 @@ impl TypeChecker {
     }
 
     fn check_block(&mut self, block: &ast::Block) -> Option<Type> {
+        self.check_statements(&block.statements)
+    }
+
+    fn check_statements(&mut self, statements: &[Statement]) -> Option<Type> {
         let mut last_type = Type::Nil;
-        for statement in &block.statements {
+        for (index, statement) in statements.iter().enumerate() {
             last_type = match statement {
                 Statement::Let(let_) => {
                     let value_type = self.check_expression(&let_.value)?;
@@ -608,6 +655,9 @@ impl TypeChecker {
                     }
                     self.bind_pattern(&let_assert.pattern, &value_type);
                     Type::Nil
+                }
+                Statement::Expression(Expression::Use(use_)) => {
+                    return self.check_use(use_, &statements[index + 1..], true);
                 }
                 Statement::Expression(expression) => self.check_expression(expression)?,
             };
@@ -666,7 +716,7 @@ impl TypeChecker {
             Expression::BinaryOperation(operation) => self.check_binary_operation(operation)?,
             Expression::Pipeline(pipeline) => self.check_pipeline(pipeline)?,
             Expression::UnaryOperation(operation) => self.check_unary_operation(operation)?,
-            Expression::Use(use_) => self.check_use(use_)?,
+            Expression::Use(use_) => self.check_use(use_, &[], false)?,
             Expression::AnonymousFunction(function) => self.check_anonymous_function(function)?,
             Expression::Capture(capture) => self.check_capture(capture)?,
             Expression::RecordUpdate(update) => self.check_record_update(update)?,
@@ -994,17 +1044,109 @@ impl TypeChecker {
         }
     }
 
-    fn check_use(&mut self, use_: &ast::Use) -> Option<Type> {
-        let value_type = self.check_expression(&use_.value)?;
-        for assignment in &use_.assignments {
-            let type_ = assignment
-                .type_annotation
-                .as_ref()
-                .and_then(|annotation| self.parse_type_annotation(annotation))
-                .unwrap_or_else(|| value_type.clone());
-            self.bind_pattern(&assignment.pattern, &type_);
+    fn call_function_labels(&self, call: &ast::Call) -> Option<&[Option<String>]> {
+        match call.function.as_ref() {
+            Expression::Variable(name) => self.function_labels(&name.text),
+            Expression::FieldAccess(access) => match access.record.as_ref() {
+                Expression::Variable(module) => self.function_labels(&format!("{}.{}", module.text, access.field.text)),
+                _ => None,
+            },
+            _ => None,
         }
-        Some(value_type)
+    }
+
+    fn function_labels(&self, name: &str) -> Option<&[Option<String>]> {
+        self.function_labels.get(name).map(Vec::as_slice)
+    }
+
+    fn check_use(
+        &mut self, use_: &ast::Use, continuation: &[Statement], allow_empty_continuation: bool,
+    ) -> Option<Type> {
+        if continuation.is_empty() && !allow_empty_continuation {
+            self.diagnostics.push(empty_use_continuation_diagnostic(use_.span));
+            return None;
+        }
+
+        let function_type = match use_.value.as_ref() {
+            Expression::Call(call) => self.check_expression(&call.function)?,
+            value => self.check_expression(value)?,
+        };
+        let Type::Function { params, return_type } = function_type else {
+            self.diagnostics.push(
+                Diagnostic::new(DiagnosticCode::TypeError, "use value is not a function")
+                    .with_label(Label::primary(use_.span, "not a function")),
+            );
+            return None;
+        };
+
+        let callback_index = match use_.value.as_ref() {
+            Expression::Call(call) => {
+                let placement = use_callback_placement(self.call_function_labels(call), &call.arguments, params.len())?;
+                for (argument, index) in call.arguments.iter().zip(placement.argument_indices.iter().copied()) {
+                    if let Some(expected) = params.get(index)
+                        && let Some(actual) = self.check_expression(&argument.value)
+                    {
+                        self.expect_same(expected, &actual, argument.span);
+                    }
+                }
+                placement.callback_index
+            }
+            _ => 0,
+        };
+        let supplied_count = match use_.value.as_ref() {
+            Expression::Call(call) => call.arguments.len(),
+            _ => 0,
+        };
+        if params.len() != supplied_count + 1 {
+            self.diagnostics.push(
+                Diagnostic::new(
+                    DiagnosticCode::TypeError,
+                    format!(
+                        "use function expected {} arguments but got {}",
+                        params.len(),
+                        supplied_count + 1
+                    ),
+                )
+                .with_label(Label::primary(use_.span, "wrong number of arguments")),
+            );
+            return None;
+        }
+        let Some(Type::Function { params: callback_params, return_type: callback_return }) = params.get(callback_index)
+        else {
+            self.diagnostics.push(
+                Diagnostic::new(DiagnosticCode::TypeError, "use expected a callback argument")
+                    .with_label(Label::primary(use_.span, "missing callback parameter")),
+            );
+            return None;
+        };
+        if callback_params.len() != use_.assignments.len() {
+            self.diagnostics.push(
+                Diagnostic::new(
+                    DiagnosticCode::TypeError,
+                    format!(
+                        "callback expected {} arguments but got {}",
+                        callback_params.len(),
+                        use_.assignments.len()
+                    ),
+                )
+                .with_label(Label::primary(use_.span, "wrong number of callback arguments")),
+            );
+            return None;
+        }
+
+        self.push_scope();
+        for (assignment, expected) in use_.assignments.iter().zip(callback_params.iter()) {
+            if let Some(annotation) = &assignment.type_annotation
+                && let Some(type_) = self.parse_type_annotation(annotation)
+            {
+                self.expect_same(expected, &type_, assignment.span);
+            }
+            self.bind_pattern(&assignment.pattern, expected);
+        }
+        let continuation_type = self.check_statements(continuation)?;
+        self.pop_scope();
+        self.expect_same(callback_return, &continuation_type, use_.span);
+        Some(*return_type)
     }
 
     fn check_anonymous_function(&mut self, function: &ast::AnonymousFunction) -> Option<Type> {
@@ -2044,6 +2186,12 @@ fn constructors_from_ast(module: &ast::Module) -> Vec<(String, ConstructorInfo)>
         .collect()
 }
 
+fn empty_use_continuation_diagnostic(span: Span) -> Diagnostic {
+    Diagnostic::new(DiagnosticCode::TypeError, "use has no continuation")
+        .with_label(Label::primary(span, "nothing follows this use expression"))
+        .with_note("`use` passes the following block statements as its callback body")
+}
+
 fn type_definition_from_ast(type_: &ast::TypeDefinition) -> Option<TypeDeclaration> {
     let parameters = type_.parameters.clone();
     let return_args = parameters.iter().cloned().map(Type::Generic).collect();
@@ -2127,6 +2275,28 @@ mod tests {
         assert_eq!(
             main.type_,
             Type::Function { params: Vec::new(), return_type: Box::new(Type::Int) }
+        );
+    }
+
+    #[test]
+    fn reports_use_without_continuation() {
+        let source = SourceFile::new(
+            SourceFileId(0),
+            r#"fn with_value(x: Int, f: fn(Int) -> Int) -> Int { f(x) }
+fn main() -> Int {
+  let value = use x <- with_value(1)
+  value
+}
+"#,
+        );
+        let cst = parse::parse(source).expect("parse source");
+        let ast = ast::build(&cst).expect("build ast");
+        let diagnostics = resolve::resolve(ast).expect_err("use without continuation should fail");
+
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.message == "use has no continuation")
         );
     }
 
@@ -2337,6 +2507,37 @@ fn main() { #(unwrap(Box(1)), unwrap(Box("one"))) }
         assert_eq!(
             main.type_,
             Type::Function { params: vec![], return_type: Box::new(Type::Tuple(vec![Type::Int, Type::String])) }
+        );
+    }
+
+    #[test]
+    fn preserves_imported_function_labels_for_use_callbacks() {
+        let dir = tempdir().expect("tempdir");
+        write(
+            &dir.path().join("gleam.toml"),
+            "name = \"sample\"\nversion = \"1.0.0\"\n",
+        );
+        write(
+            &dir.path().join("src/app.gleam"),
+            "pub fn with_value(callback f: fn(Int) -> Int, value x: Int) -> Int { f(x) }\n",
+        );
+        write(
+            &dir.path().join("src/main.gleam"),
+            r#"import app.{with_value}
+fn main() -> Int {
+  use value <- with_value(value: 41)
+  value + 1
+}
+"#,
+        );
+        let project = project::load_project(dir.path()).expect("load project");
+
+        let typed = check_project(&project).expect("type check project");
+        let app = typed.interfaces.get("app").expect("app interface");
+
+        assert_eq!(
+            app.function_labels.get("with_value"),
+            Some(&vec![Some("callback".into()), Some("value".into())])
         );
     }
 

@@ -1892,6 +1892,92 @@ pub fn managed() -> Bool {
     }
 
     #[test]
+    fn runs_use_lowered_callback_with_captures() {
+        let wasm = compile_wasm(
+            r#"fn with_value(x: Int, f: fn(Int) -> Int) -> Int { f(x) }
+pub fn main() -> Int {
+  let offset = 1
+  use value <- with_value(41)
+  value + offset
+}
+"#,
+        );
+        let engine = Engine::default();
+        let module = Module::new(&engine, &wasm.bytes).expect("compile wasm module");
+        let mut store = Store::new(&engine, ());
+        let instance = Instance::new(&mut store, &module, &[]).expect("instantiate module");
+        let main = instance
+            .get_typed_func::<(), i64>(&mut store, "main")
+            .expect("get main export");
+
+        assert_eq!(main.call(&mut store, ()).expect("call main"), 42);
+    }
+
+    #[test]
+    fn runs_use_callback_pattern_failure_path() {
+        let wasm = compile_wasm(
+            r#"fn with_values(f: fn(Int, Int) -> Int) -> Int { f(1, 2) }
+pub fn main() -> Int {
+  use 1, value <- with_values()
+  value + 40
+}
+"#,
+        );
+        let engine = Engine::default();
+        let module = Module::new(&engine, &wasm.bytes).expect("compile wasm module");
+        let mut store = Store::new(&engine, ());
+        let instance = Instance::new(&mut store, &module, &[]).expect("instantiate module");
+        let main = instance
+            .get_typed_func::<(), i64>(&mut store, "main")
+            .expect("get main export");
+
+        assert_eq!(main.call(&mut store, ()).expect("call main"), 42);
+    }
+
+    #[test]
+    fn runs_use_with_labelled_callback_insertion() {
+        let wasm = compile_wasm(
+            r#"fn labelled(callback f: fn(Int) -> Int, value x: Int) -> Int { f(x) }
+pub fn main() -> Int {
+  use value <- labelled(value: 41)
+  value + 1
+}
+"#,
+        );
+        let engine = Engine::default();
+        let module = Module::new(&engine, &wasm.bytes).expect("compile wasm module");
+        let mut store = Store::new(&engine, ());
+        let instance = Instance::new(&mut store, &module, &[]).expect("instantiate module");
+        let main = instance
+            .get_typed_func::<(), i64>(&mut store, "main")
+            .expect("get main export");
+
+        assert_eq!(main.call(&mut store, ()).expect("call main"), 42);
+    }
+
+    #[test]
+    fn runs_nested_use_callbacks() {
+        let wasm = compile_wasm(
+            r#"fn with_value(x: Int, f: fn(Int) -> Int) -> Int { f(x) }
+pub fn main() -> Int {
+  use x <- with_value(40)
+  use y <- with_value(2)
+  x + y
+}
+"#,
+        );
+        let engine = Engine::default();
+        let module = Module::new(&engine, &wasm.bytes).expect("compile wasm module");
+        let mut store = Store::new(&engine, ());
+        let instance = Instance::new(&mut store, &module, &[]).expect("instantiate module");
+        let main = instance
+            .get_typed_func::<(), i64>(&mut store, "main")
+            .expect("get main export");
+
+        assert_eq!(main.call(&mut store, ()).expect("call main"), 42);
+    }
+
+    #[test]
     fn runs_partial_application_closure() {
         let wasm = compile_wasm(
             r#"fn call(f: fn(Int) -> Int, x: Int) -> Int { f(x) }

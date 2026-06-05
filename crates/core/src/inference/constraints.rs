@@ -4,6 +4,7 @@ use super::substitutions::Substitutions;
 use super::unification::UnificationError;
 use super::{TypeTerm, Unifier};
 use crate::ast::{self, Expression, LiteralKind, Pattern, Statement};
+use crate::labels::{FunctionLabelMap, use_callback_placement};
 use crate::source::Span;
 use crate::types::{ConstructorInfo, Type};
 use std::collections::HashMap;
@@ -91,6 +92,7 @@ pub struct ConstraintGenerator {
     supply: TypeVarSupply,
     environment: Environment,
     constructors: HashMap<String, ConstructorInfo>,
+    function_labels: FunctionLabelMap,
     constraints: ConstraintSet,
     expressions: Vec<InferredExpression>,
     scopes: Vec<HashMap<String, Scheme>>,
@@ -102,6 +104,7 @@ impl ConstraintGenerator {
             supply: TypeVarSupply::new(),
             environment,
             constructors: HashMap::new(),
+            function_labels: HashMap::new(),
             constraints: ConstraintSet::new(),
             expressions: Vec::new(),
             scopes: vec![HashMap::new()],
@@ -110,6 +113,11 @@ impl ConstraintGenerator {
 
     pub fn with_constructors(mut self, constructors: HashMap<String, ConstructorInfo>) -> Self {
         self.constructors = constructors;
+        self
+    }
+
+    pub fn with_function_labels(mut self, function_labels: FunctionLabelMap) -> Self {
+        self.function_labels = function_labels;
         self
     }
 
@@ -140,7 +148,7 @@ impl ConstraintGenerator {
             Expression::BinaryOperation(operation) => self.infer_binary_operation(operation),
             Expression::Pipeline(pipeline) => self.infer_pipeline(pipeline),
             Expression::UnaryOperation(operation) => self.infer_unary_operation(operation),
-            Expression::Use(use_) => self.infer_use(use_),
+            Expression::Use(use_) => self.infer_use(use_, &[]),
             Expression::AnonymousFunction(function) => self.infer_anonymous_function(function),
             Expression::Capture(capture) => self.infer_capture(capture),
             Expression::Record(record) => self.infer_record(record),
@@ -204,8 +212,14 @@ impl ConstraintGenerator {
 
     pub fn infer_block(&mut self, block: &ast::Block) -> Result<TypeTerm> {
         self.push_scope();
+        let last = self.infer_statements(&block.statements)?;
+        self.pop_scope();
+        Ok(last)
+    }
+
+    fn infer_statements(&mut self, statements: &[Statement]) -> Result<TypeTerm> {
         let mut last = TypeTerm::Nil;
-        for statement in &block.statements {
+        for (index, statement) in statements.iter().enumerate() {
             last = match statement {
                 Statement::Let(let_) => {
                     let value = self.infer_expression(&let_.value)?;
@@ -234,10 +248,10 @@ impl ConstraintGenerator {
                     self.bind_pattern(&let_assert.pattern, &expected)?;
                     TypeTerm::Nil
                 }
+                Statement::Expression(Expression::Use(use_)) => return self.infer_use(use_, &statements[index + 1..]),
                 Statement::Expression(expression) => self.infer_expression(expression)?,
             };
         }
-        self.pop_scope();
         Ok(last)
     }
 
@@ -445,14 +459,84 @@ impl ConstraintGenerator {
         }
     }
 
-    fn infer_use(&mut self, use_: &ast::Use) -> Result<TypeTerm> {
-        let value = self.infer_expression(&use_.value)?;
-        for assignment in &use_.assignments {
-            let expected = self.annotation_or_fresh(assignment.type_annotation.as_ref())?;
-            self.constraints.push(expected.clone(), value.clone(), assignment.span);
-            self.bind_pattern(&assignment.pattern, &expected)?;
+    fn infer_use(&mut self, use_: &ast::Use, continuation: &[Statement]) -> Result<TypeTerm> {
+        let callback_params = use_
+            .assignments
+            .iter()
+            .map(|assignment| self.annotation_or_fresh(assignment.type_annotation.as_ref()))
+            .collect::<Result<Vec<_>>>()?;
+
+        self.push_scope();
+        for (assignment, type_) in use_.assignments.iter().zip(callback_params.iter()) {
+            self.bind_pattern(&assignment.pattern, type_)?;
         }
-        Ok(value)
+        let callback_return = self.infer_statements(continuation)?;
+        self.pop_scope();
+
+        let callback = TypeTerm::Function { params: callback_params, return_type: Box::new(callback_return) };
+        let return_type = self.supply.fresh_type();
+        match use_.value.as_ref() {
+            Expression::Call(call) => {
+                let function = self.infer_expression(&call.function)?;
+                let params = self.use_call_params(call, callback)?;
+                self.constraints.push(
+                    function,
+                    TypeTerm::Function { params, return_type: Box::new(return_type.clone()) },
+                    use_.span,
+                );
+            }
+            value => {
+                let function = self.infer_expression(value)?;
+                self.constraints.push(
+                    function,
+                    TypeTerm::Function { params: vec![callback], return_type: Box::new(return_type.clone()) },
+                    use_.span,
+                );
+            }
+        }
+        Ok(return_type)
+    }
+
+    fn use_call_params(&mut self, call: &ast::Call, callback: TypeTerm) -> Result<Vec<TypeTerm>> {
+        let argument_types = call
+            .arguments
+            .iter()
+            .map(|argument| self.infer_expression(&argument.value))
+            .collect::<Result<Vec<_>>>()?;
+        let param_count = self
+            .call_function_labels(call)
+            .map_or(argument_types.len() + 1, <[_]>::len);
+        let Some(placement) = use_callback_placement(self.call_function_labels(call), &call.arguments, param_count)
+        else {
+            let mut params = argument_types;
+            params.push(callback);
+            return Ok(params);
+        };
+        if !placement.has_labels {
+            let mut params = argument_types;
+            params.push(callback);
+            return Ok(params);
+        }
+        let mut ordered = vec![None; param_count];
+        for (index, type_) in placement.argument_indices.into_iter().zip(argument_types) {
+            ordered[index] = Some(type_);
+        }
+        ordered[placement.callback_index] = Some(callback);
+        Ok(ordered.into_iter().flatten().collect())
+    }
+
+    fn call_function_labels(&self, call: &ast::Call) -> Option<&[Option<String>]> {
+        match call.function.as_ref() {
+            Expression::Variable(name) => self.function_labels.get(&name.text).map(Vec::as_slice),
+            Expression::FieldAccess(access) => match access.record.as_ref() {
+                Expression::Variable(module) => self
+                    .function_labels
+                    .get(&format!("{}.{}", module.text, access.field.text))
+                    .map(Vec::as_slice),
+                _ => None,
+            },
+            _ => None,
+        }
     }
 
     fn infer_anonymous_function(&mut self, function: &ast::AnonymousFunction) -> Result<TypeTerm> {

@@ -416,7 +416,7 @@ impl Resolver {
     }
 
     fn resolve_block(&mut self, scope: ScopeId, block: &ast::Block) {
-        for statement in &block.statements {
+        for (index, statement) in block.statements.iter().enumerate() {
             match statement {
                 Statement::Let(let_) => {
                     self.resolve_expression(scope, &let_.value);
@@ -429,7 +429,39 @@ impl Resolver {
                     }
                     self.bind_pattern(scope, &let_assert.pattern, SymbolKind::Local);
                 }
+                Statement::Expression(Expression::Use(use_)) => {
+                    self.resolve_use(scope, use_, &block.statements[index + 1..]);
+                    break;
+                }
                 Statement::Expression(expression) => self.resolve_expression(scope, expression),
+            }
+        }
+    }
+
+    fn resolve_use(&mut self, scope: ScopeId, use_: &ast::Use, continuation: &[Statement]) {
+        self.resolve_expression(scope, &use_.value);
+        let child = self.new_scope(Some(scope));
+        for assignment in &use_.assignments {
+            self.bind_pattern(child, &assignment.pattern, SymbolKind::Local);
+        }
+        for (index, statement) in continuation.iter().enumerate() {
+            match statement {
+                Statement::Let(let_) => {
+                    self.resolve_expression(child, &let_.value);
+                    self.bind_pattern(child, &let_.pattern, SymbolKind::Local);
+                }
+                Statement::LetAssert(let_assert) => {
+                    self.resolve_expression(child, &let_assert.value);
+                    if let Some(message) = &let_assert.message {
+                        self.resolve_expression(child, message);
+                    }
+                    self.bind_pattern(child, &let_assert.pattern, SymbolKind::Local);
+                }
+                Statement::Expression(Expression::Use(use_)) => {
+                    self.resolve_use(child, use_, &continuation[index + 1..]);
+                    break;
+                }
+                Statement::Expression(expression) => self.resolve_expression(child, expression),
             }
         }
     }
@@ -472,13 +504,7 @@ impl Resolver {
                 self.resolve_expression(scope, &pipeline.into);
             }
             Expression::UnaryOperation(operation) => self.resolve_expression(scope, &operation.value),
-            Expression::Use(use_) => {
-                let child = self.new_scope(Some(scope));
-                for assignment in &use_.assignments {
-                    self.bind_pattern(child, &assignment.pattern, SymbolKind::Local);
-                }
-                self.resolve_expression(child, &use_.value);
-            }
+            Expression::Use(use_) => self.resolve_use(scope, use_, &[]),
             Expression::AnonymousFunction(function) => {
                 let child = self.new_scope(Some(scope));
                 for parameter in &function.parameters {
@@ -789,6 +815,11 @@ impl Resolver {
                 self.references
                     .push(ResolvedReference { name: name.clone(), target: ReferenceTarget::Symbol(symbol) });
             }
+            None if name.text == "use" => self.diagnostics.push(
+                Diagnostic::new(DiagnosticCode::ResolveError, "use has no continuation")
+                    .with_label(Label::primary(name.span, "`use` must start a block statement"))
+                    .with_note("`use` passes the following block statements as its callback body"),
+            ),
             None => self.diagnostics.push(
                 Diagnostic::new(DiagnosticCode::ResolveError, format!("unknown name `{}`", name.text))
                     .with_label(Label::primary(name.span, "not found in scope")),

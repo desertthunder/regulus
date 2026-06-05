@@ -33,10 +33,10 @@ Replace placeholder semantics for represented language forms with full behavior.
 
 ### `use` lowering
 
-- [ ] Lower `use` to callback-passing IR with explicit evaluation order.
-- [ ] Preserve callback parameters, captures, and failure paths.
-- [ ] Emit Wasm for lowered `use` callbacks.
-- [ ] Add execution tests for common `use` patterns.
+- [x] Lower `use` to callback-passing IR with explicit evaluation order.
+- [x] Preserve callback parameters, captures, and failure paths.
+- [x] Emit Wasm for lowered `use` callbacks.
+- [x] Add execution tests for common `use` patterns.
 
 ### Record updates
 
