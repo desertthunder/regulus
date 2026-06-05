@@ -39,10 +39,10 @@ backend target.
 
 ### Pattern matching
 
-- [ ] Support all pattern forms in AST, resolver, type checker, and lowering.
-- [ ] Lower patterns into explicit decision logic or match IR.
-- [ ] Bind names from nested patterns, aliases, records, lists, and bit strings.
-- [ ] Add exhaustiveness, unreachable branch, and redundant pattern diagnostics
+- [x] Support all pattern forms in AST, resolver, type checker, and lowering.
+- [x] Lower patterns into explicit decision logic or match IR.
+- [x] Bind names from nested patterns, aliases, records, lists, and bit strings.
+- [x] Add exhaustiveness, unreachable branch, and redundant pattern diagnostics
       where practical.
 
 ### Lowering

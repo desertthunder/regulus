@@ -23,6 +23,25 @@ pub enum RepresentationType {
     HeapManaged(HeapRepresentation),
 }
 
+impl From<&Type> for RepresentationType {
+    fn from(type_: &Type) -> Self {
+        match type_ {
+            Type::Int => Self::Scalar(ScalarRepresentation::I64),
+            Type::Float => Self::Scalar(ScalarRepresentation::F64),
+            Type::Bool => Self::Scalar(ScalarRepresentation::I32),
+            Type::Nil => Self::Scalar(ScalarRepresentation::Unit),
+            Type::String => Self::HeapManaged(HeapRepresentation::String),
+            Type::BitArray => Self::HeapManaged(HeapRepresentation::BitArray),
+            Type::Tuple(_) => Self::HeapManaged(HeapRepresentation::Tuple),
+            Type::List(_) => Self::HeapManaged(HeapRepresentation::List),
+            Type::Record { .. } => Self::HeapManaged(HeapRepresentation::Record),
+            Type::Custom { .. } => Self::HeapManaged(HeapRepresentation::Custom),
+            Type::Function { .. } => Self::HeapManaged(HeapRepresentation::Function),
+            Type::Generic(_) | Type::Opaque { .. } => Self::HeapManaged(HeapRepresentation::Opaque),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ScalarRepresentation {
     I64,
@@ -213,6 +232,12 @@ pub struct CallAbi {
 pub struct AbiValue {
     pub type_: Type,
     pub representation: RepresentationType,
+}
+
+impl From<&Type> for AbiValue {
+    fn from(type_: &Type) -> Self {
+        Self { type_: type_.clone(), representation: RepresentationType::from(type_) }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -719,10 +744,16 @@ impl Lowerer {
                             instructions.push(Instruction::LocalSet { local: local.id, value, span: let_.span });
                         }
                         Pattern::Discard(_) => {}
-                        _ => self.diagnostics.push(
-                            Diagnostic::new(DiagnosticCode::LoweringError, "unsupported let pattern")
-                                .with_label(Label::primary(let_.span, "unsupported pattern here")),
-                        ),
+                        pattern => {
+                            let pattern = self.lower_pattern(context, pattern, &value.type_)?;
+                            instructions.push(Instruction::AssertMatch {
+                                value: value.clone(),
+                                pattern: pattern.clone(),
+                                failure: FailurePath { reason: FailureReason::AssertMatch, span: let_.span },
+                                span: let_.span,
+                            });
+                            self.bind_assert_pattern(context, &mut instructions, &value, &pattern, let_.span);
+                        }
                     }
                 }
                 Statement::LetAssert(let_assert) => {
@@ -889,14 +920,14 @@ impl Lowerer {
             AstExpression::Raw(raw) if raw.kind == "tuple" => Some(Expression {
                 type_: self.typed_expression_type(raw.span).unwrap_or(Type::Tuple(Vec::new())),
                 span: raw.span,
-                kind: ExpressionKind::Tuple(raw_literal_arguments(raw, context, self)?),
+                kind: ExpressionKind::Tuple(raw_literal_arguments(raw)?),
             }),
             AstExpression::Raw(raw) if raw.kind == "list" => Some(Expression {
                 type_: self
                     .typed_expression_type(raw.span)
                     .unwrap_or_else(|| Type::List(Box::new(Type::Int))),
                 span: raw.span,
-                kind: ExpressionKind::List(raw_literal_arguments(raw, context, self)?),
+                kind: ExpressionKind::List(raw_literal_arguments(raw)?),
             }),
             AstExpression::Raw(raw) if raw.kind == "record" => {
                 let type_ = self.typed_expression_type(raw.span).unwrap_or(Type::Nil);
@@ -905,7 +936,7 @@ impl Lowerer {
                     span: raw.span,
                     kind: ExpressionKind::Constructor(ConstructorValue {
                         name: raw.source.split(['(', ' ']).next().unwrap_or(&raw.source).into(),
-                        arguments: raw_record_arguments(raw, context, self)?,
+                        arguments: raw_record_arguments(raw)?,
                     }),
                 })
             }
@@ -1084,11 +1115,7 @@ impl Lowerer {
                 context.bind(alias.alias.text.clone(), local.id);
                 Some(IrPattern::Alias { pattern: Box::new(inner), local: local.id })
             }
-            Pattern::BitString(raw) => Some(IrPattern::BitString(bit_string_pattern_segments(
-                context,
-                raw,
-                subject_type,
-            ))),
+            Pattern::BitString(raw) => Some(IrPattern::BitString(bit_string_pattern_segments(context, raw))),
             Pattern::Raw(raw) => {
                 self.diagnostics.push(
                     Diagnostic::new(
@@ -1286,9 +1313,7 @@ fn collect_successful_bindings(
     }
 }
 
-fn raw_literal_arguments(
-    raw: &ast::RawSyntax, _context: &mut FunctionContext, _lowerer: &mut Lowerer,
-) -> Option<Vec<Expression>> {
+fn raw_literal_arguments(raw: &ast::RawSyntax) -> Option<Vec<Expression>> {
     let source = raw.source.trim();
     let inner = source
         .strip_prefix("#(")
@@ -1302,9 +1327,7 @@ fn raw_literal_arguments(
     )
 }
 
-fn raw_record_arguments(
-    raw: &ast::RawSyntax, _context: &mut FunctionContext, _lowerer: &mut Lowerer,
-) -> Option<Vec<Expression>> {
+fn raw_record_arguments(raw: &ast::RawSyntax) -> Option<Vec<Expression>> {
     let Some((_, args)) = raw.source.split_once('(') else {
         return Some(Vec::new());
     };
@@ -1340,31 +1363,6 @@ fn call_abi(type_: &Type, boundary: CallBoundary) -> CallAbi {
 
 fn abi_return(type_: &Type) -> Option<AbiValue> {
     if matches!(type_, Type::Nil) { None } else { Some(AbiValue::from(type_)) }
-}
-
-impl From<&Type> for AbiValue {
-    fn from(type_: &Type) -> Self {
-        Self { type_: type_.clone(), representation: RepresentationType::from(type_) }
-    }
-}
-
-impl From<&Type> for RepresentationType {
-    fn from(type_: &Type) -> Self {
-        match type_ {
-            Type::Int => Self::Scalar(ScalarRepresentation::I64),
-            Type::Float => Self::Scalar(ScalarRepresentation::F64),
-            Type::Bool => Self::Scalar(ScalarRepresentation::I32),
-            Type::Nil => Self::Scalar(ScalarRepresentation::Unit),
-            Type::String => Self::HeapManaged(HeapRepresentation::String),
-            Type::BitArray => Self::HeapManaged(HeapRepresentation::BitArray),
-            Type::Tuple(_) => Self::HeapManaged(HeapRepresentation::Tuple),
-            Type::List(_) => Self::HeapManaged(HeapRepresentation::List),
-            Type::Record { .. } => Self::HeapManaged(HeapRepresentation::Record),
-            Type::Custom { .. } => Self::HeapManaged(HeapRepresentation::Custom),
-            Type::Function { .. } => Self::HeapManaged(HeapRepresentation::Function),
-            Type::Generic(_) | Type::Opaque { .. } => Self::HeapManaged(HeapRepresentation::Opaque),
-        }
-    }
 }
 
 fn lower_import(import: &ast::Import) -> Import {

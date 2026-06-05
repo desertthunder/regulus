@@ -148,7 +148,7 @@ fn bit_segment_options(source: &str) -> Vec<BitSegmentOption> {
 }
 
 pub(super) fn bit_string_pattern_segments(
-    context: &mut FunctionContext, raw: &ast::RawSyntax, subject_type: &Type,
+    context: &mut FunctionContext, raw: &ast::RawSyntax,
 ) -> Vec<BitStringPatternSegment> {
     let Some(inner) = raw
         .source
@@ -160,13 +160,11 @@ pub(super) fn bit_string_pattern_segments(
     };
     inner
         .split(',')
-        .map(|segment| bit_string_pattern_segment(context, segment.trim(), raw.span, subject_type))
+        .map(|segment| bit_string_pattern_segment(context, segment.trim(), raw.span))
         .collect()
 }
 
-fn bit_string_pattern_segment(
-    context: &mut FunctionContext, source: &str, span: Span, subject_type: &Type,
-) -> BitStringPatternSegment {
+fn bit_string_pattern_segment(context: &mut FunctionContext, source: &str, span: Span) -> BitStringPatternSegment {
     let (value, options) = source.split_once(':').unwrap_or((source, ""));
     let options = bit_segment_options(options);
     let bit_size = options.iter().find_map(|option| match option {
@@ -175,7 +173,7 @@ fn bit_string_pattern_segment(
     });
     let binding = value.trim().chars().next().filter(|char| char.is_lowercase()).map(|_| {
         let name = ast::Name { span, text: value.trim().into() };
-        let local = context.allocate(&name, subject_type.clone());
+        let local = context.allocate(&name, Type::Int);
         context.bind(name.text, local.id);
         local.id
     });

@@ -702,13 +702,17 @@ impl Resolver {
                 self.bind_pattern_inner(scope, &alias.pattern, kind.clone(), names);
                 self.define_pattern_name(scope, &alias.alias, kind, names);
             }
+            Pattern::BitString(raw) => {
+                for name in bit_string_pattern_bindings(raw) {
+                    self.define_pattern_name(scope, &name, kind.clone(), names);
+                }
+            }
             Pattern::Discard(_)
             | Pattern::Integer(_)
             | Pattern::Float(_)
             | Pattern::String(_)
             | Pattern::Bool(_)
             | Pattern::Nil(_)
-            | Pattern::BitString(_)
             | Pattern::Raw(_) => {}
         }
     }
@@ -831,6 +835,20 @@ impl Resolver {
         self.scopes.push(Scope { id, parent, symbols: HashMap::new() });
         id
     }
+}
+
+fn bit_string_pattern_bindings(raw: &ast::RawSyntax) -> Vec<ast::Name> {
+    raw.source
+        .trim()
+        .strip_prefix("<<")
+        .and_then(|source| source.strip_suffix(">>"))
+        .into_iter()
+        .flat_map(|inner| inner.split(','))
+        .filter_map(|segment| segment.split(':').next())
+        .map(str::trim)
+        .filter(|name| name.chars().next().is_some_and(char::is_lowercase))
+        .map(|text| ast::Name { span: raw.span, text: text.into() })
+        .collect()
 }
 
 fn type_annotation_names(type_: &ast::TypeAnnotation) -> Vec<ast::Name> {

@@ -916,7 +916,12 @@ impl TypeChecker {
                 self.bind_pattern(&alias.pattern, type_);
                 self.define(alias.alias.text.clone(), type_.clone());
             }
-            Pattern::BitString(raw) => self.expect_same(&Type::BitArray, type_, raw.span),
+            Pattern::BitString(raw) => {
+                self.expect_same(&Type::BitArray, type_, raw.span);
+                for name in bit_string_pattern_bindings(raw) {
+                    self.define(name.text, Type::Int);
+                }
+            }
             Pattern::Raw(raw) => self.diagnostics.push(
                 Diagnostic::new(DiagnosticCode::TypeError, format!("unsupported pattern `{}`", raw.kind))
                     .with_label(Label::primary(raw.span, "unsupported pattern here")),
@@ -1388,6 +1393,20 @@ fn parse_function_type(source: &str) -> Option<Type> {
     let params = parse_type_list(params)?;
     let return_type = parse_type_source(return_type.trim())?;
     Some(Type::Function { params, return_type: Box::new(return_type) })
+}
+
+fn bit_string_pattern_bindings(raw: &ast::RawSyntax) -> Vec<ast::Name> {
+    raw.source
+        .trim()
+        .strip_prefix("<<")
+        .and_then(|source| source.strip_suffix(">>"))
+        .into_iter()
+        .flat_map(|inner| inner.split(','))
+        .filter_map(|segment| segment.split(':').next())
+        .map(str::trim)
+        .filter(|name| name.chars().next().is_some_and(char::is_lowercase))
+        .map(|text| ast::Name { span: raw.span, text: text.into() })
+        .collect()
 }
 
 fn values_from_ast(module: &ast::Module) -> Vec<(String, Type)> {
