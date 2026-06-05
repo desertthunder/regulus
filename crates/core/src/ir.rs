@@ -1,3 +1,5 @@
+pub mod bit_slices;
+
 use std::collections::HashMap;
 
 use crate::{
@@ -7,6 +9,10 @@ use crate::{
     source::Span,
     types::{Type, TypedModule},
 };
+
+pub use bit_slices::{BitArrayLiteral, BitArraySegment, BitSegmentOption, BitSegmentType, BitStringPatternSegment};
+
+use bit_slices::{ast_bit_array_literal, bit_array_literal, bit_string_pattern_segments};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct LocalId(pub u32);
@@ -330,51 +336,6 @@ pub enum ExpressionKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BitArrayLiteral {
-    pub segments: Vec<BitArraySegment>,
-    pub bit_len: u32,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BitArraySegment {
-    pub value: u64,
-    pub bit_size: u32,
-    pub type_: BitSegmentType,
-    pub options: Vec<BitSegmentOption>,
-    pub span: Span,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BitStringPatternSegment {
-    pub binding: Option<LocalId>,
-    pub bit_size: Option<u32>,
-    pub type_: BitSegmentType,
-    pub options: Vec<BitSegmentOption>,
-    pub span: Span,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BitSegmentType {
-    Integer,
-    Float,
-    Binary,
-    Utf8,
-    Utf16,
-    Utf32,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BitSegmentOption {
-    Size(u32),
-    Unit(u32),
-    Signed,
-    Unsigned,
-    BigEndian,
-    LittleEndian,
-    NativeEndian,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DirectCall {
     pub function: String,
     pub arguments: Vec<CallArgument>,
@@ -526,6 +487,19 @@ pub enum BindingPath {
     },
 }
 
+impl BindingPath {
+    fn subject(&self) -> usize {
+        match self {
+            Self::Subject(subject)
+            | Self::TupleElement { subject, .. }
+            | Self::ListElement { subject, .. }
+            | Self::ListTail { subject }
+            | Self::ConstructorField { subject, .. }
+            | Self::Alias { subject } => *subject,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IrPattern {
     Discard,
@@ -647,15 +621,11 @@ impl Lowerer {
         }
         for declaration in &self.module.resolved.ast.declarations {
             match declaration {
-                AstDeclaration::TypeDefinition(raw) if is_public_declaration(&raw.source) => {
-                    for name in exported_type_names(&raw.source) {
-                        exports.push(Export { name, kind: ExportKind::Type, span: raw.span });
-                    }
+                AstDeclaration::TypeDefinition(type_) if type_.public => {
+                    exports.push(Export { name: type_.name.text.clone(), kind: ExportKind::Type, span: type_.span });
                 }
-                AstDeclaration::TypeAlias(raw) if is_public_declaration(&raw.source) => {
-                    if let Some(name) = declaration_name(&raw.source, "type") {
-                        exports.push(Export { name, kind: ExportKind::Type, span: raw.span });
-                    }
+                AstDeclaration::TypeAlias(alias) if alias.public => {
+                    exports.push(Export { name: alias.name.text.clone(), kind: ExportKind::Type, span: alias.span });
                 }
                 _ => {}
             }
@@ -769,8 +739,7 @@ impl Lowerer {
                     if last_statement {
                         result = value;
                     } else {
-                        instructions
-                            .push(Instruction::Evaluate { expression: value, span: ast_expression_span(expression) });
+                        instructions.push(Instruction::Evaluate { expression: value, span: Span::from(expression) });
                     }
                 }
             }
@@ -784,7 +753,7 @@ impl Lowerer {
     fn lower_expression(&mut self, context: &mut FunctionContext, expression: &AstExpression) -> Option<Expression> {
         match expression {
             AstExpression::Literal(literal) => Some(Expression {
-                type_: type_for_literal(literal.kind.clone()),
+                type_: Type::from(&literal.kind),
                 span: literal.span,
                 kind: ExpressionKind::Literal(Literal { kind: literal.kind.clone(), source: literal.source.clone() }),
             }),
@@ -855,6 +824,61 @@ impl Lowerer {
                     },
                 })
             }
+            AstExpression::Tuple(tuple) => Some(Expression {
+                type_: self
+                    .typed_expression_type(tuple.span)
+                    .unwrap_or(Type::Tuple(Vec::new())),
+                span: tuple.span,
+                kind: ExpressionKind::Tuple(
+                    tuple
+                        .elements
+                        .iter()
+                        .map(|item| self.lower_expression(context, item))
+                        .collect::<Option<Vec<_>>>()?,
+                ),
+            }),
+            AstExpression::List(list) => Some(Expression {
+                type_: self
+                    .typed_expression_type(list.span)
+                    .unwrap_or(Type::List(Box::new(Type::Int))),
+                span: list.span,
+                kind: ExpressionKind::List(
+                    list.elements
+                        .iter()
+                        .map(|item| self.lower_expression(context, item))
+                        .collect::<Option<Vec<_>>>()?,
+                ),
+            }),
+            AstExpression::Record(record) => {
+                let type_ = self.typed_expression_type(record.span).unwrap_or(Type::Nil);
+                Some(Expression {
+                    type_,
+                    span: record.span,
+                    kind: ExpressionKind::Constructor(ConstructorValue {
+                        name: constructor_name(&record.constructor),
+                        arguments: record
+                            .arguments
+                            .iter()
+                            .map(|argument| self.lower_expression(context, &argument.value))
+                            .collect::<Option<Vec<_>>>()?,
+                    }),
+                })
+            }
+            AstExpression::BitArray(bit_array) => Some(Expression {
+                type_: Type::BitArray,
+                span: bit_array.span,
+                kind: ExpressionKind::BitArray(ast_bit_array_literal(bit_array)),
+            }),
+            AstExpression::Panic(panic) | AstExpression::Todo(panic) => Some(Expression {
+                type_: self.typed_expression_type(panic.span).unwrap_or(Type::Nil),
+                span: panic.span,
+                kind: ExpressionKind::Failure(FailurePath { reason: FailureReason::Panic, span: panic.span }),
+            }),
+            AstExpression::Assert(assert) => Some(Expression {
+                type_: self.typed_expression_type(assert.span).unwrap_or(Type::Nil),
+                span: assert.span,
+                kind: ExpressionKind::Failure(FailurePath { reason: FailureReason::Assert, span: assert.span }),
+            }),
             AstExpression::Raw(raw) if raw.kind == "bit_string" => Some(Expression {
                 type_: Type::BitArray,
                 span: raw.span,
@@ -895,17 +919,20 @@ impl Lowerer {
                     span: raw.span,
                 }),
             }),
-            AstExpression::Raw(raw) => {
-                self.diagnostics.push(
-                    Diagnostic::new(
-                        DiagnosticCode::LoweringError,
-                        format!("expression `{}` cannot be lowered", raw.kind),
-                    )
-                    .with_label(Label::primary(raw.span, "unsupported expression here")),
-                );
-                None
-            }
+            AstExpression::Raw(raw) => self.unsupported_ast_expression(raw.kind.clone(), raw.span),
+            other => self.unsupported_ast_expression(ast_expression_kind(other), Span::from(other)),
         }
+    }
+
+    fn unsupported_ast_expression(&mut self, kind: String, span: Span) -> Option<Expression> {
+        self.diagnostics.push(
+            Diagnostic::new(
+                DiagnosticCode::LoweringError,
+                format!("expression `{kind}` cannot be lowered"),
+            )
+            .with_label(Label::primary(span, "unsupported expression here")),
+        );
+        None
     }
 
     fn lower_call(&mut self, context: &mut FunctionContext, call: &ast::Call) -> Option<Expression> {
@@ -1158,15 +1185,31 @@ impl FunctionContext {
     }
 }
 
-fn ast_expression_span(expression: &AstExpression) -> Span {
+fn ast_expression_kind(expression: &AstExpression) -> String {
     match expression {
-        AstExpression::Literal(literal) => literal.span,
-        AstExpression::Variable(name) => name.span,
-        AstExpression::Call(call) => call.span,
-        AstExpression::FieldAccess(field_access) => field_access.span,
-        AstExpression::Block(block) => block.span,
-        AstExpression::Case(case) => case.span,
-        AstExpression::Raw(raw) => raw.span,
+        AstExpression::Literal(_) => "literal".into(),
+        AstExpression::Variable(_) => "variable".into(),
+        AstExpression::Call(_) => "call".into(),
+        AstExpression::FieldAccess(_) => "field_access".into(),
+        AstExpression::Block(_) => "block".into(),
+        AstExpression::Case(_) => "case".into(),
+        AstExpression::BinaryOperation(_) => "binary_expression".into(),
+        AstExpression::Pipeline(_) => "pipeline".into(),
+        AstExpression::UnaryOperation(_) => "unary_expression".into(),
+        AstExpression::Use(_) => "use".into(),
+        AstExpression::AnonymousFunction(_) => "anonymous_function".into(),
+        AstExpression::Capture(_) => "capture".into(),
+        AstExpression::Record(_) => "record".into(),
+        AstExpression::RecordUpdate(_) => "record_update".into(),
+        AstExpression::Tuple(_) => "tuple".into(),
+        AstExpression::TupleAccess(_) => "tuple_access".into(),
+        AstExpression::List(_) => "list".into(),
+        AstExpression::BitArray(_) => "bit_array".into(),
+        AstExpression::Panic(_) => "panic".into(),
+        AstExpression::Todo(_) => "todo".into(),
+        AstExpression::Assert(_) => "assert".into(),
+        AstExpression::Echo(_) => "echo".into(),
+        AstExpression::Raw(raw) => raw.kind.clone(),
     }
 }
 
@@ -1196,13 +1239,13 @@ fn collect_successful_bindings(
             });
         }
         IrPattern::Tuple(elements) => {
-            let subject = binding_subject(&path);
+            let subject = path.subject();
             for (index, element) in elements.iter().enumerate() {
                 collect_successful_bindings(context, element, BindingPath::TupleElement { subject, index }, bindings);
             }
         }
         IrPattern::List { elements, tail } => {
-            let subject = binding_subject(&path);
+            let subject = path.subject();
             for (index, element) in elements.iter().enumerate() {
                 collect_successful_bindings(context, element, BindingPath::ListElement { subject, index }, bindings);
             }
@@ -1215,7 +1258,7 @@ fn collect_successful_bindings(
             }
         }
         IrPattern::Constructor { arguments, .. } => {
-            let subject = binding_subject(&path);
+            let subject = path.subject();
             for (index, argument) in arguments.iter().enumerate() {
                 collect_successful_bindings(
                     context,
@@ -1226,7 +1269,7 @@ fn collect_successful_bindings(
             }
         }
         IrPattern::BitString(segments) => {
-            let subject = binding_subject(&path);
+            let subject = path.subject();
             for (index, segment) in segments.iter().enumerate() {
                 if let Some(local) = segment.binding {
                     bindings.push(SuccessfulBinding {
@@ -1238,17 +1281,6 @@ fn collect_successful_bindings(
             }
         }
         IrPattern::Discard | IrPattern::Literal(_) => {}
-    }
-}
-
-fn binding_subject(path: &BindingPath) -> usize {
-    match path {
-        BindingPath::Subject(subject)
-        | BindingPath::TupleElement { subject, .. }
-        | BindingPath::ListElement { subject, .. }
-        | BindingPath::ListTail { subject }
-        | BindingPath::ConstructorField { subject, .. }
-        | BindingPath::Alias { subject } => *subject,
     }
 }
 
@@ -1293,117 +1325,6 @@ fn integer_expression(source: &str, span: Span) -> Option<Expression> {
         span,
         kind: ExpressionKind::Literal(Literal { kind: LiteralKind::Int, source: source.into() }),
     })
-}
-
-fn bit_array_literal(raw: &ast::RawSyntax) -> BitArrayLiteral {
-    let segments = bit_array_segments(raw);
-    let bit_len = segments.iter().map(|segment| segment.bit_size).sum();
-    BitArrayLiteral { segments, bit_len }
-}
-
-fn bit_array_segments(raw: &ast::RawSyntax) -> Vec<BitArraySegment> {
-    let Some(inner) = raw
-        .source
-        .trim()
-        .strip_prefix("<<")
-        .and_then(|source| source.strip_suffix(">>"))
-    else {
-        return Vec::new();
-    };
-    inner
-        .split(',')
-        .filter_map(|segment| bit_array_segment(segment.trim(), raw.span))
-        .collect()
-}
-
-fn bit_array_segment(source: &str, span: Span) -> Option<BitArraySegment> {
-    if source.is_empty() {
-        return None;
-    }
-    let (value, options) = source.split_once(':').unwrap_or((source, ""));
-    let value = value.trim().parse::<u64>().ok()?;
-    let options = bit_segment_options(options);
-    let bit_size = options
-        .iter()
-        .find_map(|option| match option {
-            BitSegmentOption::Size(size) => Some(*size),
-            _ => None,
-        })
-        .unwrap_or(8);
-    Some(BitArraySegment { value, bit_size, type_: BitSegmentType::Integer, options, span })
-}
-
-fn bit_segment_options(source: &str) -> Vec<BitSegmentOption> {
-    source
-        .split('-')
-        .filter_map(|option| {
-            let option = option.trim();
-            if option.is_empty() {
-                return None;
-            }
-            match option {
-                "signed" => Some(BitSegmentOption::Signed),
-                "unsigned" => Some(BitSegmentOption::Unsigned),
-                "big" => Some(BitSegmentOption::BigEndian),
-                "little" => Some(BitSegmentOption::LittleEndian),
-                "native" => Some(BitSegmentOption::NativeEndian),
-                "float" => None,
-                "binary" | "bytes" | "bits" | "bit_string" | "utf8" | "utf16" | "utf32" => None,
-                _ if let Some(size) = option.strip_prefix("size(").and_then(|value| value.strip_suffix(')')) => {
-                    size.parse().ok().map(BitSegmentOption::Size)
-                }
-                _ if let Some(unit) = option.strip_prefix("unit(").and_then(|value| value.strip_suffix(')')) => {
-                    unit.parse().ok().map(BitSegmentOption::Unit)
-                }
-                _ => option.parse().ok().map(BitSegmentOption::Size),
-            }
-        })
-        .collect()
-}
-
-fn bit_string_pattern_segments(
-    context: &mut FunctionContext, raw: &ast::RawSyntax, subject_type: &Type,
-) -> Vec<BitStringPatternSegment> {
-    let Some(inner) = raw
-        .source
-        .trim()
-        .strip_prefix("<<")
-        .and_then(|source| source.strip_suffix(">>"))
-    else {
-        return Vec::new();
-    };
-    inner
-        .split(',')
-        .map(|segment| bit_string_pattern_segment(context, segment.trim(), raw.span, subject_type))
-        .collect()
-}
-
-fn bit_string_pattern_segment(
-    context: &mut FunctionContext, source: &str, span: Span, subject_type: &Type,
-) -> BitStringPatternSegment {
-    let (value, options) = source.split_once(':').unwrap_or((source, ""));
-    let options = bit_segment_options(options);
-    let bit_size = options.iter().find_map(|option| match option {
-        BitSegmentOption::Size(size) => Some(*size),
-        _ => None,
-    });
-    let binding = value.trim().chars().next().filter(|char| char.is_lowercase()).map(|_| {
-        let name = ast::Name { span, text: value.trim().into() };
-        let local = context.allocate(&name, subject_type.clone());
-        context.bind(name.text, local.id);
-        local.id
-    });
-    BitStringPatternSegment { binding, bit_size, type_: BitSegmentType::Integer, options, span }
-}
-
-fn type_for_literal(kind: LiteralKind) -> Type {
-    match kind {
-        LiteralKind::Int => Type::Int,
-        LiteralKind::Float => Type::Float,
-        LiteralKind::String => Type::String,
-        LiteralKind::Bool => Type::Bool,
-        LiteralKind::Nil => Type::Nil,
-    }
 }
 
 fn call_abi(type_: &Type, boundary: CallBoundary) -> CallAbi {
@@ -1480,13 +1401,54 @@ impl From<&AstDeclaration> for DeclarationMetadata {
                 visibility: visibility(function.public),
                 span: function.span,
             },
-            AstDeclaration::Constant(raw) => raw_metadata(raw, DeclarationKind::Constant, "const"),
-            AstDeclaration::ExternalFunction(raw) => raw_metadata(raw, DeclarationKind::ExternalFunction, "fn"),
-            AstDeclaration::ExternalType(raw) => raw_metadata(raw, DeclarationKind::ExternalType, "type"),
-            AstDeclaration::TypeAlias(raw) => raw_metadata(raw, DeclarationKind::TypeAlias, "type"),
-            AstDeclaration::TypeDefinition(raw) => raw_metadata(raw, DeclarationKind::TypeDefinition, "type"),
-            AstDeclaration::Attribute(raw) => raw_metadata(raw, DeclarationKind::Attribute, "@"),
-            AstDeclaration::TargetGroup(raw) => raw_metadata(raw, DeclarationKind::TargetGroup, "target"),
+            AstDeclaration::Constant(constant) => Self {
+                name: Some(constant.name.text.clone()),
+                kind: DeclarationKind::Constant,
+                visibility: visibility(constant.public),
+                span: constant.span,
+            },
+            AstDeclaration::ExternalFunction(function) => Self {
+                name: Some(function.name.text.clone()),
+                kind: DeclarationKind::ExternalFunction,
+                visibility: visibility(function.public),
+                span: function.span,
+            },
+            AstDeclaration::ExternalType(type_) => Self {
+                name: Some(type_.name.text.clone()),
+                kind: DeclarationKind::ExternalType,
+                visibility: visibility(type_.public),
+                span: type_.span,
+            },
+            AstDeclaration::TypeAlias(alias) => Self {
+                name: Some(alias.name.text.clone()),
+                kind: DeclarationKind::TypeAlias,
+                visibility: visibility(alias.public),
+                span: alias.span,
+            },
+            AstDeclaration::TypeDefinition(type_) => Self {
+                name: Some(type_.name.text.clone()),
+                kind: DeclarationKind::TypeDefinition,
+                visibility: visibility(type_.public),
+                span: type_.span,
+            },
+            AstDeclaration::Attribute(attribute) => Self {
+                name: Some(attribute.name.text.clone()),
+                kind: DeclarationKind::Attribute,
+                visibility: Visibility::Private,
+                span: attribute.span,
+            },
+            AstDeclaration::TargetGroup(group) => Self {
+                name: Some(group.target.text.clone()),
+                kind: DeclarationKind::TargetGroup,
+                visibility: Visibility::Private,
+                span: group.span,
+            },
+            AstDeclaration::Comment(comment) => Self {
+                name: None,
+                kind: DeclarationKind::Statement,
+                visibility: Visibility::Private,
+                span: comment.span,
+            },
             AstDeclaration::Statement(raw) => raw_metadata(raw, DeclarationKind::Statement, ""),
         }
     }
@@ -1501,37 +1463,23 @@ fn raw_metadata(raw: &ast::RawSyntax, kind: DeclarationKind, keyword: &str) -> D
     }
 }
 
-fn lower_constant(id: ConstantId, raw: &ast::RawSyntax) -> Constant {
-    let name = declaration_name(&raw.source, "const").unwrap_or_else(|| format!("__constant_{}", id.0));
+fn lower_constant(id: ConstantId, constant: &ast::Constant) -> Constant {
     Constant {
         id,
-        name,
-        public: is_public_declaration(&raw.source),
-        value: constant_value(&raw.source),
-        span: raw.span,
+        name: constant.name.text.clone(),
+        public: constant.public,
+        value: ast_constant_value(&constant.value),
+        span: constant.span,
     }
 }
 
-fn constant_value(source: &str) -> ConstantValue {
-    let Some(value) = source.split_once('=').map(|(_, value)| value.trim()) else {
-        return ConstantValue::Raw(source.trim().into());
-    };
-    if value == "True" || value == "False" {
-        return ConstantValue::Literal(Literal { kind: LiteralKind::Bool, source: value.into() });
+fn ast_constant_value(expression: &AstExpression) -> ConstantValue {
+    match expression {
+        AstExpression::Literal(literal) => {
+            ConstantValue::Literal(Literal { kind: literal.kind.clone(), source: literal.source.clone() })
+        }
+        _ => ConstantValue::Raw(format!("{expression:?}")),
     }
-    if value == "Nil" {
-        return ConstantValue::Literal(Literal { kind: LiteralKind::Nil, source: value.into() });
-    }
-    if value.starts_with('"') && value.ends_with('"') {
-        return ConstantValue::Literal(Literal { kind: LiteralKind::String, source: value.into() });
-    }
-    if value.parse::<i64>().is_ok() {
-        return ConstantValue::Literal(Literal { kind: LiteralKind::Int, source: value.into() });
-    }
-    if value.parse::<f64>().is_ok() && value.contains('.') {
-        return ConstantValue::Literal(Literal { kind: LiteralKind::Float, source: value.into() });
-    }
-    ConstantValue::Raw(value.into())
 }
 
 fn declaration_name(source: &str, keyword: &str) -> Option<String> {
@@ -1542,10 +1490,6 @@ fn declaration_name(source: &str, keyword: &str) -> Option<String> {
         .split(|character: char| !matches!(character, '_' | 'a'..='z' | 'A'..='Z' | '0'..='9'))
         .find(|part| !part.is_empty())
         .map(str::to_string)
-}
-
-fn exported_type_names(source: &str) -> Vec<String> {
-    declaration_name(source, "type").into_iter().collect()
 }
 
 fn is_public_declaration(source: &str) -> bool {

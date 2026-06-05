@@ -9,13 +9,13 @@ backend target.
 
 ### Syntax and AST
 
-- [ ] Replace raw executable syntax with structured AST nodes.
-- [ ] Add structured constants, attributes, externals, target groups, and docs.
-- [ ] Add structured operators, pipelines, `use`, anonymous functions, and
+- [x] Replace raw executable syntax with structured AST nodes.
+- [x] Add structured constants, attributes, externals, target groups, and docs.
+- [x] Add structured operators, pipelines, `use`, anonymous functions, and
       captures.
-- [ ] Add structured record construction, record updates, tuples, lists, and bit
+- [x] Add structured record construction, record updates, tuples, lists, and bit
       arrays.
-- [ ] Preserve spans and source order for every new AST node.
+- [x] Preserve spans and source order for every new AST node.
 
 ### Resolution
 

@@ -282,31 +282,29 @@ impl Resolver {
                         SymbolKind::Function { public: function.public },
                     );
                 }
-                Declaration::TypeDefinition(raw) => self.collect_type_definition(scope, &raw),
-                Declaration::TypeAlias(raw) => {
-                    if let Some(name) = type_name(&raw.source) {
-                        self.define(scope, &raw_name(&raw, name), Namespace::Type, SymbolKind::Type);
-                    }
+                Declaration::TypeDefinition(type_) => self.collect_type_definition(scope, &type_),
+                Declaration::TypeAlias(alias) => {
+                    self.define(scope, &alias.name, Namespace::Type, SymbolKind::Type);
                 }
                 _ => {}
             }
         }
     }
 
-    fn collect_type_definition(&mut self, scope: ScopeId, raw: &ast::RawSyntax) {
-        if let Some(name) = type_name(&raw.source) {
-            self.define(scope, &raw_name(raw, name), Namespace::Type, SymbolKind::Type);
-        }
-        for constructor in constructors(&raw.source) {
+    fn collect_type_definition(&mut self, scope: ScopeId, type_: &ast::TypeDefinition) {
+        self.define(scope, &type_.name, Namespace::Type, SymbolKind::Type);
+        for constructor in &type_.constructors {
             self.define(
                 scope,
-                &raw_name(raw, constructor),
+                &constructor.name,
                 Namespace::Constructor,
                 SymbolKind::Constructor,
             );
-        }
-        for field in fields(&raw.source) {
-            self.define(scope, &raw_name(raw, field), Namespace::Field, SymbolKind::Field);
+            for argument in &constructor.arguments {
+                if let Some(label) = &argument.label {
+                    self.define(scope, label, Namespace::Field, SymbolKind::Field);
+                }
+            }
         }
     }
 
@@ -347,9 +345,7 @@ impl Resolver {
             Expression::Variable(name) => self.resolve_name(scope, name),
             Expression::Call(call) => {
                 self.resolve_expression(scope, &call.function);
-                for argument in &call.arguments {
-                    self.resolve_expression(scope, &argument.value);
-                }
+                self.resolve_arguments(scope, &call.arguments);
             }
             Expression::FieldAccess(field_access) => self.resolve_field_access(scope, field_access),
             Expression::Block(block) => {
@@ -372,6 +368,82 @@ impl Resolver {
                     self.resolve_expression(clause_scope, &clause.value);
                 }
             }
+            Expression::BinaryOperation(operation) => {
+                self.resolve_expression(scope, &operation.left);
+                self.resolve_expression(scope, &operation.right);
+            }
+            Expression::Pipeline(pipeline) => {
+                self.resolve_expression(scope, &pipeline.value);
+                self.resolve_expression(scope, &pipeline.into);
+            }
+            Expression::UnaryOperation(operation) => self.resolve_expression(scope, &operation.value),
+            Expression::Use(use_) => {
+                let child = self.new_scope(Some(scope));
+                for assignment in &use_.assignments {
+                    self.bind_pattern(child, &assignment.pattern, SymbolKind::Local);
+                }
+                self.resolve_expression(child, &use_.value);
+            }
+            Expression::AnonymousFunction(function) => {
+                let child = self.new_scope(Some(scope));
+                for parameter in &function.parameters {
+                    if let Some(name) = &parameter.name {
+                        self.define(child, name, Namespace::Value, SymbolKind::Parameter);
+                    }
+                }
+                self.resolve_block(child, &function.body);
+            }
+            Expression::Capture(capture) => {
+                self.resolve_expression(scope, &capture.function);
+                for argument in capture.arguments.iter().flatten() {
+                    self.resolve_expression(scope, &argument.value);
+                }
+            }
+            Expression::Record(record) => self.resolve_arguments(scope, &record.arguments),
+            Expression::RecordUpdate(update) => {
+                self.resolve_expression(scope, &update.spread);
+                self.resolve_arguments(scope, &update.updates);
+            }
+            Expression::Tuple(tuple) => {
+                for element in &tuple.elements {
+                    self.resolve_expression(scope, element);
+                }
+            }
+            Expression::TupleAccess(access) => self.resolve_expression(scope, &access.tuple),
+            Expression::List(list) => {
+                for element in &list.elements {
+                    self.resolve_expression(scope, element);
+                }
+                if let Some(spread) = &list.spread {
+                    self.resolve_expression(scope, spread);
+                }
+            }
+            Expression::BitArray(bit_array) => {
+                for segment in &bit_array.segments {
+                    self.resolve_expression(scope, &segment.value);
+                    for option in &segment.options {
+                        if let Some(value) = &option.value {
+                            self.resolve_expression(scope, value);
+                        }
+                    }
+                }
+            }
+            Expression::Panic(failure) | Expression::Todo(failure) => {
+                if let Some(message) = &failure.message {
+                    self.resolve_expression(scope, message);
+                }
+            }
+            Expression::Assert(assert) => {
+                self.resolve_expression(scope, &assert.value);
+                self.bind_pattern(scope, &assert.pattern, SymbolKind::Local);
+            }
+            Expression::Echo(echo) => self.resolve_expression(scope, &echo.value),
+        }
+    }
+
+    fn resolve_arguments(&mut self, scope: ScopeId, arguments: &[ast::Argument]) {
+        for argument in arguments {
+            self.resolve_expression(scope, &argument.value);
         }
     }
 
@@ -614,72 +686,37 @@ fn module_interface(module: &ast::Module) -> ModuleInterface {
 
     for declaration in &module.declarations {
         match declaration {
-            Declaration::TypeDefinition(raw) => {
-                let public = raw.source.trim_start().starts_with("pub ");
-                if let Some(name) = type_name(&raw.source) {
-                    members.insert((Namespace::Type, name.into()), ModuleMember { public, span: raw.span });
-                }
-                for constructor in constructors(&raw.source) {
+            Declaration::TypeDefinition(type_) => {
+                members.insert(
+                    (Namespace::Type, type_.name.text.clone()),
+                    ModuleMember { public: type_.public, span: type_.span },
+                );
+                for constructor in &type_.constructors {
                     members.insert(
-                        (Namespace::Constructor, constructor.into()),
-                        ModuleMember { public, span: raw.span },
+                        (Namespace::Constructor, constructor.name.text.clone()),
+                        ModuleMember { public: type_.public, span: constructor.span },
                     );
-                }
-                for field in fields(&raw.source) {
-                    members.insert(
-                        (Namespace::Field, field.into()),
-                        ModuleMember { public, span: raw.span },
-                    );
+                    for argument in &constructor.arguments {
+                        if let Some(label) = &argument.label {
+                            members.insert(
+                                (Namespace::Field, label.text.clone()),
+                                ModuleMember { public: type_.public, span: label.span },
+                            );
+                        }
+                    }
                 }
             }
-            Declaration::TypeAlias(raw) => {
-                let public = raw.source.trim_start().starts_with("pub ");
-                if let Some(name) = type_name(&raw.source) {
-                    members.insert((Namespace::Type, name.into()), ModuleMember { public, span: raw.span });
-                }
+            Declaration::TypeAlias(alias) => {
+                members.insert(
+                    (Namespace::Type, alias.name.text.clone()),
+                    ModuleMember { public: alias.public, span: alias.span },
+                );
             }
             _ => {}
         }
     }
 
     ModuleInterface { members }
-}
-
-fn raw_name(raw: &ast::RawSyntax, name: &str) -> ast::Name {
-    ast::Name { span: raw.span, text: name.into() }
-}
-
-fn type_name(source: &str) -> Option<&str> {
-    let mut words = source
-        .split_whitespace()
-        .filter(|word| *word != "pub" && *word != "opaque");
-    if words.next()? != "type" {
-        return None;
-    }
-    words
-        .next()
-        .map(|word| word.split(['(', '{', '=']).next().unwrap_or(word))
-}
-
-fn constructors(source: &str) -> Vec<&str> {
-    let Some((_, body)) = source.split_once('{') else {
-        return Vec::new();
-    };
-    body.lines()
-        .filter_map(|line| {
-            let line = line.trim();
-            let name = line.split(['(', ' ', '}']).next().unwrap_or("");
-            name.chars().next().is_some_and(char::is_uppercase).then_some(name)
-        })
-        .collect()
-}
-
-fn fields(source: &str) -> Vec<&str> {
-    source
-        .split(['(', ',', ')'])
-        .filter_map(|part| part.trim().split_once(':').map(|(name, _)| name.trim()))
-        .filter(|name| !name.is_empty())
-        .collect()
 }
 
 #[cfg(test)]

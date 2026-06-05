@@ -34,6 +34,14 @@ TODO:
   - Running WebAssembly in Wasmtime and the browser
 - Compiler architecture from source to executable
 - Diagnostics and source spans
+- Abstract syntax trees as the compiler's source model
+  - Why compilers use an AST after parsing
+  - What information belongs in the AST, and what stays in the CST
+  - Walking from tree-sitter nodes to typed Rust data structures
+  - Using spans to connect compiler data back to source code
+  - Modeling declarations separately from executable expressions
+  - Representing nested expressions and patterns without losing order
+  - How AST design shapes later resolver, type checker, and IR code
 - Type checking and type inference
 - Lowering and intermediate representations
 - Runtime value representation

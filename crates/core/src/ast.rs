@@ -1,3 +1,5 @@
+pub mod bit_slices;
+
 use tree_sitter::Node;
 
 use crate::{
@@ -5,6 +7,8 @@ use crate::{
     parse::ConcreteSyntaxTree,
     source::{SourceFile, Span},
 };
+
+pub use bit_slices::{BitArray, BitArraySegment, BitArraySegmentOption};
 
 /// Compiler-owned AST module.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -19,13 +23,14 @@ pub struct Module {
 pub enum Declaration {
     Import(Import),
     Function(Function),
-    Constant(RawSyntax),
-    ExternalFunction(RawSyntax),
-    ExternalType(RawSyntax),
-    TypeAlias(RawSyntax),
-    TypeDefinition(RawSyntax),
-    Attribute(RawSyntax),
-    TargetGroup(RawSyntax),
+    Constant(Constant),
+    ExternalFunction(ExternalFunction),
+    ExternalType(ExternalType),
+    TypeAlias(TypeAlias),
+    TypeDefinition(TypeDefinition),
+    Attribute(Attribute),
+    TargetGroup(TargetGroup),
+    Comment(Comment),
     Statement(RawSyntax),
 }
 
@@ -35,6 +40,102 @@ pub struct Import {
     pub module: Name,
     pub alias: Option<Name>,
     pub unqualified: Vec<UnqualifiedImport>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Constant {
+    pub span: Span,
+    pub public: bool,
+    pub name: Name,
+    pub type_annotation: Option<TypeAnnotation>,
+    pub value: Expression,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExternalFunction {
+    pub span: Span,
+    pub public: bool,
+    pub name: Name,
+    pub parameters: Vec<Parameter>,
+    pub return_type: TypeAnnotation,
+    pub body: ExternalFunctionBody,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExternalFunctionBody {
+    pub span: Span,
+    pub module: Literal,
+    pub function: Literal,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExternalType {
+    pub span: Span,
+    pub public: bool,
+    pub opaque: bool,
+    pub name: Name,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TypeAlias {
+    pub span: Span,
+    pub public: bool,
+    pub opaque: bool,
+    pub name: Name,
+    pub parameters: Vec<String>,
+    pub value: TypeAnnotation,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TypeDefinition {
+    pub span: Span,
+    pub public: bool,
+    pub opaque: bool,
+    pub name: Name,
+    pub parameters: Vec<String>,
+    pub constructors: Vec<DataConstructor>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DataConstructor {
+    pub span: Span,
+    pub name: Name,
+    pub arguments: Vec<DataConstructorArgument>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DataConstructorArgument {
+    pub span: Span,
+    pub label: Option<Name>,
+    pub type_annotation: TypeAnnotation,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Attribute {
+    pub span: Span,
+    pub name: Name,
+    pub arguments: Vec<Argument>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TargetGroup {
+    pub span: Span,
+    pub target: Name,
+    pub declarations: Vec<Declaration>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Comment {
+    pub span: Span,
+    pub kind: CommentKind,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CommentKind {
+    Module,
+    Statement,
+    Regular,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -177,7 +278,53 @@ pub enum Expression {
     FieldAccess(FieldAccess),
     Block(Block),
     Case(Case),
+    BinaryOperation(BinaryOperation),
+    Pipeline(Pipeline),
+    UnaryOperation(UnaryOperation),
+    Use(Use),
+    AnonymousFunction(AnonymousFunction),
+    Capture(Capture),
+    Record(Record),
+    RecordUpdate(RecordUpdate),
+    Tuple(Tuple),
+    TupleAccess(TupleAccess),
+    List(List),
+    BitArray(BitArray),
+    Panic(FailureExpression),
+    Todo(FailureExpression),
+    Assert(Assert),
+    Echo(Echo),
     Raw(RawSyntax),
+}
+
+impl From<&Expression> for Span {
+    fn from(expression: &Expression) -> Self {
+        match expression {
+            Expression::Literal(literal) => literal.span,
+            Expression::Variable(name) => name.span,
+            Expression::Call(call) => call.span,
+            Expression::FieldAccess(field_access) => field_access.span,
+            Expression::Block(block) => block.span,
+            Expression::Case(case) => case.span,
+            Expression::BinaryOperation(operation) => operation.span,
+            Expression::Pipeline(pipeline) => pipeline.span,
+            Expression::UnaryOperation(operation) => operation.span,
+            Expression::Use(use_) => use_.span,
+            Expression::AnonymousFunction(function) => function.span,
+            Expression::Capture(capture) => capture.span,
+            Expression::Record(record) => record.span,
+            Expression::RecordUpdate(update) => update.span,
+            Expression::Tuple(tuple) => tuple.span,
+            Expression::TupleAccess(access) => access.span,
+            Expression::List(list) => list.span,
+            Expression::BitArray(bit_array) => bit_array.span,
+            Expression::Panic(panic) => panic.span,
+            Expression::Todo(todo) => todo.span,
+            Expression::Assert(assert) => assert.span,
+            Expression::Echo(echo) => echo.span,
+            Expression::Raw(raw) => raw.span,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -215,6 +362,144 @@ pub struct FieldAccess {
     pub span: Span,
     pub record: Box<Expression>,
     pub field: Name,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BinaryOperation {
+    pub span: Span,
+    pub left: Box<Expression>,
+    pub operator: BinaryOperator,
+    pub right: Box<Expression>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BinaryOperator {
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Remainder,
+    FloatAdd,
+    FloatSubtract,
+    FloatMultiply,
+    FloatDivide,
+    Equal,
+    NotEqual,
+    LessThan,
+    LessThanEqual,
+    GreaterThan,
+    GreaterThanEqual,
+    FloatLessThan,
+    FloatLessThanEqual,
+    FloatGreaterThan,
+    FloatGreaterThanEqual,
+    And,
+    Or,
+    StringConcat,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Pipeline {
+    pub span: Span,
+    pub value: Box<Expression>,
+    pub into: Box<Expression>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnaryOperation {
+    pub span: Span,
+    pub operator: UnaryOperator,
+    pub value: Box<Expression>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UnaryOperator {
+    BooleanNot,
+    IntegerNegate,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Use {
+    pub span: Span,
+    pub assignments: Vec<UseAssignment>,
+    pub value: Box<Expression>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UseAssignment {
+    pub span: Span,
+    pub pattern: Pattern,
+    pub type_annotation: Option<TypeAnnotation>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AnonymousFunction {
+    pub span: Span,
+    pub parameters: Vec<Parameter>,
+    pub return_type: Option<TypeAnnotation>,
+    pub body: Block,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Capture {
+    pub span: Span,
+    pub function: Box<Expression>,
+    pub arguments: Vec<Option<Argument>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Record {
+    pub span: Span,
+    pub constructor: ConstructorName,
+    pub arguments: Vec<Argument>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecordUpdate {
+    pub span: Span,
+    pub constructor: ConstructorName,
+    pub spread: Box<Expression>,
+    pub updates: Vec<Argument>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Tuple {
+    pub span: Span,
+    pub elements: Vec<Expression>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TupleAccess {
+    pub span: Span,
+    pub tuple: Box<Expression>,
+    pub index: Name,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct List {
+    pub span: Span,
+    pub elements: Vec<Expression>,
+    pub spread: Option<Box<Expression>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FailureExpression {
+    pub span: Span,
+    pub message: Option<Box<Expression>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Assert {
+    pub span: Span,
+    pub pattern: Pattern,
+    pub type_annotation: Option<TypeAnnotation>,
+    pub value: Box<Expression>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Echo {
+    pub span: Span,
+    pub value: Box<Expression>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -278,15 +563,178 @@ impl AstBuilder<'_> {
         match node.kind() {
             "import" => self.import(node).map(Declaration::Import),
             "function" => self.function(node).map(Declaration::Function),
-            "constant" => Ok(Declaration::Constant(self.raw(node))),
-            "external_function" => Ok(Declaration::ExternalFunction(self.raw(node))),
-            "external_type" => Ok(Declaration::ExternalType(self.raw(node))),
-            "type_alias" => Ok(Declaration::TypeAlias(self.raw(node))),
-            "type_definition" => Ok(Declaration::TypeDefinition(self.raw(node))),
-            "attribute" => Ok(Declaration::Attribute(self.raw(node))),
-            "target_group" => Ok(Declaration::TargetGroup(self.raw(node))),
+            "constant" => self.constant(node).map(Declaration::Constant),
+            "external_function" => self.external_function(node).map(Declaration::ExternalFunction),
+            "external_type" => self.external_type(node).map(Declaration::ExternalType),
+            "type_alias" => self.type_alias(node).map(Declaration::TypeAlias),
+            "type_definition" => self.type_definition(node).map(Declaration::TypeDefinition),
+            "attribute" => self.attribute(node).map(Declaration::Attribute),
+            "target_group" => self.target_group(node).map(Declaration::TargetGroup),
+            "module_comment" | "statement_comment" | "comment" => Ok(Declaration::Comment(self.comment(node))),
             _ => Ok(Declaration::Statement(self.raw(node))),
         }
+    }
+
+    fn constant(&self, node: Node<'_>) -> Result<Constant, Diagnostics> {
+        let value_node = node
+            .child_by_field_name("value")
+            .ok_or_else(|| vec![self.missing(node, "constant value")])?;
+        Ok(Constant {
+            span: self.span(node),
+            public: self.has_child_kind(node, "visibility_modifier"),
+            name: self.required_name_field(node, "name")?,
+            type_annotation: self.type_field(node, "type")?,
+            value: self.expression(value_node)?,
+        })
+    }
+
+    fn external_function(&self, node: Node<'_>) -> Result<ExternalFunction, Diagnostics> {
+        let return_type = self
+            .type_field(node, "return_type")?
+            .ok_or_else(|| vec![self.missing(node, "external function return type")])?;
+        let body_node = node
+            .child_by_field_name("body")
+            .ok_or_else(|| vec![self.missing(node, "external function body")])?;
+        Ok(ExternalFunction {
+            span: self.span(node),
+            public: self.has_child_kind(node, "visibility_modifier"),
+            name: self.required_name_field(node, "name")?,
+            parameters: node
+                .child_by_field_name("parameters")
+                .map(|parameters| self.parameters(parameters))
+                .transpose()?
+                .unwrap_or_default(),
+            return_type,
+            body: self.external_function_body(body_node)?,
+        })
+    }
+
+    fn external_function_body(&self, node: Node<'_>) -> Result<ExternalFunctionBody, Diagnostics> {
+        let strings = self
+            .named_children(node)
+            .into_iter()
+            .filter(|child| child.kind() == "string")
+            .map(|child| self.literal(child, LiteralKind::String))
+            .collect::<Vec<_>>();
+        let module = strings
+            .first()
+            .cloned()
+            .ok_or_else(|| vec![self.missing(node, "external module")])?;
+        let function = strings
+            .get(1)
+            .cloned()
+            .ok_or_else(|| vec![self.missing(node, "external function")])?;
+        Ok(ExternalFunctionBody { span: self.span(node), module, function })
+    }
+
+    fn external_type(&self, node: Node<'_>) -> Result<ExternalType, Diagnostics> {
+        Ok(ExternalType {
+            span: self.span(node),
+            public: self.has_child_kind(node, "visibility_modifier"),
+            opaque: self.has_child_kind(node, "opacity_modifier"),
+            name: self.required_named_child_as_name(node, "type_name")?,
+        })
+    }
+
+    fn type_alias(&self, node: Node<'_>) -> Result<TypeAlias, Diagnostics> {
+        let value_node = self
+            .named_children(node)
+            .into_iter()
+            .find(|child| is_type_node(child.kind()) && child.kind() != "type_name")
+            .ok_or_else(|| vec![self.missing(node, "type alias value")])?;
+        let name_node = self.required_named_child(node, "type_name")?;
+        Ok(TypeAlias {
+            span: self.span(node),
+            public: self.has_child_kind(node, "visibility_modifier"),
+            opaque: self.has_child_kind(node, "opacity_modifier"),
+            name: self.type_decl_name(name_node),
+            parameters: self.type_decl_parameters(name_node),
+            value: TypeAnnotation { span: self.span(value_node), source: self.text(value_node).to_string() },
+        })
+    }
+
+    fn type_definition(&self, node: Node<'_>) -> Result<TypeDefinition, Diagnostics> {
+        let constructors = self
+            .named_children(node)
+            .into_iter()
+            .find(|child| child.kind() == "data_constructors")
+            .map(|child| self.data_constructors(child))
+            .transpose()?
+            .unwrap_or_default();
+        let name_node = self.required_named_child(node, "type_name")?;
+        Ok(TypeDefinition {
+            span: self.span(node),
+            public: self.has_child_kind(node, "visibility_modifier"),
+            opaque: self.has_child_kind(node, "opacity_modifier"),
+            name: self.type_decl_name(name_node),
+            parameters: self.type_decl_parameters(name_node),
+            constructors,
+        })
+    }
+
+    fn data_constructors(&self, node: Node<'_>) -> Result<Vec<DataConstructor>, Diagnostics> {
+        self.named_children(node)
+            .into_iter()
+            .filter(|child| child.kind() == "data_constructor")
+            .map(|child| self.data_constructor(child))
+            .collect()
+    }
+
+    fn data_constructor(&self, node: Node<'_>) -> Result<DataConstructor, Diagnostics> {
+        let arguments = node
+            .child_by_field_name("arguments")
+            .map(|arguments| self.data_constructor_arguments(arguments))
+            .transpose()?
+            .unwrap_or_default();
+        Ok(DataConstructor { span: self.span(node), name: self.required_name_field(node, "name")?, arguments })
+    }
+
+    fn data_constructor_arguments(&self, node: Node<'_>) -> Result<Vec<DataConstructorArgument>, Diagnostics> {
+        self.named_children(node)
+            .into_iter()
+            .filter(|child| child.kind() == "data_constructor_argument")
+            .map(|child| {
+                let value = child
+                    .child_by_field_name("value")
+                    .ok_or_else(|| vec![self.missing(child, "constructor argument type")])?;
+                Ok(DataConstructorArgument {
+                    span: self.span(child),
+                    label: self.name_field(child, "label")?,
+                    type_annotation: TypeAnnotation { span: self.span(value), source: self.text(value).to_string() },
+                })
+            })
+            .collect()
+    }
+
+    fn attribute(&self, node: Node<'_>) -> Result<Attribute, Diagnostics> {
+        Ok(Attribute {
+            span: self.span(node),
+            name: self.required_name_field(node, "name")?,
+            arguments: node
+                .child_by_field_name("arguments")
+                .map(|arguments| self.arguments(arguments))
+                .transpose()?
+                .unwrap_or_default(),
+        })
+    }
+
+    fn target_group(&self, node: Node<'_>) -> Result<TargetGroup, Diagnostics> {
+        let declarations = self
+            .named_children(node)
+            .into_iter()
+            .filter(|child| child.kind() != "target")
+            .map(|child| self.declaration(child))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(TargetGroup { span: self.span(node), target: self.required_name_field(node, "target")?, declarations })
+    }
+
+    fn comment(&self, node: Node<'_>) -> Comment {
+        let kind = match node.kind() {
+            "module_comment" => CommentKind::Module,
+            "statement_comment" => CommentKind::Statement,
+            _ => CommentKind::Regular,
+        };
+        Comment { span: self.span(node), kind, text: self.text(node).to_string() }
     }
 
     fn import(&self, node: Node<'_>) -> Result<Import, Diagnostics> {
@@ -422,28 +870,77 @@ impl AstBuilder<'_> {
             "float" => Ok(Expression::Literal(self.literal(node, LiteralKind::Float))),
             "string" => Ok(Expression::Literal(self.literal(node, LiteralKind::String))),
             "identifier" => Ok(Expression::Variable(self.name(node))),
-            "record" => self.constructor_literal(node),
-            "function_call" => self.call(node).map(Expression::Call),
+            "record" => self.record(node),
+            "function_call" => self.call_or_capture(node),
             "field_access" => self.field_access(node).map(Expression::FieldAccess),
             "block" => self.block_like(node).map(Expression::Block),
             "case" => self.case(node).map(Expression::Case),
+            "binary_expression" => self.binary_expression(node),
+            "boolean_negation" => self.unary_expression(node, UnaryOperator::BooleanNot),
+            "integer_negation" => self.unary_expression(node, UnaryOperator::IntegerNegate),
+            "use" => self.use_expression(node).map(Expression::Use),
+            "anonymous_function" => self.anonymous_function(node).map(Expression::AnonymousFunction),
+            "record_update" => self.record_update(node).map(Expression::RecordUpdate),
+            "tuple" => self.tuple(node).map(Expression::Tuple),
+            "tuple_access" => self.tuple_access(node).map(Expression::TupleAccess),
+            "list" => self.list(node).map(Expression::List),
+            "bit_string" => self.bit_array(node).map(Expression::BitArray),
+            "panic" => self.failure_expression(node).map(Expression::Panic),
+            "todo" => self.failure_expression(node).map(Expression::Todo),
+            "assert" => self.assert_expression(node).map(Expression::Assert),
+            "echo" | "pipeline_echo" => self.echo_expression(node).map(Expression::Echo),
             _ => Ok(Expression::Raw(self.raw(node))),
         }
     }
 
-    fn constructor_literal(&self, node: Node<'_>) -> Result<Expression, Diagnostics> {
+    fn record(&self, node: Node<'_>) -> Result<Expression, Diagnostics> {
         let text = self.text(node).to_string();
         let kind = match text.as_str() {
-            "True" | "False" => LiteralKind::Bool,
-            "Nil" => LiteralKind::Nil,
-            _ => return Ok(Expression::Raw(self.raw(node))),
+            "True" | "False" => Some(LiteralKind::Bool),
+            "Nil" => Some(LiteralKind::Nil),
+            _ => None,
         };
+        if let Some(kind) = kind {
+            return Ok(Expression::Literal(Literal {
+                span: self.span(node),
+                kind,
+                source: text,
+            }));
+        }
 
-        Ok(Expression::Literal(Literal {
+        let name_node = node
+            .child_by_field_name("name")
+            .ok_or_else(|| vec![self.missing(node, "record name")])?;
+        let arguments = node
+            .child_by_field_name("arguments")
+            .map(|arguments| self.arguments(arguments))
+            .transpose()?
+            .unwrap_or_default();
+        Ok(Expression::Record(Record {
             span: self.span(node),
-            kind,
-            source: text,
+            constructor: self.constructor_name(name_node)?,
+            arguments,
         }))
+    }
+
+    fn call_or_capture(&self, node: Node<'_>) -> Result<Expression, Diagnostics> {
+        if self.text(node).contains('_') {
+            let call = self.call(node)?;
+            let arguments = call
+                .arguments
+                .into_iter()
+                .map(|argument| match argument.value {
+                    Expression::Variable(Name { text, .. }) if text == "_" => None,
+                    _ => Some(argument),
+                })
+                .collect();
+            return Ok(Expression::Capture(Capture {
+                span: call.span,
+                function: call.function,
+                arguments,
+            }));
+        }
+        self.call(node).map(Expression::Call)
     }
 
     fn call(&self, node: Node<'_>) -> Result<Call, Diagnostics> {
@@ -486,6 +983,221 @@ impl AstBuilder<'_> {
         let field = self.required_name_field(node, "field")?;
 
         Ok(FieldAccess { span: self.span(node), record: Box::new(self.expression(record_node)?), field })
+    }
+
+    fn binary_expression(&self, node: Node<'_>) -> Result<Expression, Diagnostics> {
+        let left = node
+            .child_by_field_name("left")
+            .ok_or_else(|| vec![self.missing(node, "left operand")])?;
+        let right = node
+            .child_by_field_name("right")
+            .ok_or_else(|| vec![self.missing(node, "right operand")])?;
+        let operator = node
+            .child_by_field_name("operator")
+            .ok_or_else(|| vec![self.missing(node, "operator")])?;
+        if self.text(operator) == "|>" {
+            return Ok(Expression::Pipeline(Pipeline {
+                span: self.span(node),
+                value: Box::new(self.expression(left)?),
+                into: Box::new(self.expression(right)?),
+            }));
+        }
+        Ok(Expression::BinaryOperation(BinaryOperation {
+            span: self.span(node),
+            left: Box::new(self.expression(left)?),
+            operator: self.binary_operator(operator)?,
+            right: Box::new(self.expression(right)?),
+        }))
+    }
+
+    fn binary_operator(&self, node: Node<'_>) -> Result<BinaryOperator, Diagnostics> {
+        match self.text(node) {
+            "+" => Ok(BinaryOperator::Add),
+            "-" => Ok(BinaryOperator::Subtract),
+            "*" => Ok(BinaryOperator::Multiply),
+            "/" => Ok(BinaryOperator::Divide),
+            "%" => Ok(BinaryOperator::Remainder),
+            "+." => Ok(BinaryOperator::FloatAdd),
+            "-." => Ok(BinaryOperator::FloatSubtract),
+            "*." => Ok(BinaryOperator::FloatMultiply),
+            "/." => Ok(BinaryOperator::FloatDivide),
+            "==" => Ok(BinaryOperator::Equal),
+            "!=" => Ok(BinaryOperator::NotEqual),
+            "<" => Ok(BinaryOperator::LessThan),
+            "<=" => Ok(BinaryOperator::LessThanEqual),
+            ">" => Ok(BinaryOperator::GreaterThan),
+            ">=" => Ok(BinaryOperator::GreaterThanEqual),
+            "<." => Ok(BinaryOperator::FloatLessThan),
+            "<=." => Ok(BinaryOperator::FloatLessThanEqual),
+            ">." => Ok(BinaryOperator::FloatGreaterThan),
+            ">=." => Ok(BinaryOperator::FloatGreaterThanEqual),
+            "&&" => Ok(BinaryOperator::And),
+            "||" => Ok(BinaryOperator::Or),
+            "<>" => Ok(BinaryOperator::StringConcat),
+            _ => Err(vec![self.unsupported(node)]),
+        }
+    }
+
+    fn unary_expression(&self, node: Node<'_>, operator: UnaryOperator) -> Result<Expression, Diagnostics> {
+        let value = self
+            .named_children(node)
+            .into_iter()
+            .next()
+            .ok_or_else(|| vec![self.missing(node, "unary operand")])?;
+        Ok(Expression::UnaryOperation(UnaryOperation {
+            span: self.span(node),
+            operator,
+            value: Box::new(self.expression(value)?),
+        }))
+    }
+
+    fn use_expression(&self, node: Node<'_>) -> Result<Use, Diagnostics> {
+        let assignments = node
+            .child_by_field_name("assignments")
+            .map(|assignments| self.use_assignments(assignments))
+            .transpose()?
+            .unwrap_or_default();
+        let value = node
+            .child_by_field_name("value")
+            .ok_or_else(|| vec![self.missing(node, "use value")])?;
+        Ok(Use { span: self.span(node), assignments, value: Box::new(self.expression(value)?) })
+    }
+
+    fn use_assignments(&self, node: Node<'_>) -> Result<Vec<UseAssignment>, Diagnostics> {
+        self.named_children(node)
+            .into_iter()
+            .filter(|child| child.kind() == "use_assignment")
+            .map(|child| {
+                let pattern = child
+                    .child_by_field_name("pattern")
+                    .ok_or_else(|| vec![self.missing(child, "use pattern")])?;
+                Ok(UseAssignment {
+                    span: self.span(child),
+                    pattern: self.pattern(pattern)?,
+                    type_annotation: self.type_field(child, "type")?,
+                })
+            })
+            .collect()
+    }
+
+    fn anonymous_function(&self, node: Node<'_>) -> Result<AnonymousFunction, Diagnostics> {
+        let body = node
+            .child_by_field_name("body")
+            .ok_or_else(|| vec![self.missing(node, "anonymous function body")])?;
+        Ok(AnonymousFunction {
+            span: self.span(node),
+            parameters: node
+                .child_by_field_name("parameters")
+                .map(|parameters| self.parameters(parameters))
+                .transpose()?
+                .unwrap_or_default(),
+            return_type: self.type_field(node, "return_type")?,
+            body: self.block_like(body)?,
+        })
+    }
+
+    fn record_update(&self, node: Node<'_>) -> Result<RecordUpdate, Diagnostics> {
+        let constructor = node
+            .child_by_field_name("constructor")
+            .ok_or_else(|| vec![self.missing(node, "record update constructor")])?;
+        let spread = node
+            .child_by_field_name("spread")
+            .ok_or_else(|| vec![self.missing(node, "record update spread")])?;
+        let updates = node
+            .child_by_field_name("arguments")
+            .map(|arguments| self.record_update_arguments(arguments))
+            .transpose()?
+            .unwrap_or_default();
+        Ok(RecordUpdate {
+            span: self.span(node),
+            constructor: self.constructor_name(constructor)?,
+            spread: Box::new(self.expression(spread)?),
+            updates,
+        })
+    }
+
+    fn record_update_arguments(&self, node: Node<'_>) -> Result<Vec<Argument>, Diagnostics> {
+        self.named_children(node)
+            .into_iter()
+            .filter(|child| child.kind() == "record_update_argument")
+            .map(|child| self.argument(child))
+            .collect()
+    }
+
+    fn tuple(&self, node: Node<'_>) -> Result<Tuple, Diagnostics> {
+        Ok(Tuple { span: self.span(node), elements: self.expression_children(node)? })
+    }
+
+    fn tuple_access(&self, node: Node<'_>) -> Result<TupleAccess, Diagnostics> {
+        let tuple = node
+            .child_by_field_name("tuple")
+            .or_else(|| self.named_children(node).into_iter().next())
+            .ok_or_else(|| vec![self.missing(node, "tuple value")])?;
+        let index = node
+            .child_by_field_name("index")
+            .or_else(|| {
+                self.named_children(node)
+                    .into_iter()
+                    .find(|child| child.kind() == "integer")
+            })
+            .ok_or_else(|| vec![self.missing(node, "tuple index")])?;
+        Ok(TupleAccess { span: self.span(node), tuple: Box::new(self.expression(tuple)?), index: self.name(index) })
+    }
+
+    fn list(&self, node: Node<'_>) -> Result<List, Diagnostics> {
+        let spread = node
+            .child_by_field_name("spread")
+            .map(|spread| self.expression(spread).map(Box::new))
+            .transpose()?;
+        let spread_span = spread.as_ref().map(|spread| Span::from(spread.as_ref()));
+        let elements = self
+            .named_children(node)
+            .into_iter()
+            .filter(|child| Some(self.span(*child)) != spread_span)
+            .map(|child| self.expression(child))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(List { span: self.span(node), elements, spread })
+    }
+
+    fn failure_expression(&self, node: Node<'_>) -> Result<FailureExpression, Diagnostics> {
+        Ok(FailureExpression {
+            span: self.span(node),
+            message: node
+                .child_by_field_name("message")
+                .map(|message| self.expression(message).map(Box::new))
+                .transpose()?,
+        })
+    }
+
+    fn assert_expression(&self, node: Node<'_>) -> Result<Assert, Diagnostics> {
+        let pattern = node
+            .child_by_field_name("pattern")
+            .ok_or_else(|| vec![self.missing(node, "assert pattern")])?;
+        let value = node
+            .child_by_field_name("value")
+            .ok_or_else(|| vec![self.missing(node, "assert value")])?;
+        Ok(Assert {
+            span: self.span(node),
+            pattern: self.pattern(pattern)?,
+            type_annotation: self.type_field(node, "type")?,
+            value: Box::new(self.expression(value)?),
+        })
+    }
+
+    fn echo_expression(&self, node: Node<'_>) -> Result<Echo, Diagnostics> {
+        let value = self
+            .named_children(node)
+            .into_iter()
+            .next()
+            .ok_or_else(|| vec![self.missing(node, "echo value")])?;
+        Ok(Echo { span: self.span(node), value: Box::new(self.expression(value)?) })
+    }
+
+    fn expression_children(&self, node: Node<'_>) -> Result<Vec<Expression>, Diagnostics> {
+        self.named_children(node)
+            .into_iter()
+            .map(|child| self.expression(child))
+            .collect()
     }
 
     fn case(&self, node: Node<'_>) -> Result<Case, Diagnostics> {
@@ -732,12 +1444,46 @@ impl AstBuilder<'_> {
     fn name_field(&self, node: Node<'_>, field: &str) -> Result<Option<Name>, Diagnostics> {
         node.child_by_field_name(field)
             .map(|child| match child.kind() {
-                "identifier" | "type_identifier" | "constructor_name" | "label" | "module" | "discard" => {
-                    Ok(self.name(child))
-                }
+                "identifier" | "type_identifier" | "constructor_name" | "label" | "module" | "discard"
+                | "type_name" | "target" | "integer" => Ok(self.name(child)),
                 _ => Err(vec![self.unsupported(child)]),
             })
             .transpose()
+    }
+
+    fn required_named_child<'tree>(&self, node: Node<'tree>, kind: &str) -> Result<Node<'tree>, Diagnostics> {
+        self.named_children(node)
+            .into_iter()
+            .find(|child| child.kind() == kind)
+            .ok_or_else(|| vec![self.missing(node, kind)])
+    }
+
+    fn required_named_child_as_name(&self, node: Node<'_>, kind: &str) -> Result<Name, Diagnostics> {
+        self.required_named_child(node, kind).map(|child| self.name(child))
+    }
+
+    fn type_decl_name(&self, node: Node<'_>) -> Name {
+        let text = self.text(node);
+        let end = text.find('(').unwrap_or(text.len());
+        Name {
+            span: Span::new(self.source.id, node.start_byte(), node.start_byte() + end),
+            text: text[..end].to_string(),
+        }
+    }
+
+    fn type_decl_parameters(&self, node: Node<'_>) -> Vec<String> {
+        self.text(node)
+            .split_once('(')
+            .and_then(|(_, rest)| rest.split_once(')').map(|(params, _)| params))
+            .map(|params| {
+                params
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|param| !param.is_empty())
+                    .map(String::from)
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     fn name(&self, node: Node<'_>) -> Name {
@@ -765,6 +1511,10 @@ impl AstBuilder<'_> {
         Span::new(self.source.id, node.start_byte(), node.end_byte())
     }
 
+    fn has_child_kind(&self, node: Node<'_>, kind: &str) -> bool {
+        self.named_children(node).into_iter().any(|child| child.kind() == kind)
+    }
+
     fn unsupported(&self, node: Node<'_>) -> Diagnostic {
         Diagnostic::new(
             DiagnosticCode::AstError,
@@ -782,6 +1532,13 @@ impl AstBuilder<'_> {
         let mut cursor = node.walk();
         node.children(&mut cursor).filter(|child| child.is_named()).collect()
     }
+}
+
+fn is_type_node(kind: &str) -> bool {
+    matches!(
+        kind,
+        "function_type" | "tuple_type" | "type" | "type_hole" | "type_name" | "type_var"
+    )
 }
 
 #[cfg(test)]

@@ -1,5 +1,6 @@
 ---
 source: crates/core/src/ast.rs
+assertion_line: 1553
 expression: "ast.functions[0].body.statements"
 ---
 [
@@ -213,8 +214,8 @@ expression: "ast.functions[0].body.statements"
                             ),
                         ],
                         guard: Some(
-                            Raw(
-                                RawSyntax {
+                            BinaryOperation(
+                                BinaryOperation {
                                     span: Span {
                                         file_id: SourceFileId(
                                             0,
@@ -222,8 +223,32 @@ expression: "ast.functions[0].body.statements"
                                         start: 254,
                                         end: 263,
                                     },
-                                    kind: "binary_expression",
-                                    source: "value > 0",
+                                    left: Variable(
+                                        Name {
+                                            span: Span {
+                                                file_id: SourceFileId(
+                                                    0,
+                                                ),
+                                                start: 254,
+                                                end: 259,
+                                            },
+                                            text: "value",
+                                        },
+                                    ),
+                                    operator: GreaterThan,
+                                    right: Literal(
+                                        Literal {
+                                            span: Span {
+                                                file_id: SourceFileId(
+                                                    0,
+                                                ),
+                                                start: 262,
+                                                end: 263,
+                                            },
+                                            kind: Int,
+                                            source: "0",
+                                        },
+                                    ),
                                 },
                             ),
                         ),

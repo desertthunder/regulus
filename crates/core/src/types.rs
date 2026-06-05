@@ -26,6 +26,24 @@ pub enum Type {
     Function { params: Vec<Type>, return_type: Box<Type> },
 }
 
+impl From<LiteralKind> for Type {
+    fn from(kind: LiteralKind) -> Self {
+        match kind {
+            LiteralKind::Int => Self::Int,
+            LiteralKind::Float => Self::Float,
+            LiteralKind::String => Self::String,
+            LiteralKind::Bool => Self::Bool,
+            LiteralKind::Nil => Self::Nil,
+        }
+    }
+}
+
+impl From<&LiteralKind> for Type {
+    fn from(kind: &LiteralKind) -> Self {
+        kind.clone().into()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FieldInfo {
     pub name: String,
@@ -174,7 +192,7 @@ impl TypeChecker {
         for declaration in self.module.ast.declarations.clone() {
             match declaration {
                 Declaration::TypeDefinition(raw) => {
-                    if let Some(type_declaration) = parse_type_definition(&raw) {
+                    if let Some(type_declaration) = type_definition_from_ast(&raw) {
                         for constructor in &type_declaration.constructors {
                             self.constructors.insert(constructor.name.clone(), constructor.clone());
                             self.interface
@@ -187,7 +205,7 @@ impl TypeChecker {
                     }
                 }
                 Declaration::TypeAlias(raw) => {
-                    if let Some(alias) = parse_type_alias(&raw) {
+                    if let Some(alias) = type_alias_from_ast(&raw) {
                         self.interface.types.insert(alias.name.clone(), alias);
                     }
                 }
@@ -304,13 +322,7 @@ impl TypeChecker {
 
     fn check_expression(&mut self, expression: &Expression) -> Option<Type> {
         let type_ = match expression {
-            Expression::Literal(literal) => match literal.kind {
-                LiteralKind::Int => Type::Int,
-                LiteralKind::Float => Type::Float,
-                LiteralKind::String => Type::String,
-                LiteralKind::Bool => Type::Bool,
-                LiteralKind::Nil => Type::Nil,
-            },
+            Expression::Literal(literal) => Type::from(&literal.kind),
             Expression::Variable(name) => self.lookup_name(name)?,
             Expression::Call(call) => {
                 let function_type = self.check_expression(&call.function)?;
@@ -358,6 +370,68 @@ impl TypeChecker {
                 self.pop_scope();
                 type_
             }
+            Expression::Tuple(tuple) => Type::Tuple(
+                tuple
+                    .elements
+                    .iter()
+                    .map(|element| self.check_expression(element))
+                    .collect::<Option<Vec<_>>>()?,
+            ),
+            Expression::List(list) => {
+                for element in &list.elements {
+                    self.check_expression(element)?;
+                }
+                if let Some(spread) = &list.spread {
+                    self.check_expression(spread)?;
+                }
+                Type::List(Box::new(Type::Int))
+            }
+            Expression::Record(record) => {
+                let name = constructor_name_text(&record.constructor);
+                let Some(constructor) = self.constructors.get(&name).cloned() else {
+                    self.diagnostics.push(
+                        Diagnostic::new(DiagnosticCode::TypeError, format!("unknown constructor `{name}`"))
+                            .with_label(Label::primary(record.span, "unknown constructor here")),
+                    );
+                    return None;
+                };
+                constructor.return_type
+            }
+            Expression::BitArray(_) => Type::BitArray,
+            Expression::Panic(_) | Expression::Todo(_) | Expression::Assert(_) => Type::Nil,
+            Expression::BinaryOperation(operation) => {
+                self.check_expression(&operation.left)?;
+                self.check_expression(&operation.right)?;
+                match operation.operator {
+                    ast::BinaryOperator::Equal
+                    | ast::BinaryOperator::NotEqual
+                    | ast::BinaryOperator::LessThan
+                    | ast::BinaryOperator::LessThanEqual
+                    | ast::BinaryOperator::GreaterThan
+                    | ast::BinaryOperator::GreaterThanEqual
+                    | ast::BinaryOperator::FloatLessThan
+                    | ast::BinaryOperator::FloatLessThanEqual
+                    | ast::BinaryOperator::FloatGreaterThan
+                    | ast::BinaryOperator::FloatGreaterThanEqual
+                    | ast::BinaryOperator::And
+                    | ast::BinaryOperator::Or => Type::Bool,
+                    ast::BinaryOperator::FloatAdd
+                    | ast::BinaryOperator::FloatSubtract
+                    | ast::BinaryOperator::FloatMultiply
+                    | ast::BinaryOperator::FloatDivide => Type::Float,
+                    _ => Type::Int,
+                }
+            }
+            Expression::Pipeline(pipeline) => {
+                self.check_expression(&pipeline.value)?;
+                self.check_expression(&pipeline.into)?
+            }
+            Expression::UnaryOperation(operation) => self.check_expression(&operation.value)?,
+            Expression::Use(use_) => self.check_expression(&use_.value)?,
+            Expression::AnonymousFunction(_) | Expression::Capture(_) => Type::Nil,
+            Expression::RecordUpdate(update) => self.check_expression(&update.spread)?,
+            Expression::TupleAccess(_) => Type::Int,
+            Expression::Echo(echo) => self.check_expression(&echo.value)?,
             Expression::Raw(raw) if raw.kind == "bit_string" => Type::BitArray,
             Expression::Raw(raw) if raw.kind == "tuple" => Type::Tuple(
                 raw.source
@@ -811,15 +885,14 @@ trait ExpressionSpan {
 
 impl ExpressionSpan for Expression {
     fn span(&self) -> Span {
-        match self {
-            Expression::Literal(literal) => literal.span,
-            Expression::Variable(name) => name.span,
-            Expression::Call(call) => call.span,
-            Expression::FieldAccess(field_access) => field_access.span,
-            Expression::Block(block) => block.span,
-            Expression::Case(case) => case.span,
-            Expression::Raw(raw) => raw.span,
-        }
+        Span::from(self)
+    }
+}
+
+fn constructor_name_text(name: &ast::ConstructorName) -> String {
+    match name {
+        ast::ConstructorName::Local(name) => name.text.clone(),
+        ast::ConstructorName::Remote { name, .. } => name.text.clone(),
     }
 }
 
@@ -940,7 +1013,7 @@ fn constructors_from_ast(module: &ast::Module) -> Vec<(String, ConstructorInfo)>
         .declarations
         .iter()
         .filter_map(|declaration| match declaration {
-            Declaration::TypeDefinition(raw) => parse_type_definition(raw),
+            Declaration::TypeDefinition(raw) => type_definition_from_ast(raw),
             _ => None,
         })
         .flat_map(|declaration| {
@@ -952,94 +1025,53 @@ fn constructors_from_ast(module: &ast::Module) -> Vec<(String, ConstructorInfo)>
         .collect()
 }
 
-fn parse_type_definition(raw: &ast::RawSyntax) -> Option<TypeDeclaration> {
-    let header = raw.source.split('{').next()?.trim();
-    let opaque = header.split_whitespace().any(|word| word == "opaque");
-    let name = type_decl_name(header)?.to_string();
-    let parameters = type_parameters(header);
-    let return_type = if opaque {
-        Type::Opaque { name: name.clone(), args: parameters.iter().cloned().map(Type::Generic).collect() }
+fn type_definition_from_ast(type_: &ast::TypeDefinition) -> Option<TypeDeclaration> {
+    let parameters = type_.parameters.clone();
+    let return_args = parameters.iter().cloned().map(Type::Generic).collect();
+    let return_type = if type_.opaque {
+        Type::Opaque { name: type_.name.text.clone(), args: return_args }
     } else {
-        Type::Custom { name: name.clone(), args: parameters.iter().cloned().map(Type::Generic).collect() }
+        Type::Custom { name: type_.name.text.clone(), args: return_args }
     };
-    let constructors = raw
-        .source
-        .split_once('{')?
-        .1
-        .lines()
-        .filter_map(|line| parse_constructor(line.trim(), &return_type, raw.span))
-        .collect::<Vec<_>>();
-
-    Some(TypeDeclaration { name, parameters, opaque, constructors, span: raw.span })
-}
-
-fn parse_type_alias(raw: &ast::RawSyntax) -> Option<TypeDeclaration> {
-    let header = raw.source.split('=').next()?.trim();
-    let name = type_decl_name(header)?.to_string();
+    let constructors = type_
+        .constructors
+        .iter()
+        .map(|constructor| ConstructorInfo {
+            name: constructor.name.text.clone(),
+            fields: constructor
+                .arguments
+                .iter()
+                .enumerate()
+                .map(|(index, argument)| FieldInfo {
+                    name: argument
+                        .label
+                        .as_ref()
+                        .map(|label| label.text.clone())
+                        .unwrap_or_else(|| format!("_{index}")),
+                    type_: parse_type_source(&argument.type_annotation.source).unwrap_or(Type::Nil),
+                })
+                .collect(),
+            return_type: return_type.clone(),
+            span: constructor.span,
+        })
+        .collect();
     Some(TypeDeclaration {
-        name,
-        parameters: type_parameters(header),
-        opaque: false,
-        constructors: Vec::new(),
-        span: raw.span,
+        name: type_.name.text.clone(),
+        parameters,
+        opaque: type_.opaque,
+        constructors,
+        span: type_.span,
     })
 }
 
-fn type_decl_name(header: &str) -> Option<&str> {
-    header
-        .split_whitespace()
-        .filter(|word| *word != "pub" && *word != "opaque" && *word != "type")
-        .next()
-        .map(|word| word.split(['(', '{', '=']).next().unwrap_or(word))
-}
-
-fn type_parameters(header: &str) -> Vec<String> {
-    let Some(params) = header
-        .split_once('(')
-        .and_then(|(_, rest)| rest.split_once(')').map(|(params, _)| params))
-    else {
-        return Vec::new();
-    };
-    params
-        .split(',')
-        .map(str::trim)
-        .filter(|param| !param.is_empty())
-        .map(String::from)
-        .collect()
-}
-
-fn parse_constructor(line: &str, return_type: &Type, span: Span) -> Option<ConstructorInfo> {
-    let line = line.trim_end_matches('}').trim();
-    if line.is_empty() || !line.chars().next().is_some_and(char::is_uppercase) {
-        return None;
-    }
-    let name = line.split(['(', ' ']).next()?.to_string();
-    let fields = match line
-        .split_once('(')
-        .and_then(|(_, rest)| rest.rsplit_once(')').map(|(fields, _)| fields))
-    {
-        Some(fields) => parse_fields(fields)?,
-        None => Vec::new(),
-    };
-    Some(ConstructorInfo { name, fields, return_type: return_type.clone(), span })
-}
-
-fn parse_fields(source: &str) -> Option<Vec<FieldInfo>> {
-    if source.trim().is_empty() {
-        return Some(Vec::new());
-    }
-    source
-        .split(',')
-        .enumerate()
-        .map(|(index, field)| {
-            let field = field.trim();
-            if let Some((name, type_)) = field.split_once(':') {
-                Some(FieldInfo { name: name.trim().into(), type_: parse_type_source(type_.trim())? })
-            } else {
-                Some(FieldInfo { name: format!("_{index}"), type_: parse_type_source(field)? })
-            }
-        })
-        .collect()
+fn type_alias_from_ast(alias: &ast::TypeAlias) -> Option<TypeDeclaration> {
+    Some(TypeDeclaration {
+        name: alias.name.text.clone(),
+        parameters: alias.parameters.clone(),
+        opaque: alias.opaque,
+        constructors: Vec::new(),
+        span: alias.span,
+    })
 }
 
 #[cfg(test)]
