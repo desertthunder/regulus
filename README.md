@@ -3,7 +3,7 @@
 Regulus ("Reggie") is an experimental Gleam to WebAssembly compiler written in
 Rust.
 
-<img src="./docs/src/assets/images/lucywasm.png" alt="Lucy WASM" width="250"/>
+<img src="./docs/src/favicon.png" alt="Regulus favicon" width="196"/>
 
 The compiler uses tree-sitter to parse Gleam source, builds compiler-owned data
 structures, and lowers a supported subset of Gleam to WAT and `.wasm`.
@@ -75,9 +75,9 @@ and explained.
 - [ ] Standard library and browser/WASI interop
       ([spec](./docs/src/internal/specs/11_stdlib_and_host_interop.md))
 
-For more detail, see the book in [`docs/src`](./docs/src/introduction.md) and
-the current supported subset in
-[`docs/src/internal/supported_subset.md`](./docs/src/internal/supported_subset.md).
+For more detail, see the book in [docs](./docs/src/introduction.md) and
+the current supported subset in the [supported subset](./docs/src/internal/supported_subset.md)
+page.
 
 ## Usage
 
