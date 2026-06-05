@@ -19,16 +19,25 @@ WAT and execute the bytes in Wasmtime.
 
 ## Runtime prelude
 
-Generated modules include a runtime prelude only when a runtime-managed value or
-helper is used. The prelude currently provides:
+Generated modules include the runtime prelude only when a runtime-managed value
+or helper is used. The prelude currently provides:
 
 - exported linear memory
 - a mutable bump-allocation heap pointer
 - `__alloc` for aligned allocation
-- panic traps
-- pointer equality
-- list construction
-- a placeholder bit-array append helper
+- byte and slot copy helpers
+- string construction, comparison, concatenation, and inspection
+- bit-array construction, append, slicing, bit access, and matching
+- list construction and deconstruction
+- tuple, record, custom, closure, opaque, error, and panic-value allocation
+- field access helpers
+- equality and ordering helpers
+- panic, assertion, match-failure, and debug helpers
+
+The prelude is not user code and it is not emitted for modules that only need
+plain scalar WebAssembly. Runtime helper snippets live in
+`crates/core/src/wasm/helpers.rs` and are inserted by the `RuntimePrelude`
+builder.
 
 Static managed literals are emitted as data segments before the dynamic heap.
 The object layout is documented in
@@ -57,12 +66,12 @@ Internal calls pass scalars as raw WebAssembly values and managed values as
 `i32` memory pointers. Public exports, module imports, and host imports are
 validated before emission. The current raw ABI supports:
 
-| Gleam type | WASM type |
-| --- | --- |
-| `Int` | `i64` |
-| `Float` | `f64` |
-| `Bool` | `i32` |
-| `Nil` | no result |
+| Gleam type     | WASM type     |
+| -------------- | ------------- |
+| `Int`          | `i64`         |
+| `Float`        | `f64`         |
+| `Bool`         | `i32`         |
+| `Nil`          | no result     |
 | managed values | `i32` pointer |
 
 Managed values can be exported directly for low-level Wasmtime tests. Safer

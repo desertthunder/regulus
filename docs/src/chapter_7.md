@@ -56,8 +56,34 @@ whose exports can be acquired and called.[^wasmtime]
 The backend currently emits deterministic WAT and binary `.wasm` for the
 supported IR subset. It handles functions, locals, scalar values, managed-value
 pointers, simple runtime helpers, direct and imported calls, branch control
-flow, pattern tests, exports, static data segments, and a linear memory prelude
-when runtime-managed values are used.
+flow, pattern tests, exports, static data segments, and a runtime prelude when
+runtime-managed values are used.
+
+## Runtime prelude
+
+A prelude is code inserted before the generated user functions. In this
+compiler, the runtime prelude is a WAT fragment that defines shared WebAssembly
+support used by managed values and helper operations.
+
+For example, when a module uses strings, lists, tuples, bit arrays, or panic
+paths, the backend emits memory, a heap pointer, allocation, and helper
+functions near the top of the module:
+
+```wat
+(module
+  ;; runtime prelude
+  (memory (export "memory") 1)
+  (global $__heap (mut i32) ...)
+  (func $__alloc ...)
+  (func $__string_new ...)
+
+  ;; generated Gleam functions
+  (func $main ...)
+)
+```
+
+The prelude is not source-level Gleam code. It is compiler-provided runtime
+support that generated WebAssembly can call.
 
 The target ABI is intentionally small. Scalars map directly to WebAssembly
 values:

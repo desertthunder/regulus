@@ -3,7 +3,7 @@
 Regulus ("Reggie") is an experimental Gleam to WebAssembly compiler written in
 Rust.
 
-<img src="./docs/src/favicon.png" alt="Regulus favicon" width="196"/>
+<img src="./docs/src/favicon.png" alt="Reggie" width="196"/>
 
 The compiler uses tree-sitter to parse Gleam source, builds compiler-owned data
 structures, and lowers a supported subset of Gleam to WAT and `.wasm`.
@@ -35,9 +35,7 @@ and explained.
 - [x] Emit WAT and assemble `.wasm`
 - [x] Execute exported scalar functions in Wasmtime tests
 - [ ] Compile full packages and dependencies
-      ([spec](./docs/src/internal/specs/01_project_model_and_modules.md))
 - [ ] Import type information from Gleam packages
-      ([spec](./docs/src/internal/specs/04_gleam_types_and_interfaces.md))
 
 ### Gleam language subset
 
@@ -50,14 +48,10 @@ and explained.
 - [x] Literal, binding, discard, and alias patterns in supported contexts
 - [x] Type declarations, aliases, constructors, fields, generics, and opaque
       type names in name resolution and type checking
-- [ ] Executable records, custom values, tuples, lists, and bit arrays
-      ([spec](./docs/src/internal/specs/07_core_ir_for_real_programs.md))
-- [ ] External functions and host imports
-      ([spec](./docs/src/internal/specs/11_stdlib_and_host_interop.md))
-- [ ] Advanced pattern matching over structured values
-      ([spec](./docs/src/internal/specs/06_pattern_matching.md))
-- [ ] Full generic type inference
-      ([spec](./docs/src/internal/specs/04_gleam_types_and_interfaces.md))
+- [x] Executable records, custom values, tuples, lists, and bit arrays
+- [x] External functions and host imports
+- [x] Advanced pattern matching over structured values
+- [x] Full generic type inference
 
 ### WebAssembly output
 
@@ -70,8 +64,7 @@ and explained.
 - [x] Bump allocation helper in the runtime prelude
 - [ ] Imported functions
       ([spec](./docs/src/internal/specs/11_stdlib_and_host_interop.md))
-- [ ] Runtime-managed records, lists, tuples, and custom values
-      ([spec](./docs/src/internal/specs/05_runtime_representation.md))
+- [x] Runtime-managed records, lists, tuples, and custom values
 - [ ] Standard library and browser/WASI interop
       ([spec](./docs/src/internal/specs/11_stdlib_and_host_interop.md))
 

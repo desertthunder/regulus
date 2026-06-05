@@ -17,14 +17,14 @@ Gleam language support.
 
 ### Runtime helpers
 
-- [ ] Implement dynamic allocation for all managed values.
-- [ ] Implement string helpers, including comparison, concatenation, and
+- [x] Implement dynamic allocation for all managed values.
+- [x] Implement string helpers, including comparison, concatenation, and
       inspection.
-- [ ] Implement bit-array helpers for construction, append, slicing, and
+- [x] Implement bit-array helpers for construction, append, slicing, and
       matching.
-- [ ] Implement list, tuple, record, custom-type, closure, equality, ordering,
+- [x] Implement list, tuple, record, custom-type, closure, equality, ordering,
       panic, assertion, and debug helpers.
-- [ ] Ensure runtime helpers are deterministic and target-independent where
+- [x] Ensure runtime helpers are deterministic and target-independent where
       possible.
 
 ### Code generation

@@ -1,3 +1,5 @@
+mod helpers;
+
 use std::{collections::HashMap, fmt::Write};
 
 use crate::diagnostic::{Diagnostic, DiagnosticCode, Diagnostics, Label};
@@ -805,61 +807,26 @@ impl RuntimePrelude {
     }
 
     fn alloc(&mut self, config: runtime::RuntimeConfig) {
-        let alignment_mask = config.layout.alignment - 1;
-
-        self.line("  (func $__alloc (param $size i32) (result i32)");
-        self.line("    (local $ptr i32)");
-        self.line("    global.get $__heap");
-        self.line("    local.set $ptr");
-        self.line("    global.get $__heap");
-        self.line("    local.get $size");
-        self.line("    i32.add");
-        self.line(format!("    i32.const {alignment_mask}"));
-        self.line("    i32.add");
-        self.line(format!("    i32.const -{}", config.layout.alignment));
-        self.line("    i32.and");
-        self.line("    global.set $__heap");
-        self.line("    local.get $ptr");
-        self.line("  )");
+        let helper = helpers::ALLOC_HELPER
+            .replace("{alignment_mask}", &(config.layout.alignment - 1).to_string())
+            .replace("{alignment}", &config.layout.alignment.to_string());
+        self.lines(&helper);
     }
 
     fn helpers(&mut self) {
-        self.line("  (func $__panic");
-        self.line("    unreachable");
-        self.line("  )");
-        self.line("  (func $__equal_ptr (param $left i32) (param $right i32) (result i32)");
-        self.line("    local.get $left");
-        self.line("    local.get $right");
-        self.line("    i32.eq");
-        self.line("  )");
-        self.line("  (func $__list_cons (param $head i64) (param $tail i32) (result i32)");
-        self.line("    (local $ptr i32)");
-        self.line("    i32.const 24");
-        self.line("    call $__alloc");
-        self.line("    local.set $ptr");
-        self.line("    local.get $ptr");
-        self.line("    i32.const 2");
-        self.line("    i32.store");
-        self.line("    local.get $ptr");
-        self.line("    i32.const 4");
-        self.line("    i32.add");
-        self.line("    i32.const 2");
-        self.line("    i32.store");
-        self.line("    local.get $ptr");
-        self.line("    i32.const 8");
-        self.line("    i32.add");
-        self.line("    local.get $head");
-        self.line("    i64.store");
-        self.line("    local.get $ptr");
-        self.line("    i32.const 16");
-        self.line("    i32.add");
-        self.line("    local.get $tail");
-        self.line("    i32.store");
-        self.line("    local.get $ptr");
-        self.line("  )");
-        self.line("  (func $__bit_array_append (param $left i32) (param $right i32) (result i32)");
-        self.line("    local.get $left");
-        self.line("  )");
+        self.lines(helpers::PANIC_HELPERS);
+        self.lines(helpers::COPY_HELPERS);
+        self.lines(helpers::STRING_HELPERS);
+        self.lines(helpers::BIT_ARRAY_HELPERS);
+        self.lines(helpers::MANAGED_VALUE_HELPERS);
+        self.lines(helpers::EQUALITY_AND_ORDERING_HELPERS);
+        self.lines(helpers::DEBUG_HELPERS);
+    }
+
+    fn lines(&mut self, block: &str) {
+        for line in block.trim_matches('\n').split('\n') {
+            self.line(line);
+        }
     }
 
     fn line(&mut self, line: impl AsRef<str>) {
@@ -1005,12 +972,9 @@ fn local_name(local: &ir::Local) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        ast, ir, parse, resolve,
-        runtime::ObjectTag,
-        source::{SourceFile, SourceFileId, Span},
-        types,
-    };
+    use crate::runtime::ObjectTag;
+    use crate::source::{SourceFile, SourceFileId, Span};
+    use crate::{ast, ir, parse, resolve, types};
     use wasmtime::{Engine, Instance, Linker, Module, Store};
 
     fn compile_wasm(source: &str) -> WasmModule {
@@ -1422,5 +1386,198 @@ pub fn boxed() { Box(42) }
         );
         assert_eq!(u32::from_le_bytes(bytes[4..8].try_into().unwrap()), 5);
         assert_eq!(&bytes[8..13], b"hello");
+    }
+
+    #[test]
+    fn runtime_helpers_allocate_strings_and_compare_concatenation() {
+        let instance = runtime_helper_instance(
+            r#"
+  (data (i32.const 2048) "ab")
+  (data (i32.const 2050) "cd")
+  (func $concat (export "concat") (result i32)
+    i32.const 2048
+    i32.const 2
+    call $__string_new
+    i32.const 2050
+    i32.const 2
+    call $__string_new
+    call $__string_concat)
+  (func $compare (export "compare") (result i32)
+    i32.const 2048
+    i32.const 2
+    call $__string_new
+    i32.const 2050
+    i32.const 2
+    call $__string_new
+    call $__string_compare)
+"#,
+        );
+        let (engine, mut store, instance) = instance;
+        let _engine = engine;
+        let concat = instance
+            .get_typed_func::<(), i32>(&mut store, "concat")
+            .expect("get concat export");
+        let pointer = concat.call(&mut store, ()).expect("call concat") as usize;
+        let memory = instance.get_memory(&mut store, "memory").expect("memory export");
+        let mut bytes = [0; 16];
+        memory.read(&store, pointer, &mut bytes).expect("read concat string");
+        assert_eq!(u32::from_le_bytes(bytes[4..8].try_into().unwrap()), 4);
+        assert_eq!(&bytes[8..12], b"abcd");
+
+        let compare = instance
+            .get_typed_func::<(), i32>(&mut store, "compare")
+            .expect("get compare export");
+        assert_eq!(compare.call(&mut store, ()).expect("call compare"), -1);
+    }
+
+    #[test]
+    fn runtime_helpers_allocate_and_append_bit_arrays() {
+        let instance = runtime_helper_instance(
+            r#"
+  (data (i32.const 2048) "\a0\c0")
+  (data (i32.const 2052) "\ac")
+  (func $append (export "append") (result i32)
+    i32.const 2048
+    i32.const 4
+    call $__bit_array_new
+    i32.const 2049
+    i32.const 4
+    call $__bit_array_new
+    call $__bit_array_append)
+  (func $matches (export "matches") (result i32)
+    call $append
+    i32.const 0
+    i32.const 2052
+    i32.const 8
+    call $__bit_array_new
+    call $__bit_array_match)
+"#,
+        );
+        let (engine, mut store, instance) = instance;
+        let _engine = engine;
+        let append = instance
+            .get_typed_func::<(), i32>(&mut store, "append")
+            .expect("get append export");
+        let pointer = append.call(&mut store, ()).expect("call append") as usize;
+        let memory = instance.get_memory(&mut store, "memory").expect("memory export");
+        let mut bytes = [0; 16];
+        memory.read(&store, pointer, &mut bytes).expect("read bit array");
+        assert_eq!(u32::from_le_bytes(bytes[4..8].try_into().unwrap()), 8);
+        assert_eq!(bytes[8], 0b1010_1100);
+
+        let matches = instance
+            .get_typed_func::<(), i32>(&mut store, "matches")
+            .expect("get matches export");
+        assert_eq!(matches.call(&mut store, ()).expect("call matches"), 1);
+    }
+
+    #[test]
+    fn runtime_helpers_allocate_managed_values_and_expose_debug_data() {
+        let instance = runtime_helper_instance(
+            r#"
+  (data (i32.const 2048) "\2a\00\00\00\00\00\00\00\2b\00\00\00\00\00\00\00")
+  (data (i32.const 2080) "\20\00\00\00")
+  (func $tuple (export "tuple") (result i32)
+    i32.const 2
+    i32.const 2048
+    call $__tuple_new)
+  (func $custom (export "custom") (result i32)
+    i32.const 99
+    i32.const 2
+    i32.const 2048
+    call $__custom_new)
+  (func $closure (export "closure") (result i32)
+    i32.const 7
+    i32.const 1
+    i32.const 2080
+    call $__closure_new)
+  (func $panic_value (export "panic_value") (result i32)
+    i32.const 3
+    i32.const 1
+    i32.const 2048
+    call $__panic_value_new)
+  (func $tuple_tag (export "tuple_tag") (result i32)
+    call $tuple
+    call $__debug_tag)
+  (func $tuple_first (export "tuple_first") (result i64)
+    call $tuple
+    i32.const 0
+    call $__field_load_i64)
+  (func $assert_ok (export "assert_ok")
+    i32.const 1
+    call $__assert)
+  (func $assert_fail (export "assert_fail")
+    i32.const 0
+    call $__assert)
+"#,
+        );
+        let (engine, mut store, instance) = instance;
+        let _engine = engine;
+        let tuple_tag = instance
+            .get_typed_func::<(), i32>(&mut store, "tuple_tag")
+            .expect("get tuple_tag export");
+        assert_eq!(tuple_tag.call(&mut store, ()).expect("call tuple_tag"), 3);
+
+        let tuple_first = instance
+            .get_typed_func::<(), i64>(&mut store, "tuple_first")
+            .expect("get tuple_first export");
+        assert_eq!(tuple_first.call(&mut store, ()).expect("call tuple_first"), 42);
+
+        let custom = instance
+            .get_typed_func::<(), i32>(&mut store, "custom")
+            .expect("get custom export");
+        let custom_pointer = custom.call(&mut store, ()).expect("call custom") as usize;
+        let memory = instance.get_memory(&mut store, "memory").expect("memory export");
+        let mut custom_bytes = [0; 32];
+        memory
+            .read(&store, custom_pointer, &mut custom_bytes)
+            .expect("read custom object");
+        assert_eq!(u32::from_le_bytes(custom_bytes[0..4].try_into().unwrap()), 5);
+        assert_eq!(u32::from_le_bytes(custom_bytes[8..12].try_into().unwrap()), 99);
+
+        let closure = instance
+            .get_typed_func::<(), i32>(&mut store, "closure")
+            .expect("get closure export");
+        let closure_pointer = closure.call(&mut store, ()).expect("call closure") as usize;
+        let mut closure_bytes = [0; 16];
+        memory
+            .read(&store, closure_pointer, &mut closure_bytes)
+            .expect("read closure object");
+        assert_eq!(u32::from_le_bytes(closure_bytes[0..4].try_into().unwrap()), 6);
+        assert_eq!(u32::from_le_bytes(closure_bytes[8..12].try_into().unwrap()), 7);
+        assert_eq!(u32::from_le_bytes(closure_bytes[12..16].try_into().unwrap()), 32);
+
+        let panic_value = instance
+            .get_typed_func::<(), i32>(&mut store, "panic_value")
+            .expect("get panic_value export");
+        let panic_pointer = panic_value.call(&mut store, ()).expect("call panic value") as usize;
+        let mut panic_bytes = [0; 24];
+        memory
+            .read(&store, panic_pointer, &mut panic_bytes)
+            .expect("read panic object");
+        assert_eq!(u32::from_le_bytes(panic_bytes[0..4].try_into().unwrap()), 10);
+        assert_eq!(u32::from_le_bytes(panic_bytes[8..12].try_into().unwrap()), 3);
+
+        let assert_ok = instance
+            .get_typed_func::<(), ()>(&mut store, "assert_ok")
+            .expect("get assert_ok export");
+        assert_ok.call(&mut store, ()).expect("assert ok");
+        let assert_fail = instance
+            .get_typed_func::<(), ()>(&mut store, "assert_fail")
+            .expect("get assert_fail export");
+        assert!(assert_fail.call(&mut store, ()).is_err());
+    }
+
+    fn runtime_helper_instance(extra_wat: &str) -> (Engine, Store<()>, Instance) {
+        let wat = format!(
+            "(module\n{}{extra_wat})\n",
+            runtime_prelude(runtime::RuntimeConfig::DEFAULT)
+        );
+        let bytes = wat::parse_str(&wat).expect("parse runtime helper wat");
+        let engine = Engine::default();
+        let module = Module::new(&engine, bytes).expect("compile helper module");
+        let mut store = Store::new(&engine, ());
+        let instance = Instance::new(&mut store, &module, &[]).expect("instantiate helper module");
+        (engine, store, instance)
     }
 }
