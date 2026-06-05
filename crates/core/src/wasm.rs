@@ -13,8 +13,40 @@ pub struct WasmModule {
     pub bytes: Vec<u8>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EmitOptions {
+    pub target: WasmTarget,
+}
+
+impl Default for EmitOptions {
+    fn default() -> Self {
+        Self { target: WasmTarget::Wasmtime }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WasmTarget {
+    Wasmtime,
+    Browser,
+    Wasi,
+}
+
+impl WasmTarget {
+    fn host_module(self) -> &'static str {
+        match self {
+            Self::Wasmtime => "env",
+            Self::Browser => "browser",
+            Self::Wasi => "wasi_snapshot_preview1",
+        }
+    }
+}
+
 pub fn emit(module: &ir::Module) -> Result<WasmModule, Diagnostics> {
-    let wat = emit_wat(module)?;
+    emit_with_options(module, EmitOptions::default())
+}
+
+pub fn emit_with_options(module: &ir::Module, options: EmitOptions) -> Result<WasmModule, Diagnostics> {
+    let wat = emit_wat_with_options(module, options)?;
     let bytes = wat::parse_str(&wat).map_err(|error| {
         vec![Diagnostic::new(
             DiagnosticCode::WasmError,
@@ -26,6 +58,10 @@ pub fn emit(module: &ir::Module) -> Result<WasmModule, Diagnostics> {
 }
 
 pub fn emit_wat(module: &ir::Module) -> Result<String, Diagnostics> {
+    emit_wat_with_options(module, EmitOptions::default())
+}
+
+pub fn emit_wat_with_options(module: &ir::Module, options: EmitOptions) -> Result<String, Diagnostics> {
     let mut emitter = Emitter {
         imports: String::new(),
         functions: String::new(),
@@ -55,6 +91,7 @@ pub fn emit_wat(module: &ir::Module) -> Result<String, Diagnostics> {
             })
             .collect(),
         current_scratch: None,
+        options,
     };
 
     for constant in &module.constants {
@@ -105,6 +142,7 @@ struct Emitter {
     function_order: Vec<String>,
     function_signatures: HashMap<String, (Vec<Type>, Type)>,
     current_scratch: Option<String>,
+    options: EmitOptions,
 }
 
 impl Emitter {
@@ -190,6 +228,34 @@ impl Emitter {
         self.block(&function.body);
         self.current_scratch = previous_scratch;
         self.functions.push_str("  )\n");
+        self.export_adapters(function);
+    }
+
+    fn export_adapters(&mut self, function: &ir::Function) {
+        if !matches!(function.abi.boundary, ir::CallBoundary::ModuleExport) {
+            return;
+        }
+        if function.params.is_empty() && function.return_type == Type::String {
+            self.uses_runtime = true;
+            writeln!(
+                self.functions,
+                "  (func ${}__data (export \"{}__data\") (result i32)",
+                function.name, function.name
+            )
+            .expect("write WAT");
+            writeln!(self.functions, "    call ${}", function.name).expect("write WAT");
+            writeln!(self.functions, "    call $__string_data").expect("write WAT");
+            self.functions.push_str("  )\n");
+            writeln!(
+                self.functions,
+                "  (func ${}__len (export \"{}__len\") (result i32)",
+                function.name, function.name
+            )
+            .expect("write WAT");
+            writeln!(self.functions, "    call ${}", function.name).expect("write WAT");
+            writeln!(self.functions, "    call $__string_len").expect("write WAT");
+            self.functions.push_str("  )\n");
+        }
     }
 
     fn block(&mut self, block: &ir::Block) {
@@ -872,8 +938,12 @@ impl Emitter {
     }
 
     fn validate_host_abi(&mut self, function: &ir::Function) -> bool {
-        match function.abi.boundary {
+        match &function.abi.boundary {
             ir::CallBoundary::Internal => return true,
+            ir::CallBoundary::HostImport { module, .. } if module != self.options.target.host_module() => {
+                self.unsupported_target_import(module, function.span, &function.name);
+                return false;
+            }
             ir::CallBoundary::ModuleExport
             | ir::CallBoundary::ModuleImport { .. }
             | ir::CallBoundary::HostImport { .. } => {}
@@ -891,6 +961,20 @@ impl Emitter {
             supported = false;
         }
         supported
+    }
+
+    fn unsupported_target_import(&mut self, module: &str, span: crate::source::Span, function: &str) {
+        self.diagnostics.push(
+            Diagnostic::new(
+                DiagnosticCode::WasmError,
+                format!(
+                    "function `{function}` imports host module `{module}`, but target {:?} expects `{}`",
+                    self.options.target,
+                    self.options.target.host_module()
+                ),
+            )
+            .with_label(Label::primary(span, "unsupported target import here")),
+        );
     }
 
     fn unsupported_abi_type(&mut self, type_: &Type, span: crate::source::Span, function: &str) {
@@ -1289,6 +1373,38 @@ mod tests {
             .expect("get main export");
 
         assert_eq!(main.call(&mut store, ()).expect("call main"), 42);
+    }
+
+    #[test]
+    fn emits_string_export_adapters_for_host_boundaries() {
+        let wasm = compile_wasm("pub fn greeting() { \"hello\" }");
+
+        assert!(wasm.wat.contains("(func $greeting__data (export \"greeting__data\")"));
+        assert!(wasm.wat.contains("(func $greeting__len (export \"greeting__len\")"));
+    }
+
+    #[test]
+    fn keeps_generated_wat_and_wasm_deterministic() {
+        let source = "pub fn add(x: Int) -> Int { x + 1 }";
+        let first = compile_wasm(source);
+        let second = compile_wasm(source);
+
+        assert_eq!(first.wat, second.wat);
+        assert_eq!(first.bytes, second.bytes);
+    }
+
+    #[test]
+    fn rejects_host_imports_for_the_wrong_target_before_assembly() {
+        let span = Span::new(SourceFileId(0), 0, 0);
+        let module = host_import_module(span);
+        let diagnostics = emit_wat_with_options(&module, EmitOptions { target: WasmTarget::Browser })
+            .expect_err("unsupported target import");
+
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| { diagnostic.message.contains("target Browser expects `browser`") })
+        );
     }
 
     #[test]

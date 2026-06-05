@@ -8,13 +8,14 @@ Make the CLI compile projects and produce useful artifacts.
 
 ### Commands and inputs
 
-- [ ] Add project compile command using `gleam.toml`.
+- [ ] Add project compile command using `gleam.toml` that emits linked Wasm.
 - [x] Keep single-file compilation available for tests and examples.
 - [x] Add output path configuration.
 - [x] Add target selection for supported runtimes: Wasmtime, browser, and WASI
       where implemented.
 - [ ] Add package/dependency discovery flags or configuration once dependency
       metadata is supported.
+- [ ] Load enough dependency metadata for project compile inputs.
 - [x] Return useful exit codes for success, diagnostics, and command misuse.
 
 ### Artifacts
@@ -24,6 +25,7 @@ Make the CLI compile projects and produce useful artifacts.
 - [x] Add optional AST, resolved AST, typed output, and IR debug dumps.
 - [ ] Add optional runtime layout and ABI debug output where helpful.
 - [ ] Keep generated artifact names deterministic for multi-module projects.
+- [ ] Link multi-module project output in dependency order.
 - [ ] Avoid writing partial final artifacts after a failed compile unless the
       user explicitly requested debug dumps.
 

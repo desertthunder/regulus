@@ -22,10 +22,17 @@ The host ABI should define how values cross the WASM boundary:
 - strings
 - lists and tuples
 - custom types
+- functions and closures
 - errors and panics
 - memory ownership
+- arbitrary managed-value import/export wrappers
+
+Browser and WASI adapters should be concrete, not just target names. Each target
+should document required imports, exports, memory access rules, and unsupported
+combinations.
 
 ## Diagnostics
 
-Unsupported standard library modules or host calls should produce clear
-diagnostics rather than failing during WASM assembly.
+Unsupported stdlib modules, dependency modules, host calls, ABI shapes, or
+target combinations should produce clear diagnostics rather than failing during
+WASM assembly.

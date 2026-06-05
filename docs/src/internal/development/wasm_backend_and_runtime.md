@@ -67,7 +67,18 @@ letting WAT assembly fail.
 
 Internal calls pass scalars as raw WebAssembly values and managed values as
 `i32` memory pointers. Public exports, module imports, and host imports are
-validated before emission. The current raw ABI supports:
+validated before emission. The backend supports explicit target selection for
+Wasmtime, browser, and WASI-oriented modules.
+
+Host imports must use the target's host module name:
+
+| Target | Host module |
+| --- | --- |
+| Wasmtime | `env` |
+| Browser | `browser` |
+| WASI | `wasi_snapshot_preview1` |
+
+The current raw ABI supports:
 
 | Gleam type     | WASM type     |
 | -------------- | ------------- |
@@ -77,6 +88,11 @@ validated before emission. The current raw ABI supports:
 | `Nil`          | no result     |
 | managed values | `i32` pointer |
 
-Managed values can be exported directly for low-level Wasmtime tests. Safer
+Managed values can be exported directly for low-level Wasmtime tests. String
+exports with no parameters also get `__data` and `__len` adapter exports so host
+code can read the string payload without duplicating the call shape. Safer
 browser or user-facing APIs should use adapters that read or write memory using
 the documented object layout.
+
+Unsupported target/import/type combinations produce `WasmError` diagnostics
+before WAT assembly.

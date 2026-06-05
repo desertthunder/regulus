@@ -73,6 +73,7 @@ TODO:
   - [Pattern matching](internal/development/pattern_matching.md)
   - [Core IR](internal/development/core_ir_for_real_programs.md)
   - [WASM backend and runtime](internal/development/wasm_backend_and_runtime.md)
+  - [Backend completeness](internal/development/wasm_backend_completeness.md)
 
 <!--
 TODO:
@@ -85,10 +86,14 @@ TODO:
 # Internal Docs
 
 - [Specs]()
-  - [WASM backend completeness](internal/specs/10_wasm_backend_completeness.md)
-  - [Stdlib and host interop](internal/specs/11_stdlib_and_host_interop.md)
-  - [CLI and build outputs](internal/specs/12_cli_and_build_outputs.md)
+  - [Type inference](internal/specs/11_type_and_generic_inference.md)
+  - [Runtime memory](internal/specs/12_runtime_memory_and_semantics.md)
+  - [Language semantics](internal/specs/13_remaining_language_semantics.md)
+  - [Stdlib and host interop](internal/specs/14_stdlib_and_host_interop.md)
+  - [CLI and build outputs](internal/specs/15_cli_and_build_outputs.md)
 - [Active tasks]()
-  - [WASM backend completeness](internal/tasks/10_wasm_backend_completeness.md)
-  - [Stdlib and host interop](internal/tasks/11_stdlib_and_host_interop.md)
-  - [CLI and build outputs](internal/tasks/12_cli_and_build_outputs.md)
+  - [Type inference](internal/tasks/11_type_and_generic_inference.md)
+  - [Runtime memory](internal/tasks/12_runtime_memory_and_semantics.md)
+  - [Language semantics](internal/tasks/13_remaining_language_semantics.md)
+  - [Stdlib and host interop](internal/tasks/14_stdlib_and_host_interop.md)
+  - [CLI and build outputs](internal/tasks/15_cli_and_build_outputs.md)

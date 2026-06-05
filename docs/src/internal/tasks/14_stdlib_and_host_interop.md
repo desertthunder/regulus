@@ -21,15 +21,15 @@ Support useful standard library modules and host calls.
 
 ### Host ABI
 
-- [ ] Define host imports for Wasmtime, browser, and WASI targets where
-      supported.
+- [ ] Define concrete host imports and adapters for Wasmtime, browser, and WASI
+      targets where supported.
 - [ ] Define ABI rules for scalar values, strings, bit arrays, lists, tuples,
       records, custom types, functions, errors, and panics.
 - [ ] Define ownership rules for managed values crossing the host boundary.
 - [ ] Define how host code reads compiler memory and how compiler code receives
       host-provided managed values.
-- [ ] Add wrappers or adapter functions for ABI shapes that do not map directly
-      to raw WASM parameters and results.
+- [ ] Add rich managed-value wrappers or adapter functions for ABI shapes that
+      do not map directly to raw WASM parameters and results.
 
 ### Intrinsics and host calls
 
@@ -37,8 +37,8 @@ Support useful standard library modules and host calls.
 - [ ] Implement or import IO functions for Wasmtime tests and browser examples.
 - [ ] Implement equality, string, bit-array, list, result, option, and debug
       helpers where needed by compiled programs.
-- [ ] Ensure host imports are target-specific and produce diagnostics on targets
-      where they are unavailable.
+- [ ] Ensure host imports and adapters are target-specific and produce
+      diagnostics on targets where they are unavailable.
 - [ ] Add Wasmtime tests for host imported functions.
 - [ ] Add fixtures using common Gleam stdlib modules.
 

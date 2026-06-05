@@ -5,8 +5,9 @@ tests, and contributors inspecting the compiler.
 
 ## Responsibilities
 
-- Compile a Gleam project from `gleam.toml`.
+- Compile a Gleam project from `gleam.toml` into linked Wasm output.
 - Compile single files for small tests and examples.
+- Discover package/dependency metadata needed for project compilation.
 - Write `.wasm` output.
 - Optionally write WAT, AST, resolved AST, typed output, and IR dumps.
 - Choose target settings such as Wasmtime, browser, or WASI where supported.
@@ -17,8 +18,8 @@ tests, and contributors inspecting the compiler.
 
 Suggested outputs:
 
-- `module.wasm`
-- `module.wat`
+- deterministic project and module `.wasm` files
+- deterministic project and module `.wat` files
 - debug dumps under a configurable directory
 - test snapshots for compiler-owned representations
 
