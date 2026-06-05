@@ -1,5 +1,7 @@
 # Summary
 
+# The Book
+
 - [Introduction](./introduction.md)
 - [The Gleam Programming Language](./chapter_1.md)
   - [Modules, imports, and packages](./chapter_1/mods_imports_pkgs.md)

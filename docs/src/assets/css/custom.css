@@ -1,25 +1,25 @@
 @font-face {
-  font-family: "Switzer";
-  src: url("../../../assets/fonts/Switzer-Variable.woff2") format("woff2");
-  font-weight: 100 900;
-  font-style: normal;
-  font-display: swap;
+    font-family: "Switzer";
+    src: url("../../../assets/fonts/Switzer-Variable.woff2") format("woff2");
+    font-weight: 100 900;
+    font-style: normal;
+    font-display: swap;
 }
 
 @font-face {
-  font-family: "Switzer";
-  src: url("../../../assets/fonts/Switzer-VariableItalic.woff2") format("woff2");
-  font-weight: 100 900;
-  font-style: italic;
-  font-display: swap;
+    font-family: "Switzer";
+    src: url("../../../assets/fonts/Switzer-VariableItalic.woff2") format("woff2");
+    font-weight: 100 900;
+    font-style: italic;
+    font-display: swap;
 }
 
 @font-face {
-  font-family: "Outfit";
-  src: url("../../../assets/fonts/Outfit-Variable.woff2") format("woff2");
-  font-weight: 100 900;
-  font-style: normal;
-  font-display: swap;
+    font-family: "Outfit";
+    src: url("../../../assets/fonts/Outfit-Variable.woff2") format("woff2");
+    font-weight: 100 900;
+    font-style: normal;
+    font-display: swap;
 }
 
 :root,
@@ -28,45 +28,45 @@
 .ayu,
 .light,
 .rust {
-  --book-sidebar-bg: #151515;
-  --book-main-bg: #1e1e1e;
-  --book-accent: #ffaff3;
-  --book-text: #fefefc;
+    --book-sidebar-bg: #151515;
+    --book-main-bg: #1e1e1e;
+    --book-accent: #ffaff3;
+    --book-text: #fefefc;
 
-  --bg: var(--book-main-bg);
-  --fg: var(--book-text);
-  --sidebar-bg: var(--book-sidebar-bg);
-  --sidebar-fg: var(--book-text);
-  --sidebar-non-existant: rgba(254, 254, 252, 0.45);
-  --sidebar-active: var(--book-accent);
-  --sidebar-spacer: rgba(254, 254, 252, 0.12);
-  --scrollbar: rgba(255, 175, 243, 0.45);
-  --icons: var(--book-text);
-  --icons-hover: var(--book-accent);
-  --links: var(--book-accent);
-  --inline-code-color: var(--book-accent);
-  --theme-popup-bg: var(--book-sidebar-bg);
-  --theme-popup-border: var(--book-accent);
-  --theme-hover: rgba(255, 175, 243, 0.16);
-  --quote-bg: rgba(255, 175, 243, 0.08);
-  --quote-border: var(--book-accent);
-  --table-border-color: rgba(254, 254, 252, 0.18);
-  --table-header-bg: var(--book-sidebar-bg);
-  --table-alternate-bg: rgba(21, 21, 21, 0.35);
-  --searchbar-border-color: rgba(255, 175, 243, 0.4);
-  --searchbar-bg: var(--book-sidebar-bg);
-  --searchbar-fg: var(--book-text);
-  --searchresults-header-fg: var(--book-text);
-  --searchresults-border-color: rgba(254, 254, 252, 0.16);
-  --searchresults-li-bg: var(--book-main-bg);
-  --search-mark-bg: rgba(255, 175, 243, 0.3);
+    --bg: var(--book-main-bg);
+    --fg: var(--book-text);
+    --sidebar-bg: var(--book-sidebar-bg);
+    --sidebar-fg: var(--book-text);
+    --sidebar-non-existant: rgba(254, 254, 252, 0.45);
+    --sidebar-active: var(--book-accent);
+    --sidebar-spacer: rgba(254, 254, 252, 0.12);
+    --scrollbar: rgba(255, 175, 243, 0.45);
+    --icons: var(--book-text);
+    --icons-hover: var(--book-accent);
+    --links: var(--book-accent);
+    --inline-code-color: var(--book-accent);
+    --theme-popup-bg: var(--book-sidebar-bg);
+    --theme-popup-border: var(--book-accent);
+    --theme-hover: rgba(255, 175, 243, 0.16);
+    --quote-bg: rgba(255, 175, 243, 0.08);
+    --quote-border: var(--book-accent);
+    --table-border-color: rgba(254, 254, 252, 0.18);
+    --table-header-bg: var(--book-sidebar-bg);
+    --table-alternate-bg: rgba(21, 21, 21, 0.35);
+    --searchbar-border-color: rgba(255, 175, 243, 0.4);
+    --searchbar-bg: var(--book-sidebar-bg);
+    --searchbar-fg: var(--book-text);
+    --searchresults-header-fg: var(--book-text);
+    --searchresults-border-color: rgba(254, 254, 252, 0.16);
+    --searchresults-li-bg: var(--book-main-bg);
+    --search-mark-bg: rgba(255, 175, 243, 0.3);
 }
 
 html,
 body {
-  background: var(--book-main-bg);
-  color: var(--book-text);
-  font-family: "Switzer", system-ui, sans-serif;
+    background: var(--book-main-bg);
+    color: var(--book-text);
+    font-family: "Switzer", system-ui, sans-serif;
 }
 
 body,
@@ -74,7 +74,7 @@ body,
 #content,
 .page,
 .page-wrapper {
-  background: var(--book-main-bg);
+    background: var(--book-main-bg);
 }
 
 .sidebar,
@@ -84,14 +84,14 @@ body,
 #menu-bar,
 .menu-bar,
 .nav-chapters {
-  background: var(--book-sidebar-bg);
-  color: var(--book-text);
+    background: var(--book-sidebar-bg);
+    color: var(--book-text);
 }
 
 .content main {
-  color: var(--book-text);
-  font-family: "Switzer", system-ui, sans-serif;
-  font-size: 18px;
+    color: var(--book-text);
+    font-family: "Switzer", system-ui, sans-serif;
+    font-size: 16px;
 }
 
 h1,
@@ -103,10 +103,10 @@ h6,
 .header,
 .chapter li.part-title,
 .menu-title {
-  color: var(--book-text);
-  font-family: "Outfit", "Switzer", system-ui, sans-serif;
-  letter-spacing: -0.01em;
-  font-weight: 500;
+    color: var(--book-text);
+    font-family: "Outfit", "Switzer", system-ui, sans-serif;
+    letter-spacing: -0.01em;
+    font-weight: 500;
 }
 
 a,
@@ -116,32 +116,32 @@ a:visited,
 .chapter li a:hover,
 .menu-title,
 .nav-chapters:hover {
-  color: var(--book-accent);
+    color: var(--book-accent);
 }
 
 .icon-button:hover,
 .icon-button:focus,
 #sidebar-toggle:hover,
 #sidebar-toggle:focus {
-  color: var(--book-accent);
-  background: rgba(255, 175, 243, 0.12);
+    color: var(--book-accent);
+    background: rgba(255, 175, 243, 0.12);
 }
 
 code,
 pre,
 .hljs {
-  background: var(--book-sidebar-bg);
-  color: var(--book-text);
+    background: var(--book-sidebar-bg);
+    color: var(--book-text);
 }
 
 :not(pre) > code {
-  color: var(--book-accent);
-  background: rgba(21, 21, 21, 0.7);
+    color: var(--book-accent);
+    background: rgba(21, 21, 21, 0.7);
 }
 
 blockquote {
-  background: rgba(255, 175, 243, 0.08);
-  border-color: var(--book-accent);
+    background: rgba(255, 175, 243, 0.08);
+    border-color: var(--book-accent);
 }
 
 /*
@@ -158,72 +158,72 @@ blockquote {
    TODO: give this its own file (tufte-note.css?) and import it
 */
 .content main {
-  counter-reset: sidenote-counter;
+    counter-reset: sidenote-counter;
 }
 
 .sidenote,
 .marginnote {
-  clear: right;
-  float: right;
-  width: 16rem;
-  margin-right: -18rem;
-  margin-bottom: 0.7rem;
-  color: rgba(254, 254, 252, 0.78);
-  font-size: 12px;
-  line-height: 1.35;
+    clear: right;
+    float: right;
+    width: 16rem;
+    margin-right: -18rem;
+    margin-bottom: 0.7rem;
+    color: rgba(254, 254, 252, 0.78);
+    font-size: 12px;
+    line-height: 1.35;
 }
 
 .footnote-definition,
 .footnote-definition p {
-  font-size: 15px;
-  line-height: 1.4;
+    font-size: 15px;
+    line-height: 1.4;
 }
 
 .sidenote-number {
-  counter-increment: sidenote-counter;
+    counter-increment: sidenote-counter;
 }
 
 .sidenote::before,
 .sidenote-number::after {
-  color: var(--book-accent);
-  content: counter(sidenote-counter);
-  font-feature-settings: "sups";
-  font-size: 0.75rem;
-  vertical-align: super;
+    color: var(--book-accent);
+    content: counter(sidenote-counter);
+    font-feature-settings: "sups";
+    font-size: 0.75rem;
+    vertical-align: super;
 }
 
 .sidenote::before {
-  margin-right: 0.35rem;
+    margin-right: 0.35rem;
 }
 
 .sidenote-number::after {
-  cursor: pointer;
-  margin-left: 0.15rem;
+    cursor: pointer;
+    margin-left: 0.15rem;
 }
 
 .margin-toggle {
-  display: none;
+    display: none;
 }
 
 .marginnote code,
 .sidenote code {
-  font-size: 0.75rem;
+    font-size: 0.75rem;
 }
 
 @media (max-width: 1200px) {
-  .sidenote,
-  .marginnote {
-    float: none;
-    width: auto;
-    margin: 0.7rem 0;
-    padding: 0.75rem 1rem;
-    background: rgba(255, 175, 243, 0.08);
-    border-left: 0.18rem solid var(--book-accent);
-  }
+    .sidenote,
+    .marginnote {
+        float: none;
+        width: auto;
+        margin: 0.7rem 0;
+        padding: 0.75rem 1rem;
+        background: rgba(255, 175, 243, 0.08);
+        border-left: 0.18rem solid var(--book-accent);
+    }
 }
 
 #theme-list,
 #mdbook-theme-list,
 #mdbook-theme-toggle {
-  display: none;
+    display: none;
 }
