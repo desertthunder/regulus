@@ -60,6 +60,13 @@ updates, pipelines, unary and binary operations, anonymous functions, captures,
 `use`, `case`, guards, nested patterns, simple exhaustiveness checks, module
 interfaces, and imported constructor patterns across project modules.
 
+The type checker infers unannotated function parameters, local values,
+anonymous-function parameters, generic functions, empty and generic lists,
+generic custom-type constructors, constructor patterns, polymorphic calls, and
+imported generic functions. The inference layer has reusable inference
+variables, type schemes, substitutions, constraint generation, unification,
+occurs checks, generalization, constructor schemes, and inference interfaces.
+
 ### Core IR
 
 Core IR represents modules, imports, declarations, constants, module init
@@ -97,11 +104,6 @@ String exports with no parameters also get `<name>__data` and `<name>__len`
 adapter exports.
 
 ## Not supported yet
-
-### Type system
-
-- Full Gleam type inference.
-- Full generic inference.
 
 ### Projects and dependencies
 

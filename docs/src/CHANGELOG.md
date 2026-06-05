@@ -9,6 +9,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Type and generic inference now includes reusable inference variables, type
   schemes, substitutions, constraint generation, unification, generalization,
   constructor schemes, and inference interfaces.
+- The type checker now infers unannotated function parameters, polymorphic
+  calls, generic lists, generic custom-type constructors and patterns, and
+  imported generic functions.
 
 ### Changed
 

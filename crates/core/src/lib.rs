@@ -48,7 +48,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires parser, type checker, lowering, and WASM codegen"]
     fn compiles_add_function_end_to_end() {
         let output = compile("pub fn add(a, b) { a + b }").expect("compile add function");
         assert!(!output.wasm.bytes.is_empty());

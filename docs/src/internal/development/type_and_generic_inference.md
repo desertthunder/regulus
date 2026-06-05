@@ -2,8 +2,8 @@
 
 The inference layer provides the reusable machinery for inferring Gleam
 expression, function, pattern, and module-interface types. It separates solver
-state from source-level type names so later checker code can infer missing
-annotations without confusing unknowns with named generic parameters.
+state from source-level type names so the checker can infer missing annotations
+without confusing unknowns with named generic parameters.
 
 ## Inference variables
 
@@ -56,7 +56,7 @@ the same scheme mechanism as generic functions and values.
 ## Diagnostics
 
 Inference errors are represented at the solver and generator boundaries. The
-constraint that triggers an error carries the source span, allowing later type
+constraint that triggers an error carries the source span, allowing type
 checking diagnostics to report incompatible, ambiguous, recursive, constructor,
 field, branch, and pattern mismatches at the expression or pattern that caused
 them.

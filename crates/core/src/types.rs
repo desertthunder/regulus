@@ -138,7 +138,7 @@ pub fn check_project(project: &Project) -> Result<TypedProject, Diagnostics> {
         .iter()
         .flat_map(|module| constructors_from_ast(&module.ast))
         .collect::<HashMap<_, _>>();
-    let external_values = resolved
+    let mut external_values = resolved
         .modules
         .iter()
         .flat_map(|module| values_from_ast(&module.ast))
@@ -147,6 +147,10 @@ pub fn check_project(project: &Project) -> Result<TypedProject, Diagnostics> {
     for (module_info, module) in project.graph.modules.iter().zip(resolved.modules) {
         match check_with_externals(module, external_constructors.clone(), external_values.clone()) {
             Ok(typed) => {
+                for (name, type_) in &typed.interface.functions {
+                    external_values.insert(name.clone(), type_.clone());
+                    external_values.insert(format!("{}.{}", module_info.name, name), type_.clone());
+                }
                 interfaces.insert(module_info.name.clone(), typed.interface.clone());
                 modules.push(typed);
             }
@@ -167,6 +171,8 @@ struct TypeChecker {
     expressions: Vec<TypedExpression>,
     scopes: Vec<HashMap<String, Type>>,
     diagnostics: Diagnostics,
+    inference_substitutions: HashMap<String, Type>,
+    next_inference_variable: usize,
 }
 
 impl TypeChecker {
@@ -181,6 +187,8 @@ impl TypeChecker {
             expressions: Vec::new(),
             scopes: Vec::new(),
             diagnostics: Vec::new(),
+            inference_substitutions: HashMap::new(),
+            next_inference_variable: 0,
         }
     }
 
@@ -205,6 +213,7 @@ impl TypeChecker {
         }
 
         if self.diagnostics.is_empty() {
+            self.finalize_inferred_types();
             Ok(TypedModule {
                 resolved: self.module,
                 functions: self.functions,
@@ -333,18 +342,12 @@ impl TypeChecker {
             let Some(name) = &parameter.name else {
                 continue;
             };
-            let Some(type_annotation) = &parameter.type_annotation else {
-                self.diagnostics.push(
-                    Diagnostic::new(
-                        DiagnosticCode::TypeError,
-                        format!("parameter `{}` needs a type annotation", name.text),
-                    )
-                    .with_label(Label::primary(name.span, "missing type annotation")),
-                );
-                continue;
-            };
-            let Some(type_) = self.parse_type_annotation(type_annotation) else {
-                continue;
+            let type_ = match &parameter.type_annotation {
+                Some(type_annotation) => match self.parse_type_annotation(type_annotation) {
+                    Some(type_) => type_,
+                    None => continue,
+                },
+                None => self.fresh_inference_type(),
             };
             self.define(name.text.clone(), type_.clone());
             params.push(type_);
@@ -363,7 +366,11 @@ impl TypeChecker {
         };
 
         let function_type = Type::Function { params, return_type: Box::new(return_type) };
+        let function_type = self.finalize_type(&function_type, &mut HashMap::new());
         self.function_types
+            .insert(function.name.text.clone(), function_type.clone());
+        self.interface
+            .functions
             .insert(function.name.text.clone(), function_type.clone());
         self.functions
             .push(TypedFunction { name: function.name.clone(), type_: function_type });
@@ -633,7 +640,8 @@ impl TypeChecker {
                 .get(&format!("{}.{}", module.text, field_access.field.text))
                 .or_else(|| self.external_values.get(&field_access.field.text))
         {
-            return Some(type_.clone());
+            let type_ = type_.clone();
+            return Some(self.instantiate_named_generics(&type_));
         }
 
         let record_type = self.check_expression(&field_access.record)?;
@@ -684,7 +692,9 @@ impl TypeChecker {
                 ),
             }
         }
-        Some(Type::List(Box::new(element_type.unwrap_or(Type::Nil))))
+        Some(Type::List(Box::new(
+            element_type.unwrap_or_else(|| self.fresh_inference_type()),
+        )))
     }
 
     fn check_record(&mut self, record: &ast::Record) -> Option<Type> {
@@ -696,6 +706,7 @@ impl TypeChecker {
             );
             return None;
         };
+        let constructor = self.instantiate_constructor(&constructor);
         self.check_record_arguments(&record.arguments, &constructor.fields);
         Some(constructor.return_type)
     }
@@ -710,12 +721,9 @@ impl TypeChecker {
             );
             return None;
         };
-        self.expect_same(
-            &constructor.return_type.substitute_from(&spread_type),
-            &spread_type,
-            update.span,
-        );
-        let fields = instantiate_fields(&constructor, &spread_type);
+        let constructor = self.instantiate_constructor(&constructor);
+        self.expect_same(&constructor.return_type, &spread_type, update.span);
+        let fields = constructor.fields.clone();
         self.check_record_arguments(&update.updates, &fields);
         Some(spread_type)
     }
@@ -838,11 +846,10 @@ impl TypeChecker {
         self.push_scope();
         let mut params = Vec::new();
         for parameter in &function.parameters {
-            let type_ = parameter
-                .type_annotation
-                .as_ref()
-                .and_then(|annotation| self.parse_type_annotation(annotation))
-                .unwrap_or(Type::Nil);
+            let type_ = match &parameter.type_annotation {
+                Some(annotation) => self.parse_type_annotation(annotation)?,
+                None => self.fresh_inference_type(),
+            };
             if let Some(name) = &parameter.name {
                 self.define(name.text.clone(), type_.clone());
             }
@@ -975,8 +982,9 @@ impl TypeChecker {
             return;
         };
 
-        self.expect_same(&constructor.return_type.substitute_from(type_), type_, pattern.span);
-        let fields = instantiate_fields(&constructor, type_);
+        let constructor = self.instantiate_constructor(&constructor);
+        self.expect_same(&constructor.return_type, type_, pattern.span);
+        let fields = constructor.fields.clone();
         if pattern.arguments.len() > fields.len() {
             self.diagnostics.push(
                 Diagnostic::new(DiagnosticCode::TypeError, "constructor pattern has too many arguments")
@@ -1160,8 +1168,12 @@ impl TypeChecker {
             }
         }
 
-        if let Some(type_) = self.function_types.get(&name.text) {
-            return Some(type_.clone());
+        if let Some(type_) = self.function_types.get(&name.text).cloned() {
+            return Some(self.instantiate_named_generics(&type_));
+        }
+
+        if let Some(type_) = self.external_values.get(&name.text).cloned() {
+            return Some(self.instantiate_named_generics(&type_));
         }
 
         self.diagnostics.push(
@@ -1188,7 +1200,9 @@ impl TypeChecker {
     }
 
     fn expect_same(&mut self, expected: &Type, actual: &Type, span: Span) {
-        if expected != actual {
+        let expected = self.resolve_inference_type(expected);
+        let actual = self.resolve_inference_type(actual);
+        if self.unify_types(&expected, &actual, span).is_err() {
             self.diagnostics.push(
                 Diagnostic::new(
                     DiagnosticCode::TypeError,
@@ -1196,6 +1210,269 @@ impl TypeChecker {
                 )
                 .with_label(Label::primary(span, "type mismatch")),
             );
+        }
+    }
+
+    fn fresh_inference_type(&mut self) -> Type {
+        let id = self.next_inference_variable;
+        self.next_inference_variable += 1;
+        Type::Generic(format!("${id}"))
+    }
+
+    fn is_inference_variable_name(name: &str) -> bool {
+        name.starts_with('$')
+    }
+
+    fn resolve_inference_type(&self, type_: &Type) -> Type {
+        match type_ {
+            Type::Generic(name) if Self::is_inference_variable_name(name) => self
+                .inference_substitutions
+                .get(name)
+                .map(|type_| self.resolve_inference_type(type_))
+                .unwrap_or_else(|| type_.clone()),
+            Type::Tuple(items) => Type::Tuple(items.iter().map(|item| self.resolve_inference_type(item)).collect()),
+            Type::List(item) => Type::List(Box::new(self.resolve_inference_type(item))),
+            Type::Record { name, fields } => Type::Record {
+                name: name.clone(),
+                fields: fields
+                    .iter()
+                    .map(|field| FieldInfo {
+                        name: field.name.clone(),
+                        type_: self.resolve_inference_type(&field.type_),
+                    })
+                    .collect(),
+            },
+            Type::Custom { name, args } => Type::Custom {
+                name: name.clone(),
+                args: args.iter().map(|arg| self.resolve_inference_type(arg)).collect(),
+            },
+            Type::Opaque { name, args } => Type::Opaque {
+                name: name.clone(),
+                args: args.iter().map(|arg| self.resolve_inference_type(arg)).collect(),
+            },
+            Type::Function { params, return_type } => Type::Function {
+                params: params.iter().map(|param| self.resolve_inference_type(param)).collect(),
+                return_type: Box::new(self.resolve_inference_type(return_type)),
+            },
+            _ => type_.clone(),
+        }
+    }
+
+    fn unify_types(&mut self, expected: &Type, actual: &Type, span: Span) -> Result<(), ()> {
+        let expected = self.resolve_inference_type(expected);
+        let actual = self.resolve_inference_type(actual);
+        match (&expected, &actual) {
+            (Type::Generic(name), type_) if Self::is_inference_variable_name(name) => {
+                self.bind_inference_variable(name, type_, span)
+            }
+            (type_, Type::Generic(name)) if Self::is_inference_variable_name(name) => {
+                self.bind_inference_variable(name, type_, span)
+            }
+            (Type::Tuple(expected), Type::Tuple(actual)) if expected.len() == actual.len() => expected
+                .iter()
+                .zip(actual.iter())
+                .try_for_each(|(expected, actual)| self.unify_types(expected, actual, span)),
+            (Type::List(expected), Type::List(actual)) => self.unify_types(expected, actual, span),
+            (
+                Type::Record { name: expected_name, fields: expected },
+                Type::Record { name: actual_name, fields: actual },
+            ) if expected_name == actual_name && expected.len() == actual.len() => expected
+                .iter()
+                .zip(actual.iter())
+                .try_for_each(|(expected, actual)| self.unify_types(&expected.type_, &actual.type_, span)),
+            (
+                Type::Custom { name: expected_name, args: expected },
+                Type::Custom { name: actual_name, args: actual },
+            ) if expected_name == actual_name && expected.len() == actual.len() => expected
+                .iter()
+                .zip(actual.iter())
+                .try_for_each(|(expected, actual)| self.unify_types(expected, actual, span)),
+            (
+                Type::Opaque { name: expected_name, args: expected },
+                Type::Opaque { name: actual_name, args: actual },
+            ) if expected_name == actual_name && expected.len() == actual.len() => expected
+                .iter()
+                .zip(actual.iter())
+                .try_for_each(|(expected, actual)| self.unify_types(expected, actual, span)),
+            (
+                Type::Function { params: expected_params, return_type: expected_return },
+                Type::Function { params: actual_params, return_type: actual_return },
+            ) if expected_params.len() == actual_params.len() => {
+                for (expected, actual) in expected_params.iter().zip(actual_params.iter()) {
+                    self.unify_types(expected, actual, span)?;
+                }
+                self.unify_types(expected_return, actual_return, span)
+            }
+            _ if expected == actual => Ok(()),
+            _ => Err(()),
+        }
+    }
+
+    fn bind_inference_variable(&mut self, name: &str, type_: &Type, span: Span) -> Result<(), ()> {
+        if let Type::Generic(actual) = type_
+            && actual == name
+        {
+            return Ok(());
+        }
+        if self.type_contains_inference_variable(type_, name) {
+            self.diagnostics.push(
+                Diagnostic::new(DiagnosticCode::TypeError, "recursive type inferred")
+                    .with_label(Label::primary(span, "recursive type")),
+            );
+            return Err(());
+        }
+        self.inference_substitutions.insert(name.to_string(), type_.clone());
+        Ok(())
+    }
+
+    fn type_contains_inference_variable(&self, type_: &Type, name: &str) -> bool {
+        match self.resolve_inference_type(type_) {
+            Type::Generic(found) => found == name,
+            Type::Tuple(items) => items
+                .iter()
+                .any(|item| self.type_contains_inference_variable(item, name)),
+            Type::List(item) => self.type_contains_inference_variable(&item, name),
+            Type::Record { fields, .. } => fields
+                .iter()
+                .any(|field| self.type_contains_inference_variable(&field.type_, name)),
+            Type::Custom { args, .. } | Type::Opaque { args, .. } => {
+                args.iter().any(|arg| self.type_contains_inference_variable(arg, name))
+            }
+            Type::Function { params, return_type } => {
+                params
+                    .iter()
+                    .any(|param| self.type_contains_inference_variable(param, name))
+                    || self.type_contains_inference_variable(&return_type, name)
+            }
+            _ => false,
+        }
+    }
+
+    fn instantiate_named_generics(&mut self, type_: &Type) -> Type {
+        let mut substitutions = HashMap::new();
+        self.instantiate_named_generics_with(type_, &mut substitutions)
+    }
+
+    fn instantiate_constructor(&mut self, constructor: &ConstructorInfo) -> ConstructorInfo {
+        let mut substitutions = HashMap::new();
+        ConstructorInfo {
+            name: constructor.name.clone(),
+            fields: constructor
+                .fields
+                .iter()
+                .map(|field| FieldInfo {
+                    name: field.name.clone(),
+                    type_: self.instantiate_named_generics_with(&field.type_, &mut substitutions),
+                })
+                .collect(),
+            return_type: self.instantiate_named_generics_with(&constructor.return_type, &mut substitutions),
+            span: constructor.span,
+        }
+    }
+
+    fn instantiate_named_generics_with(&mut self, type_: &Type, substitutions: &mut HashMap<String, Type>) -> Type {
+        match type_ {
+            Type::Generic(name) if !Self::is_inference_variable_name(name) => substitutions
+                .entry(name.clone())
+                .or_insert_with(|| self.fresh_inference_type())
+                .clone(),
+            Type::Tuple(items) => Type::Tuple(
+                items
+                    .iter()
+                    .map(|item| self.instantiate_named_generics_with(item, substitutions))
+                    .collect(),
+            ),
+            Type::List(item) => Type::List(Box::new(self.instantiate_named_generics_with(item, substitutions))),
+            Type::Record { name, fields } => Type::Record {
+                name: name.clone(),
+                fields: fields
+                    .iter()
+                    .map(|field| FieldInfo {
+                        name: field.name.clone(),
+                        type_: self.instantiate_named_generics_with(&field.type_, substitutions),
+                    })
+                    .collect(),
+            },
+            Type::Custom { name, args } => Type::Custom {
+                name: name.clone(),
+                args: args
+                    .iter()
+                    .map(|arg| self.instantiate_named_generics_with(arg, substitutions))
+                    .collect(),
+            },
+            Type::Opaque { name, args } => Type::Opaque {
+                name: name.clone(),
+                args: args
+                    .iter()
+                    .map(|arg| self.instantiate_named_generics_with(arg, substitutions))
+                    .collect(),
+            },
+            Type::Function { params, return_type } => Type::Function {
+                params: params
+                    .iter()
+                    .map(|param| self.instantiate_named_generics_with(param, substitutions))
+                    .collect(),
+                return_type: Box::new(self.instantiate_named_generics_with(return_type, substitutions)),
+            },
+            _ => type_.clone(),
+        }
+    }
+
+    fn finalize_inferred_types(&mut self) {
+        let mut names = HashMap::new();
+        self.functions = self
+            .functions
+            .clone()
+            .into_iter()
+            .map(|function| TypedFunction {
+                name: function.name,
+                type_: self.finalize_type(&function.type_, &mut names),
+            })
+            .collect();
+        self.expressions = self
+            .expressions
+            .clone()
+            .into_iter()
+            .map(|expression| TypedExpression {
+                span: expression.span,
+                type_: self.finalize_type(&expression.type_, &mut names),
+            })
+            .collect();
+        self.interface.functions = self
+            .interface
+            .functions
+            .clone()
+            .into_iter()
+            .map(|(name, type_)| (name, self.finalize_type(&type_, &mut HashMap::new())))
+            .collect();
+    }
+
+    fn finalize_type(&self, type_: &Type, names: &mut HashMap<String, String>) -> Type {
+        match self.resolve_inference_type(type_) {
+            Type::Generic(name) if Self::is_inference_variable_name(&name) => {
+                let next = names.len();
+                Type::Generic(names.entry(name).or_insert_with(|| generic_name(next)).clone())
+            }
+            Type::Tuple(items) => Type::Tuple(items.iter().map(|item| self.finalize_type(item, names)).collect()),
+            Type::List(item) => Type::List(Box::new(self.finalize_type(&item, names))),
+            Type::Record { name, fields } => Type::Record {
+                name,
+                fields: fields
+                    .iter()
+                    .map(|field| FieldInfo { name: field.name.clone(), type_: self.finalize_type(&field.type_, names) })
+                    .collect(),
+            },
+            Type::Custom { name, args } => {
+                Type::Custom { name, args: args.iter().map(|arg| self.finalize_type(arg, names)).collect() }
+            }
+            Type::Opaque { name, args } => {
+                Type::Opaque { name, args: args.iter().map(|arg| self.finalize_type(arg, names)).collect() }
+            }
+            Type::Function { params, return_type } => Type::Function {
+                params: params.iter().map(|param| self.finalize_type(param, names)).collect(),
+                return_type: Box::new(self.finalize_type(&return_type, names)),
+            },
+            other => other,
         }
     }
 
@@ -1276,6 +1553,14 @@ impl ExpressionSpan for Expression {
     }
 }
 
+fn generic_name(index: usize) -> String {
+    const NAMES: &[&str] = &["a", "b", "c", "d", "e", "f"];
+    NAMES
+        .get(index)
+        .map(|name| (*name).to_string())
+        .unwrap_or_else(|| format!("t{index}"))
+}
+
 fn constructor_name_text(name: &ast::ConstructorName) -> String {
     match name {
         ast::ConstructorName::Local(name) => name.text.clone(),
@@ -1288,15 +1573,6 @@ fn constructor_pattern_name(pattern: &ast::ConstructorPattern) -> &str {
         ast::ConstructorName::Local(name) => &name.text,
         ast::ConstructorName::Remote { name, .. } => &name.text,
     }
-}
-
-fn instantiate_fields(constructor: &ConstructorInfo, actual_type: &Type) -> Vec<FieldInfo> {
-    let substitutions = substitutions_for(&constructor.return_type, actual_type);
-    constructor
-        .fields
-        .iter()
-        .map(|field| FieldInfo { name: field.name.clone(), type_: substitute_type(&field.type_, &substitutions) })
-        .collect()
 }
 
 fn substitutions_for(expected: &Type, actual: &Type) -> HashMap<String, Type> {
@@ -1606,13 +1882,108 @@ mod tests {
     }
 
     #[test]
-    fn requires_parameter_annotations() {
-        let diagnostics = check_source("fn main(x) { x }").expect_err("type check should fail");
+    fn infers_unannotated_identity() {
+        let typed = check_source("fn main(x) { x }").expect("type check source");
 
-        assert!(
-            diagnostics
-                .iter()
-                .any(|diagnostic| diagnostic.message.contains("needs a type annotation"))
+        let main = typed
+            .functions
+            .iter()
+            .find(|function| function.name.text == "main")
+            .expect("main type");
+        assert_eq!(
+            main.type_,
+            Type::Function {
+                params: vec![Type::Generic("a".into())],
+                return_type: Box::new(Type::Generic("a".into()))
+            }
+        );
+    }
+
+    #[test]
+    fn infers_generic_lists_and_polymorphic_calls() {
+        let typed = check_source(
+            r#"fn id(x) { x }
+fn main() { #(id(1), id("one"), []) }
+"#,
+        )
+        .expect("type check source");
+
+        let main = typed
+            .functions
+            .iter()
+            .find(|function| function.name.text == "main")
+            .expect("main type");
+        assert_eq!(
+            main.type_,
+            Type::Function {
+                params: vec![],
+                return_type: Box::new(Type::Tuple(vec![
+                    Type::Int,
+                    Type::String,
+                    Type::List(Box::new(Type::Generic("a".into())))
+                ]))
+            }
+        );
+    }
+
+    #[test]
+    fn infers_generic_custom_type_constructors_and_patterns() {
+        let typed = check_source(
+            r#"pub type Box(value) { Box(value) }
+fn make(x) { Box(x) }
+fn unwrap(box) { case box { Box(value) -> value } }
+fn main() { #(unwrap(Box(1)), unwrap(Box("one"))) }
+"#,
+        )
+        .expect("type check source");
+
+        let main = typed
+            .functions
+            .iter()
+            .find(|function| function.name.text == "main")
+            .expect("main type");
+        assert_eq!(
+            main.type_,
+            Type::Function { params: vec![], return_type: Box::new(Type::Tuple(vec![Type::Int, Type::String])) }
+        );
+    }
+
+    #[test]
+    fn infers_imported_generic_functions() {
+        let dir = tempdir().expect("tempdir");
+        write(
+            &dir.path().join("gleam.toml"),
+            "name = \"sample\"\nversion = \"1.0.0\"\n",
+        );
+        write(&dir.path().join("src/app.gleam"), "pub fn id(x) { x }\n");
+        write(
+            &dir.path().join("src/main.gleam"),
+            "import app\nfn main() { #(app.id(1), app.id(\"one\")) }\n",
+        );
+        let project = project::load_project(dir.path()).expect("load project");
+
+        let typed = check_project(&project).expect("type check project");
+
+        let main_module = typed
+            .modules
+            .iter()
+            .find(|module| {
+                module
+                    .resolved
+                    .ast
+                    .imports
+                    .iter()
+                    .any(|import| import.module.text == "app")
+            })
+            .expect("main module");
+        let main = main_module
+            .functions
+            .iter()
+            .find(|function| function.name.text == "main")
+            .expect("main type");
+        assert_eq!(
+            main.type_,
+            Type::Function { params: vec![], return_type: Box::new(Type::Tuple(vec![Type::Int, Type::String])) }
         );
     }
 
