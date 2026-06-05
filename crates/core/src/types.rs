@@ -67,6 +67,18 @@ pub struct TypeDeclaration {
     pub span: Span,
 }
 
+impl From<ast::TypeAlias> for TypeDeclaration {
+    fn from(alias: ast::TypeAlias) -> Self {
+        TypeDeclaration {
+            name: alias.name.text,
+            parameters: alias.parameters,
+            opaque: alias.opaque,
+            constructors: Vec::new(),
+            span: alias.span,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ModuleInterface {
     pub functions: HashMap<String, Type>,
@@ -105,11 +117,13 @@ pub fn check(module: ResolvedModule) -> Result<TypedModule, Diagnostics> {
     TypeChecker::new(module).check()
 }
 
-fn check_with_constructors(
+fn check_with_externals(
     module: ResolvedModule, external_constructors: HashMap<String, ConstructorInfo>,
+    external_values: HashMap<String, Type>,
 ) -> Result<TypedModule, Diagnostics> {
     TypeChecker::new(module)
         .with_external_constructors(external_constructors)
+        .with_external_values(external_values)
         .check()
 }
 
@@ -124,9 +138,14 @@ pub fn check_project(project: &Project) -> Result<TypedProject, Diagnostics> {
         .iter()
         .flat_map(|module| constructors_from_ast(&module.ast))
         .collect::<HashMap<_, _>>();
+    let external_values = resolved
+        .modules
+        .iter()
+        .flat_map(|module| values_from_ast(&module.ast))
+        .collect::<HashMap<_, _>>();
 
     for (module_info, module) in project.graph.modules.iter().zip(resolved.modules) {
-        match check_with_constructors(module, external_constructors.clone()) {
+        match check_with_externals(module, external_constructors.clone(), external_values.clone()) {
             Ok(typed) => {
                 interfaces.insert(module_info.name.clone(), typed.interface.clone());
                 modules.push(typed);
@@ -141,6 +160,7 @@ pub fn check_project(project: &Project) -> Result<TypedProject, Diagnostics> {
 struct TypeChecker {
     module: ResolvedModule,
     function_types: HashMap<String, Type>,
+    external_values: HashMap<String, Type>,
     constructors: HashMap<String, ConstructorInfo>,
     interface: ModuleInterface,
     functions: Vec<TypedFunction>,
@@ -154,6 +174,7 @@ impl TypeChecker {
         Self {
             module,
             function_types: HashMap::new(),
+            external_values: HashMap::new(),
             constructors: HashMap::new(),
             interface: ModuleInterface::default(),
             functions: Vec::new(),
@@ -168,12 +189,19 @@ impl TypeChecker {
         self
     }
 
+    fn with_external_values(mut self, values: HashMap<String, Type>) -> Self {
+        self.external_values.extend(values);
+        self
+    }
+
     fn check(mut self) -> Result<TypedModule, Diagnostics> {
         self.collect_type_declarations();
         self.collect_annotated_function_types();
+        self.collect_external_function_types();
+        self.collect_constant_types();
 
-        for function in self.module.ast.functions.clone() {
-            self.check_function(&function);
+        for declaration in self.module.ast.declarations.clone() {
+            self.check_declaration(&declaration);
         }
 
         if self.diagnostics.is_empty() {
@@ -209,6 +237,18 @@ impl TypeChecker {
                         self.interface.types.insert(alias.name.clone(), alias);
                     }
                 }
+                Declaration::ExternalType(type_) => {
+                    self.interface.types.insert(
+                        type_.name.text.clone(),
+                        TypeDeclaration {
+                            name: type_.name.text.clone(),
+                            parameters: Vec::new(),
+                            opaque: type_.opaque,
+                            constructors: Vec::new(),
+                            span: type_.span,
+                        },
+                    );
+                }
                 _ => {}
             }
         }
@@ -222,6 +262,66 @@ impl TypeChecker {
                     .insert(function.name.text.clone(), type_.clone());
                 self.function_types.insert(function.name.text, type_);
             }
+        }
+    }
+
+    fn collect_external_function_types(&mut self) {
+        for declaration in self.module.ast.declarations.clone() {
+            match declaration {
+                Declaration::ExternalFunction(function) => {
+                    if let Some(type_) = self.external_function_type(&function) {
+                        self.interface
+                            .functions
+                            .insert(function.name.text.clone(), type_.clone());
+                        self.function_types.insert(function.name.text, type_);
+                    }
+                }
+                Declaration::TargetGroup(group) => {
+                    for declaration in group.declarations {
+                        if let Declaration::ExternalFunction(function) = declaration
+                            && let Some(type_) = self.external_function_type(&function)
+                        {
+                            self.interface
+                                .functions
+                                .insert(function.name.text.clone(), type_.clone());
+                            self.function_types.insert(function.name.text, type_);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn collect_constant_types(&mut self) {
+        for declaration in self.module.ast.declarations.clone() {
+            if let Declaration::Constant(constant) = declaration
+                && let Some(type_) = self.constant_type(&constant)
+            {
+                self.external_values.insert(constant.name.text.clone(), type_);
+            }
+        }
+    }
+
+    fn check_declaration(&mut self, declaration: &Declaration) {
+        match declaration {
+            Declaration::Function(function) => self.check_function(function),
+            Declaration::Constant(constant) => {
+                if let Some(expected) = constant
+                    .type_annotation
+                    .as_ref()
+                    .and_then(|annotation| self.parse_type_annotation(annotation))
+                    && let Some(actual) = self.check_expression(&constant.value)
+                {
+                    self.expect_same(&expected, &actual, constant.span);
+                }
+            }
+            Declaration::TargetGroup(group) => {
+                for declaration in &group.declarations {
+                    self.check_declaration(declaration);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -287,6 +387,29 @@ impl TypeChecker {
         Some(Type::Function { params, return_type: Box::new(return_type) })
     }
 
+    fn external_function_type(&mut self, function: &ast::ExternalFunction) -> Option<Type> {
+        let params = function
+            .parameters
+            .iter()
+            .map(|parameter| {
+                parameter
+                    .type_annotation
+                    .as_ref()
+                    .and_then(|annotation| self.parse_type_annotation(annotation))
+            })
+            .collect::<Option<Vec<_>>>()?;
+        let return_type = self.parse_type_annotation(&function.return_type)?;
+        Some(Type::Function { params, return_type: Box::new(return_type) })
+    }
+
+    fn constant_type(&mut self, constant: &ast::Constant) -> Option<Type> {
+        constant
+            .type_annotation
+            .as_ref()
+            .and_then(|annotation| self.parse_type_annotation(annotation))
+            .or_else(|| self.check_expression(&constant.value))
+    }
+
     fn check_block(&mut self, block: &ast::Block) -> Option<Type> {
         let mut last_type = Type::Nil;
         for statement in &block.statements {
@@ -324,46 +447,8 @@ impl TypeChecker {
         let type_ = match expression {
             Expression::Literal(literal) => Type::from(&literal.kind),
             Expression::Variable(name) => self.lookup_name(name)?,
-            Expression::Call(call) => {
-                let function_type = self.check_expression(&call.function)?;
-                let Type::Function { params, return_type } = function_type else {
-                    self.diagnostics.push(
-                        Diagnostic::new(DiagnosticCode::TypeError, "called value is not a function")
-                            .with_label(Label::primary(call.span, "not a function")),
-                    );
-                    return None;
-                };
-
-                if params.len() != call.arguments.len() {
-                    self.diagnostics.push(
-                        Diagnostic::new(
-                            DiagnosticCode::TypeError,
-                            format!(
-                                "function expected {} arguments but got {}",
-                                params.len(),
-                                call.arguments.len()
-                            ),
-                        )
-                        .with_label(Label::primary(call.span, "wrong number of arguments")),
-                    );
-                    return None;
-                }
-
-                for (argument, expected) in call.arguments.iter().zip(params.iter()) {
-                    if let Some(actual) = self.check_expression(&argument.value) {
-                        self.expect_same(expected, &actual, argument.span);
-                    }
-                }
-
-                *return_type
-            }
-            Expression::FieldAccess(field_access) => {
-                self.diagnostics.push(
-                    Diagnostic::new(DiagnosticCode::TypeError, "qualified values cannot be typed yet")
-                        .with_label(Label::primary(field_access.span, "qualified value here")),
-                );
-                return None;
-            }
+            Expression::Call(call) => self.check_call(call)?,
+            Expression::FieldAccess(field_access) => self.check_field_access(field_access)?,
             Expression::Block(block) => {
                 self.push_scope();
                 let type_ = self.check_block(block)?;
@@ -377,63 +462,102 @@ impl TypeChecker {
                     .map(|element| self.check_expression(element))
                     .collect::<Option<Vec<_>>>()?,
             ),
-            Expression::List(list) => {
-                for element in &list.elements {
-                    self.check_expression(element)?;
+            Expression::List(list) => self.check_list(list)?,
+            Expression::Record(record) => self.check_record(record)?,
+            Expression::BitArray(bit_array) => {
+                for segment in &bit_array.segments {
+                    self.check_expression(&segment.value)?;
+                    for option in &segment.options {
+                        if let Some(value) = &option.value {
+                            self.check_expression(value)?;
+                        }
+                    }
                 }
-                if let Some(spread) = &list.spread {
-                    self.check_expression(spread)?;
+                Type::BitArray
+            }
+            Expression::Panic(failure) | Expression::Todo(failure) => {
+                if let Some(message) = &failure.message {
+                    self.check_expression(message)?;
                 }
-                Type::List(Box::new(Type::Int))
+                Type::Nil
             }
-            Expression::Record(record) => {
-                let name = constructor_name_text(&record.constructor);
-                let Some(constructor) = self.constructors.get(&name).cloned() else {
-                    self.diagnostics.push(
-                        Diagnostic::new(DiagnosticCode::TypeError, format!("unknown constructor `{name}`"))
-                            .with_label(Label::primary(record.span, "unknown constructor here")),
-                    );
-                    return None;
-                };
-                constructor.return_type
-            }
-            Expression::BitArray(_) => Type::BitArray,
-            Expression::Panic(_) | Expression::Todo(_) | Expression::Assert(_) => Type::Nil,
-            Expression::BinaryOperation(operation) => {
-                self.check_expression(&operation.left)?;
-                self.check_expression(&operation.right)?;
-                match operation.operator {
-                    ast::BinaryOperator::Equal
-                    | ast::BinaryOperator::NotEqual
-                    | ast::BinaryOperator::LessThan
-                    | ast::BinaryOperator::LessThanEqual
-                    | ast::BinaryOperator::GreaterThan
-                    | ast::BinaryOperator::GreaterThanEqual
-                    | ast::BinaryOperator::FloatLessThan
-                    | ast::BinaryOperator::FloatLessThanEqual
-                    | ast::BinaryOperator::FloatGreaterThan
-                    | ast::BinaryOperator::FloatGreaterThanEqual
-                    | ast::BinaryOperator::And
-                    | ast::BinaryOperator::Or => Type::Bool,
-                    ast::BinaryOperator::FloatAdd
-                    | ast::BinaryOperator::FloatSubtract
-                    | ast::BinaryOperator::FloatMultiply
-                    | ast::BinaryOperator::FloatDivide => Type::Float,
-                    _ => Type::Int,
+            Expression::Assert(assert) => {
+                let value_type = self.check_expression(&assert.value)?;
+                if let Some(annotation) = &assert.type_annotation
+                    && let Some(expected) = self.parse_type_annotation(annotation)
+                {
+                    self.expect_same(&expected, &value_type, assert.span);
                 }
+                self.bind_pattern(&assert.pattern, &value_type);
+                Type::Nil
             }
-            Expression::Pipeline(pipeline) => {
-                self.check_expression(&pipeline.value)?;
-                self.check_expression(&pipeline.into)?
-            }
-            Expression::UnaryOperation(operation) => self.check_expression(&operation.value)?,
-            Expression::Use(use_) => self.check_expression(&use_.value)?,
-            Expression::AnonymousFunction(_) | Expression::Capture(_) => Type::Nil,
-            Expression::RecordUpdate(update) => self.check_expression(&update.spread)?,
-            Expression::TupleAccess(_) => Type::Int,
+            Expression::BinaryOperation(operation) => self.check_binary_operation(operation)?,
+            Expression::Pipeline(pipeline) => self.check_pipeline(pipeline)?,
+            Expression::UnaryOperation(operation) => self.check_unary_operation(operation)?,
+            Expression::Use(use_) => self.check_use(use_)?,
+            Expression::AnonymousFunction(function) => self.check_anonymous_function(function)?,
+            Expression::Capture(capture) => self.check_capture(capture)?,
+            Expression::RecordUpdate(update) => self.check_record_update(update)?,
+            Expression::TupleAccess(access) => self.check_tuple_access(access)?,
             Expression::Echo(echo) => self.check_expression(&echo.value)?,
-            Expression::Raw(raw) if raw.kind == "bit_string" => Type::BitArray,
-            Expression::Raw(raw) if raw.kind == "tuple" => Type::Tuple(
+            Expression::Raw(raw) => self.check_raw_expression(raw)?,
+            Expression::Case(case) => self.check_case(case)?,
+        };
+
+        self.expressions
+            .push(TypedExpression { span: expression.span(), type_: type_.clone() });
+        Some(type_)
+    }
+
+    fn check_case(&mut self, case: &ast::Case) -> Option<Type> {
+        let subject_types = case
+            .subjects
+            .iter()
+            .map(|subject| self.check_expression(subject))
+            .collect::<Option<Vec<_>>>()?;
+        let mut result_type = None;
+
+        for clause in &case.clauses {
+            if clause.patterns.len() != subject_types.len() {
+                self.diagnostics.push(
+                    Diagnostic::new(
+                        DiagnosticCode::TypeError,
+                        "case pattern count does not match subject count",
+                    )
+                    .with_label(Label::primary(clause.span, "wrong number of patterns")),
+                );
+                continue;
+            }
+
+            self.push_scope();
+            for (pattern, subject_type) in clause.patterns.iter().zip(subject_types.iter()) {
+                self.bind_pattern(pattern, subject_type);
+            }
+            if let Some(guard) = &clause.guard {
+                let guard_type = self
+                    .check_guard_expression(guard)
+                    .or_else(|| self.check_expression(guard));
+                if let Some(guard_type) = guard_type {
+                    self.expect_same(&Type::Bool, &guard_type, guard.span());
+                }
+            }
+            let clause_type = self.check_expression(&clause.value)?;
+            self.pop_scope();
+
+            match &result_type {
+                Some(expected) => self.expect_same(expected, &clause_type, clause.value.span()),
+                None => result_type = Some(clause_type),
+            }
+        }
+
+        self.check_case_coverage(case, &subject_types);
+        Some(result_type.unwrap_or(Type::Nil))
+    }
+
+    fn check_raw_expression(&mut self, raw: &ast::RawSyntax) -> Option<Type> {
+        match raw.kind.as_str() {
+            "bit_string" => Some(Type::BitArray),
+            "tuple" => Some(Type::Tuple(
                 raw.source
                     .trim()
                     .trim_start_matches("#(")
@@ -442,9 +566,9 @@ impl TypeChecker {
                     .filter(|item| !item.trim().is_empty())
                     .map(|_| Type::Int)
                     .collect(),
-            ),
-            Expression::Raw(raw) if raw.kind == "list" => Type::List(Box::new(Type::Int)),
-            Expression::Raw(raw) if raw.kind == "record" => {
+            )),
+            "list" => Some(Type::List(Box::new(Type::Int))),
+            "record" => {
                 let name = raw.source.split(['(', ' ']).next()?;
                 let Some(constructor) = self.constructors.get(name).cloned() else {
                     self.diagnostics.push(
@@ -453,9 +577,9 @@ impl TypeChecker {
                     );
                     return None;
                 };
-                constructor.return_type
+                Some(constructor.return_type)
             }
-            Expression::Raw(raw) => {
+            _ => {
                 self.diagnostics.push(
                     Diagnostic::new(
                         DiagnosticCode::TypeError,
@@ -463,57 +587,317 @@ impl TypeChecker {
                     )
                     .with_label(Label::primary(raw.span, "unsupported expression here")),
                 );
-                return None;
+                None
             }
-            Expression::Case(case) => {
-                let subject_types = case
-                    .subjects
-                    .iter()
-                    .map(|subject| self.check_expression(subject))
-                    .collect::<Option<Vec<_>>>()?;
-                let mut result_type = None;
+        }
+    }
 
-                for clause in &case.clauses {
-                    if clause.patterns.len() != subject_types.len() {
-                        self.diagnostics.push(
-                            Diagnostic::new(
-                                DiagnosticCode::TypeError,
-                                "case pattern count does not match subject count",
-                            )
-                            .with_label(Label::primary(clause.span, "wrong number of patterns")),
-                        );
-                        continue;
-                    }
-
-                    self.push_scope();
-                    for (pattern, subject_type) in clause.patterns.iter().zip(subject_types.iter()) {
-                        self.bind_pattern(pattern, subject_type);
-                    }
-                    if let Some(guard) = &clause.guard {
-                        let guard_type = self
-                            .check_guard_expression(guard)
-                            .or_else(|| self.check_expression(guard));
-                        if let Some(guard_type) = guard_type {
-                            self.expect_same(&Type::Bool, &guard_type, guard.span());
-                        }
-                    }
-                    let clause_type = self.check_expression(&clause.value)?;
-                    self.pop_scope();
-
-                    match &result_type {
-                        Some(expected) => self.expect_same(expected, &clause_type, clause.value.span()),
-                        None => result_type = Some(clause_type),
-                    }
-                }
-
-                self.check_case_coverage(case, &subject_types);
-                result_type.unwrap_or(Type::Nil)
-            }
+    fn check_call(&mut self, call: &ast::Call) -> Option<Type> {
+        let function_type = self.check_expression(&call.function)?;
+        let Type::Function { params, return_type } = function_type else {
+            self.diagnostics.push(
+                Diagnostic::new(DiagnosticCode::TypeError, "called value is not a function")
+                    .with_label(Label::primary(call.span, "not a function")),
+            );
+            return None;
         };
 
-        self.expressions
-            .push(TypedExpression { span: expression.span(), type_: type_.clone() });
-        Some(type_)
+        if params.len() != call.arguments.len() {
+            self.diagnostics.push(
+                Diagnostic::new(
+                    DiagnosticCode::TypeError,
+                    format!(
+                        "function expected {} arguments but got {}",
+                        params.len(),
+                        call.arguments.len()
+                    ),
+                )
+                .with_label(Label::primary(call.span, "wrong number of arguments")),
+            );
+            return None;
+        }
+
+        for (argument, expected) in call.arguments.iter().zip(params.iter()) {
+            if let Some(actual) = self.check_expression(&argument.value) {
+                self.expect_same(expected, &actual, argument.span);
+            }
+        }
+
+        Some(*return_type)
+    }
+
+    fn check_field_access(&mut self, field_access: &ast::FieldAccess) -> Option<Type> {
+        if let Expression::Variable(module) = field_access.record.as_ref()
+            && let Some(type_) = self
+                .external_values
+                .get(&format!("{}.{}", module.text, field_access.field.text))
+                .or_else(|| self.external_values.get(&field_access.field.text))
+        {
+            return Some(type_.clone());
+        }
+
+        let record_type = self.check_expression(&field_access.record)?;
+        match record_type {
+            Type::Record { fields, .. } => fields
+                .iter()
+                .find(|field| field.name == field_access.field.text)
+                .map(|field| field.type_.clone())
+                .or_else(|| {
+                    self.diagnostics.push(
+                        Diagnostic::new(
+                            DiagnosticCode::TypeError,
+                            format!("unknown field `{}`", field_access.field.text),
+                        )
+                        .with_label(Label::primary(field_access.field.span, "unknown field")),
+                    );
+                    None
+                }),
+            _ => {
+                self.diagnostics.push(
+                    Diagnostic::new(DiagnosticCode::TypeError, "field access used with non-record value")
+                        .with_label(Label::primary(field_access.span, "not a record")),
+                );
+                None
+            }
+        }
+    }
+
+    fn check_list(&mut self, list: &ast::List) -> Option<Type> {
+        let mut element_type = None;
+        for element in &list.elements {
+            let actual = self.check_expression(element)?;
+            match &element_type {
+                Some(expected) => self.expect_same(expected, &actual, element.span()),
+                None => element_type = Some(actual),
+            }
+        }
+        if let Some(spread) = &list.spread {
+            let spread_type = self.check_expression(spread)?;
+            match spread_type {
+                Type::List(item) => match &element_type {
+                    Some(expected) => self.expect_same(expected, &item, spread.span()),
+                    None => element_type = Some(*item),
+                },
+                _ => self.diagnostics.push(
+                    Diagnostic::new(DiagnosticCode::TypeError, "list spread must be a list")
+                        .with_label(Label::primary(spread.span(), "not a list")),
+                ),
+            }
+        }
+        Some(Type::List(Box::new(element_type.unwrap_or(Type::Nil))))
+    }
+
+    fn check_record(&mut self, record: &ast::Record) -> Option<Type> {
+        let name = constructor_name_text(&record.constructor);
+        let Some(constructor) = self.constructors.get(&name).cloned() else {
+            self.diagnostics.push(
+                Diagnostic::new(DiagnosticCode::TypeError, format!("unknown constructor `{name}`"))
+                    .with_label(Label::primary(record.span, "unknown constructor here")),
+            );
+            return None;
+        };
+        self.check_record_arguments(&record.arguments, &constructor.fields);
+        Some(constructor.return_type)
+    }
+
+    fn check_record_update(&mut self, update: &ast::RecordUpdate) -> Option<Type> {
+        let spread_type = self.check_expression(&update.spread)?;
+        let name = constructor_name_text(&update.constructor);
+        let Some(constructor) = self.constructors.get(&name).cloned() else {
+            self.diagnostics.push(
+                Diagnostic::new(DiagnosticCode::TypeError, format!("unknown constructor `{name}`"))
+                    .with_label(Label::primary(update.span, "unknown constructor here")),
+            );
+            return None;
+        };
+        self.expect_same(
+            &constructor.return_type.substitute_from(&spread_type),
+            &spread_type,
+            update.span,
+        );
+        let fields = instantiate_fields(&constructor, &spread_type);
+        self.check_record_arguments(&update.updates, &fields);
+        Some(spread_type)
+    }
+
+    fn check_record_arguments(&mut self, arguments: &[ast::Argument], fields: &[FieldInfo]) {
+        for (index, argument) in arguments.iter().enumerate() {
+            let field = match &argument.label {
+                Some(label) => fields.iter().find(|field| field.name == label.text),
+                None => fields.get(index),
+            };
+            let Some(field) = field else {
+                self.diagnostics.push(
+                    Diagnostic::new(DiagnosticCode::TypeError, "unknown constructor field")
+                        .with_label(Label::primary(argument.span, "unknown field here")),
+                );
+                continue;
+            };
+            if let Some(actual) = self.check_expression(&argument.value) {
+                self.expect_same(&field.type_, &actual, argument.span);
+            }
+        }
+    }
+
+    fn check_binary_operation(&mut self, operation: &ast::BinaryOperation) -> Option<Type> {
+        let left = self.check_expression(&operation.left)?;
+        let right = self.check_expression(&operation.right)?;
+        match operation.operator {
+            ast::BinaryOperator::Add
+            | ast::BinaryOperator::Subtract
+            | ast::BinaryOperator::Multiply
+            | ast::BinaryOperator::Divide
+            | ast::BinaryOperator::Remainder => {
+                self.expect_same(&Type::Int, &left, operation.left.span());
+                self.expect_same(&Type::Int, &right, operation.right.span());
+                Some(Type::Int)
+            }
+            ast::BinaryOperator::FloatAdd
+            | ast::BinaryOperator::FloatSubtract
+            | ast::BinaryOperator::FloatMultiply
+            | ast::BinaryOperator::FloatDivide => {
+                self.expect_same(&Type::Float, &left, operation.left.span());
+                self.expect_same(&Type::Float, &right, operation.right.span());
+                Some(Type::Float)
+            }
+            ast::BinaryOperator::And | ast::BinaryOperator::Or => {
+                self.expect_same(&Type::Bool, &left, operation.left.span());
+                self.expect_same(&Type::Bool, &right, operation.right.span());
+                Some(Type::Bool)
+            }
+            ast::BinaryOperator::StringConcat => {
+                self.expect_same(&Type::String, &left, operation.left.span());
+                self.expect_same(&Type::String, &right, operation.right.span());
+                Some(Type::String)
+            }
+            ast::BinaryOperator::Equal | ast::BinaryOperator::NotEqual => {
+                self.expect_same(&left, &right, operation.right.span());
+                Some(Type::Bool)
+            }
+            ast::BinaryOperator::LessThan
+            | ast::BinaryOperator::LessThanEqual
+            | ast::BinaryOperator::GreaterThan
+            | ast::BinaryOperator::GreaterThanEqual => {
+                self.expect_same(&Type::Int, &left, operation.left.span());
+                self.expect_same(&Type::Int, &right, operation.right.span());
+                Some(Type::Bool)
+            }
+            ast::BinaryOperator::FloatLessThan
+            | ast::BinaryOperator::FloatLessThanEqual
+            | ast::BinaryOperator::FloatGreaterThan
+            | ast::BinaryOperator::FloatGreaterThanEqual => {
+                self.expect_same(&Type::Float, &left, operation.left.span());
+                self.expect_same(&Type::Float, &right, operation.right.span());
+                Some(Type::Bool)
+            }
+        }
+    }
+
+    fn check_pipeline(&mut self, pipeline: &ast::Pipeline) -> Option<Type> {
+        let input = self.check_expression(&pipeline.value)?;
+        let into = self.check_expression(&pipeline.into)?;
+        match into {
+            Type::Function { params, return_type } => {
+                if let Some(first) = params.first() {
+                    self.expect_same(first, &input, pipeline.value.span());
+                }
+                Some(*return_type)
+            }
+            other => Some(other),
+        }
+    }
+
+    fn check_unary_operation(&mut self, operation: &ast::UnaryOperation) -> Option<Type> {
+        let value = self.check_expression(&operation.value)?;
+        match operation.operator {
+            ast::UnaryOperator::BooleanNot => {
+                self.expect_same(&Type::Bool, &value, operation.value.span());
+                Some(Type::Bool)
+            }
+            ast::UnaryOperator::IntegerNegate => {
+                self.expect_same(&Type::Int, &value, operation.value.span());
+                Some(Type::Int)
+            }
+        }
+    }
+
+    fn check_use(&mut self, use_: &ast::Use) -> Option<Type> {
+        let value_type = self.check_expression(&use_.value)?;
+        for assignment in &use_.assignments {
+            let type_ = assignment
+                .type_annotation
+                .as_ref()
+                .and_then(|annotation| self.parse_type_annotation(annotation))
+                .unwrap_or_else(|| value_type.clone());
+            self.bind_pattern(&assignment.pattern, &type_);
+        }
+        Some(value_type)
+    }
+
+    fn check_anonymous_function(&mut self, function: &ast::AnonymousFunction) -> Option<Type> {
+        self.push_scope();
+        let mut params = Vec::new();
+        for parameter in &function.parameters {
+            let type_ = parameter
+                .type_annotation
+                .as_ref()
+                .and_then(|annotation| self.parse_type_annotation(annotation))
+                .unwrap_or(Type::Nil);
+            if let Some(name) = &parameter.name {
+                self.define(name.text.clone(), type_.clone());
+            }
+            params.push(type_);
+        }
+        let body_type = self.check_block(&function.body)?;
+        self.pop_scope();
+        let return_type = function
+            .return_type
+            .as_ref()
+            .and_then(|annotation| self.parse_type_annotation(annotation))
+            .unwrap_or(body_type);
+        Some(Type::Function { params, return_type: Box::new(return_type) })
+    }
+
+    fn check_capture(&mut self, capture: &ast::Capture) -> Option<Type> {
+        let function_type = self.check_expression(&capture.function)?;
+        let Type::Function { params, return_type } = function_type else {
+            self.diagnostics.push(
+                Diagnostic::new(DiagnosticCode::TypeError, "captured value is not a function")
+                    .with_label(Label::primary(capture.span, "not a function")),
+            );
+            return None;
+        };
+        let mut remaining = Vec::new();
+        for (index, parameter) in params.iter().enumerate() {
+            match capture.arguments.get(index).and_then(Option::as_ref) {
+                Some(argument) => {
+                    if let Some(actual) = self.check_expression(&argument.value) {
+                        self.expect_same(parameter, &actual, argument.span);
+                    }
+                }
+                None => remaining.push(parameter.clone()),
+            }
+        }
+        Some(Type::Function { params: remaining, return_type })
+    }
+
+    fn check_tuple_access(&mut self, access: &ast::TupleAccess) -> Option<Type> {
+        let tuple = self.check_expression(&access.tuple)?;
+        let Type::Tuple(elements) = tuple else {
+            self.diagnostics.push(
+                Diagnostic::new(DiagnosticCode::TypeError, "tuple access used with non-tuple value")
+                    .with_label(Label::primary(access.span, "not a tuple")),
+            );
+            return None;
+        };
+        let index = access.index.text.parse::<usize>().ok()?;
+        elements.get(index).cloned().or_else(|| {
+            self.diagnostics.push(
+                Diagnostic::new(DiagnosticCode::TypeError, "tuple index is out of bounds")
+                    .with_label(Label::primary(access.index.span, "out of bounds")),
+            );
+            None
+        })
     }
 
     fn bind_pattern(&mut self, pattern: &Pattern, type_: &Type) {
@@ -1006,6 +1390,47 @@ fn parse_function_type(source: &str) -> Option<Type> {
     Some(Type::Function { params, return_type: Box::new(return_type) })
 }
 
+fn values_from_ast(module: &ast::Module) -> Vec<(String, Type)> {
+    let mut checker = TypeChecker::new(ResolvedModule {
+        ast: module.clone(),
+        symbols: resolve::SymbolTable { symbols: Vec::new(), scopes: Vec::new() },
+        references: Vec::new(),
+    });
+    let mut values = Vec::new();
+    for declaration in &module.declarations {
+        match declaration {
+            Declaration::Function(function) => {
+                if let Some(type_) = checker.function_type_from_annotations(function) {
+                    values.push((function.name.text.clone(), type_.clone()));
+                    values.push((format!("{}.{}", module_name(module), function.name.text), type_));
+                }
+            }
+            Declaration::ExternalFunction(function) => {
+                if let Some(type_) = checker.external_function_type(function) {
+                    values.push((function.name.text.clone(), type_.clone()));
+                    values.push((format!("{}.{}", module_name(module), function.name.text), type_));
+                }
+            }
+            Declaration::Constant(constant) => {
+                if let Some(type_) = checker.constant_type(constant) {
+                    values.push((constant.name.text.clone(), type_.clone()));
+                    values.push((format!("{}.{}", module_name(module), constant.name.text), type_));
+                }
+            }
+            _ => {}
+        }
+    }
+    values
+}
+
+fn module_name(module: &ast::Module) -> String {
+    module
+        .imports
+        .first()
+        .map(|import| import.module.text.clone())
+        .unwrap_or_else(|| "module".into())
+}
+
 fn constructors_from_ast(module: &ast::Module) -> Vec<(String, ConstructorInfo)> {
     module
         .declarations
@@ -1063,13 +1488,7 @@ fn type_definition_from_ast(type_: &ast::TypeDefinition) -> Option<TypeDeclarati
 }
 
 fn type_alias_from_ast(alias: &ast::TypeAlias) -> Option<TypeDeclaration> {
-    Some(TypeDeclaration {
-        name: alias.name.text.clone(),
-        parameters: alias.parameters.clone(),
-        opaque: alias.opaque,
-        constructors: Vec::new(),
-        span: alias.span,
-    })
+    Some(alias.clone().into())
 }
 
 #[cfg(test)]

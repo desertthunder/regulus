@@ -28,14 +28,14 @@ backend target.
 
 ### Type checking
 
-- [ ] Implement or import full local and top-level type inference.
-- [ ] Type-check generic functions and generic custom types.
-- [ ] Type-check records, updates, labels, constructors, tuples, lists, strings,
+- [x] Implement or import full local and top-level type inference.
+- [x] Type-check generic functions and generic custom types.
+- [x] Type-check records, updates, labels, constructors, tuples, lists, strings,
       bit arrays, functions, captures, and operators.
-- [ ] Type-check pipelines, `use`, guards, `panic`, `todo`, `assert`, and
+- [x] Type-check pipelines, `use`, guards, `panic`, `todo`, `assert`, and
       `let assert`.
-- [ ] Type-check imported functions, types, constructors, and opaque values.
-- [ ] Preserve complete module interfaces for downstream phases.
+- [x] Type-check imported functions, types, constructors, and opaque values.
+- [x] Preserve complete module interfaces for downstream phases.
 
 ### Pattern matching
 
