@@ -24,14 +24,13 @@
 - [Intermediate representations and lowering](./chapter_5.md)
 - [Runtime value representation](./chapter_6.md)
 - [WebAssembly code generation](./chapter_7.md)
+  - [Modules and stack machine](./chapter_7/modules_stack_machine.md)
+  - [Text and binary formats](./chapter_7/text_binary_format.md)
+  - [Memory and module boundaries](./chapter_7/memory_tables_imports_exports.md)
+  - [Wasmtime and browser](./chapter_7/running_wasmtime_browser.md)
 
 <!--
 TODO:
-- WebAssembly
-  - WebAssembly modules and the stack machine
-  - WebAssembly text format and binary format
-  - WebAssembly memory, tables, imports, and exports
-  - Running WebAssembly in Wasmtime and the browser
 - Compiler architecture from source to executable
 - Diagnostics and source spans
 - Type checking and type inference
@@ -48,7 +47,6 @@ TODO:
   - Binding variables from nested patterns, aliases, records, lists, and bit
     strings
   - Exhaustiveness, unreachable branch, and redundant pattern diagnostics
-- Code generation for WebAssembly
 - Linking modules and handling dependencies
 - Standard library and host interop
 - Testing a compiler end to end
