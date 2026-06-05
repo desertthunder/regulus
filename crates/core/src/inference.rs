@@ -16,6 +16,6 @@ pub use constraints::{
     Constraint, ConstraintGeneration, ConstraintGenerationError, ConstraintGenerator, ConstraintSet,
 };
 pub use generics::{Environment, Scheme, TypeVarSupply};
-pub use interfaces::InferenceInterface;
+pub use interfaces::{InferenceInterface, constructor_scheme, environment_from_interfaces};
 pub use substitutions::{Field, InferenceVariable, Substitutions, TypeTerm};
 pub use unification::{UnificationError, Unifier};

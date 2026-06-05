@@ -1,4 +1,5 @@
 use super::generics::{Environment, Scheme, TypeVarSupply};
+use super::interfaces::constructor_scheme;
 use super::substitutions::Substitutions;
 use super::unification::UnificationError;
 use super::{TypeTerm, Unifier};
@@ -523,19 +524,15 @@ impl ConstraintGenerator {
     }
 
     fn constructor_function(&mut self, name: &str, span: Span) -> Result<TypeTerm> {
+        if let Some(scheme) = self.environment.get_constructor(name) {
+            return Ok(scheme.instantiate(&mut self.supply));
+        }
+
         let constructor = self
             .constructors
             .get(name)
             .ok_or_else(|| ConstraintGenerationError::UnknownConstructor { name: name.to_string(), span })?;
-        let function = TypeTerm::Function {
-            params: constructor
-                .fields
-                .iter()
-                .map(|field| TypeTerm::from_type(&field.type_))
-                .collect(),
-            return_type: Box::new(TypeTerm::from_type(&constructor.return_type)),
-        };
-        Ok(Scheme::instantiate_named_generics(&function, &mut self.supply))
+        Ok(constructor_scheme(constructor).instantiate(&mut self.supply))
     }
 
     fn annotation_or_fresh(&mut self, annotation: Option<&ast::TypeAnnotation>) -> Result<TypeTerm> {

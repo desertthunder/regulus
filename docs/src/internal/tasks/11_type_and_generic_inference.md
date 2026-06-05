@@ -27,11 +27,11 @@ Infer full Gleam expression, function, pattern, and module interface types.
 
 ### Generics and interfaces
 
-- [ ] Generalize top-level functions and eligible local bindings.
-- [ ] Instantiate generic values and constructors on lookup.
-- [ ] Infer generic custom-type constructor uses and constructor patterns.
-- [ ] Store inferred public schemes in module interfaces.
-- [ ] Instantiate imported module interface schemes across project modules.
+- [x] Generalize top-level functions and eligible local bindings.
+- [x] Instantiate generic values and constructors on lookup.
+- [x] Infer generic custom-type constructor uses and constructor patterns.
+- [x] Store inferred public schemes in module interfaces.
+- [x] Instantiate imported module interface schemes across project modules.
 
 ### Diagnostics and tests
 
