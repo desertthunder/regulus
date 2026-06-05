@@ -69,6 +69,7 @@ TODO:
   - [Gleam syntax](internal/development/full_gleam_syntax.md)
   - [Name resolution](internal/development/full_name_resolution.md)
   - [Types and interfaces](internal/development/gleam_types_and_interfaces.md)
+  - [Type inference](internal/development/type_and_generic_inference.md)
   - [Runtime representation](internal/development/runtime_representation.md)
   - [Pattern matching](internal/development/pattern_matching.md)
   - [Core IR](internal/development/core_ir_for_real_programs.md)
@@ -86,13 +87,11 @@ TODO:
 # Internal Docs
 
 - [Specs]()
-  - [Type inference](internal/specs/11_type_and_generic_inference.md)
   - [Runtime memory](internal/specs/12_runtime_memory_and_semantics.md)
   - [Language semantics](internal/specs/13_remaining_language_semantics.md)
   - [Stdlib and host interop](internal/specs/14_stdlib_and_host_interop.md)
   - [CLI and build outputs](internal/specs/15_cli_and_build_outputs.md)
 - [Active tasks]()
-  - [Type inference](internal/tasks/11_type_and_generic_inference.md)
   - [Runtime memory](internal/tasks/12_runtime_memory_and_semantics.md)
   - [Language semantics](internal/tasks/13_remaining_language_semantics.md)
   - [Stdlib and host interop](internal/tasks/14_stdlib_and_host_interop.md)

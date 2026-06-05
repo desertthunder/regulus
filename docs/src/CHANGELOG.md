@@ -4,6 +4,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Type and generic inference now includes reusable inference variables, type
+  schemes, substitutions, constraint generation, unification, generalization,
+  constructor schemes, and inference interfaces.
+
+### Changed
+
+- The type inference plan graduated from internal specs and tasks into the
+  development docs as conceptual implementation documentation.
+
 ## [1.0.0] - 2026-06-05
 
 ### Added
