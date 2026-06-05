@@ -23,6 +23,7 @@ pub struct BitArraySegment {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BitStringPatternSegment {
+    pub value: Option<u64>,
     pub binding: Option<super::LocalId>,
     pub bit_size: Option<u32>,
     pub type_: BitSegmentType,
@@ -68,19 +69,25 @@ pub(super) fn ast_bit_array_literal(bit_array: &ast::BitArray) -> BitArrayLitera
                 }
                 _ => return None,
             };
+            let option_source = segment
+                .options
+                .iter()
+                .map(|option| option.source.as_str())
+                .collect::<Vec<_>>()
+                .join("-");
             let options = segment
                 .options
                 .iter()
                 .filter_map(|option| bit_segment_options(&option.source).into_iter().next())
                 .collect::<Vec<_>>();
-            let bit_size = options
-                .iter()
-                .find_map(|option| match option {
-                    BitSegmentOption::Size(size) => Some(*size),
-                    _ => None,
-                })
-                .unwrap_or(8);
-            Some(BitArraySegment { value, bit_size, type_: BitSegmentType::Integer, options, span: segment.span })
+            let bit_size = bit_size_from_options(&options).unwrap_or(8);
+            Some(BitArraySegment {
+                value,
+                bit_size,
+                type_: bit_segment_type(&option_source),
+                options,
+                span: segment.span,
+            })
         })
         .collect::<Vec<_>>();
     let bit_len = segments.iter().map(|segment| segment.bit_size).sum();
@@ -106,17 +113,25 @@ fn bit_array_segment(source: &str, span: Span) -> Option<BitArraySegment> {
     if source.is_empty() {
         return None;
     }
-    let (value, options) = source.split_once(':').unwrap_or((source, ""));
+    let (value, option_source) = source.split_once(':').unwrap_or((source, ""));
     let value = value.trim().parse::<u64>().ok()?;
-    let options = bit_segment_options(options);
-    let bit_size = options
-        .iter()
-        .find_map(|option| match option {
-            BitSegmentOption::Size(size) => Some(*size),
+    let options = bit_segment_options(option_source);
+    let bit_size = bit_size_from_options(&options).unwrap_or(8);
+    Some(BitArraySegment { value, bit_size, type_: bit_segment_type(option_source), options, span })
+}
+
+fn bit_segment_type(source: &str) -> BitSegmentType {
+    source
+        .split('-')
+        .find_map(|option| match option.trim() {
+            "float" => Some(BitSegmentType::Float),
+            "binary" | "bytes" | "bits" | "bit_string" => Some(BitSegmentType::Binary),
+            "utf8" => Some(BitSegmentType::Utf8),
+            "utf16" => Some(BitSegmentType::Utf16),
+            "utf32" => Some(BitSegmentType::Utf32),
             _ => None,
         })
-        .unwrap_or(8);
-    Some(BitArraySegment { value, bit_size, type_: BitSegmentType::Integer, options, span })
+        .unwrap_or(BitSegmentType::Integer)
 }
 
 fn bit_segment_options(source: &str) -> Vec<BitSegmentOption> {
@@ -147,6 +162,21 @@ fn bit_segment_options(source: &str) -> Vec<BitSegmentOption> {
         .collect()
 }
 
+fn bit_size_from_options(options: &[BitSegmentOption]) -> Option<u32> {
+    let size = options.iter().find_map(|option| match option {
+        BitSegmentOption::Size(size) => Some(*size),
+        _ => None,
+    })?;
+    let unit = options
+        .iter()
+        .find_map(|option| match option {
+            BitSegmentOption::Unit(unit) => Some(*unit),
+            _ => None,
+        })
+        .unwrap_or(1);
+    size.checked_mul(unit)
+}
+
 pub(super) fn bit_string_pattern_segments(
     context: &mut FunctionContext, raw: &ast::RawSyntax,
 ) -> Vec<BitStringPatternSegment> {
@@ -165,17 +195,26 @@ pub(super) fn bit_string_pattern_segments(
 }
 
 fn bit_string_pattern_segment(context: &mut FunctionContext, source: &str, span: Span) -> BitStringPatternSegment {
-    let (value, options) = source.split_once(':').unwrap_or((source, ""));
-    let options = bit_segment_options(options);
-    let bit_size = options.iter().find_map(|option| match option {
-        BitSegmentOption::Size(size) => Some(*size),
-        _ => None,
+    let (value, option_source) = source.split_once(':').unwrap_or((source, ""));
+    let options = bit_segment_options(option_source);
+    let type_ = bit_segment_type(option_source);
+    let bit_size = bit_size_from_options(&options).or(match type_ {
+        BitSegmentType::Binary => None,
+        _ => Some(8),
     });
-    let binding = value.trim().chars().next().filter(|char| char.is_lowercase()).map(|_| {
-        let name = ast::Name { span, text: value.trim().into() };
-        let local = context.allocate(&name, Type::Int);
+    let value = value.trim();
+    let literal = value.parse::<u64>().ok();
+    let binding = (literal.is_none() && value.chars().next().is_some_and(char::is_lowercase)).then(|| {
+        let name = ast::Name { span, text: value.into() };
+        let local = context.allocate(
+            &name,
+            match type_ {
+                BitSegmentType::Binary => Type::BitArray,
+                _ => Type::Int,
+            },
+        );
         context.bind(name.text, local.id);
         local.id
     });
-    BitStringPatternSegment { binding, bit_size, type_: BitSegmentType::Integer, options, span }
+    BitStringPatternSegment { value: literal, binding, bit_size, type_, options, span }
 }

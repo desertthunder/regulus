@@ -18,11 +18,11 @@ Replace placeholder semantics for represented language forms with full behavior.
 
 ### Bit-string matching
 
-- [ ] Implement segment matching for integer, bytes, bit-string, string, and
+- [x] Implement segment matching for integer, bytes, bit-string, string, and
       variable-sized segments.
-- [ ] Implement size, unit, signed/unsigned, endian, and validation rules.
-- [ ] Bind bit-string pattern variables with correct spans and types.
-- [ ] Add lowering and Wasm tests for successful and failed matches.
+- [x] Implement size, unit, signed/unsigned, endian, and validation rules.
+- [x] Bind bit-string pattern variables with correct spans and types.
+- [x] Add lowering and Wasm tests for successful and failed matches.
 
 ### Closures and captures
 

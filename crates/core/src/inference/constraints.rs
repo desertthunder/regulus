@@ -279,7 +279,12 @@ impl ConstraintGenerator {
                 self.bind_pattern(&alias.pattern, expected)?;
                 self.define(alias.alias.text.clone(), Scheme::monomorphic(expected.clone()));
             }
-            Pattern::BitString(raw) => self.constraints.push(TypeTerm::BitArray, expected.clone(), raw.span),
+            Pattern::BitString(raw) => {
+                self.constraints.push(TypeTerm::BitArray, expected.clone(), raw.span);
+                for binding in bit_string_pattern_bindings(raw) {
+                    self.define(binding.name.text, Scheme::monomorphic(binding.type_));
+                }
+            }
             Pattern::Raw(_) => {}
         }
         Ok(())
@@ -666,6 +671,38 @@ fn raw_type(kind: &str) -> Option<TypeTerm> {
         "list" => Some(TypeTerm::List(Box::new(TypeTerm::Nil))),
         _ => None,
     }
+}
+
+struct BitStringPatternBinding {
+    name: ast::Name,
+    type_: TypeTerm,
+}
+
+fn bit_string_pattern_bindings(raw: &ast::RawSyntax) -> Vec<BitStringPatternBinding> {
+    raw.source
+        .trim()
+        .strip_prefix("<<")
+        .and_then(|source| source.strip_suffix(">>"))
+        .into_iter()
+        .flat_map(|inner| inner.split(','))
+        .filter_map(|segment| {
+            let (name, options) = segment.split_once(':').unwrap_or((segment, ""));
+            let name = name.trim();
+            name.chars()
+                .next()
+                .is_some_and(char::is_lowercase)
+                .then(|| BitStringPatternBinding {
+                    name: ast::Name { span: raw.span, text: name.into() },
+                    type_: if bit_string_segment_is_binary(options) { TypeTerm::BitArray } else { TypeTerm::Int },
+                })
+        })
+        .collect()
+}
+
+fn bit_string_segment_is_binary(options: &str) -> bool {
+    options
+        .split('-')
+        .any(|option| matches!(option.trim(), "binary" | "bytes" | "bits" | "bit_string"))
 }
 
 fn expression_span(expression: &Expression) -> Span {

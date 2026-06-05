@@ -697,7 +697,8 @@ impl Emitter {
                     self.bind_managed_pattern_field(subject, &argument.pattern, 12 + index * 8);
                 }
             }
-            ir::IrPattern::Discard | ir::IrPattern::Literal(_) | ir::IrPattern::BitString(_) => {}
+            ir::IrPattern::Discard | ir::IrPattern::Literal(_) => {}
+            ir::IrPattern::BitString(segments) => self.bind_bit_string_pattern(subject, segments),
         }
     }
 
@@ -761,8 +762,131 @@ impl Emitter {
                 writeln!(self.functions, "    i32.eq").expect("write WAT");
                 writeln!(self.functions, "    i32.and").expect("write WAT");
             }
-            ir::IrPattern::BitString(_) => self.managed_tag_test(subject, runtime::ObjectTag::BitArray, None),
+            ir::IrPattern::BitString(segments) => self.bit_string_pattern_test(subject, segments, span),
         }
+    }
+
+    fn bit_string_pattern_test(
+        &mut self, subject: &ir::Expression, segments: &[ir::BitStringPatternSegment], span: crate::source::Span,
+    ) {
+        self.managed_tag_test(subject, runtime::ObjectTag::BitArray, None);
+        if !self.validate_bit_string_pattern_segments(segments, span) {
+            writeln!(self.functions, "    i32.const 0").expect("write WAT");
+            return;
+        }
+        let fixed_bit_len = segments.iter().filter_map(|segment| segment.bit_size).sum::<u32>();
+        let has_variable_tail = segments.last().is_some_and(|segment| segment.bit_size.is_none());
+        self.expression(subject);
+        writeln!(self.functions, "    i32.const 4").expect("write WAT");
+        writeln!(self.functions, "    i32.add").expect("write WAT");
+        writeln!(self.functions, "    i32.load").expect("write WAT");
+        writeln!(self.functions, "    i32.const {fixed_bit_len}").expect("write WAT");
+        if has_variable_tail {
+            writeln!(self.functions, "    i32.ge_u").expect("write WAT");
+        } else {
+            writeln!(self.functions, "    i32.eq").expect("write WAT");
+        }
+        writeln!(self.functions, "    i32.and").expect("write WAT");
+
+        let mut offset = 0;
+        for segment in segments {
+            if let Some(value) = segment.value {
+                self.bit_string_integer_segment_test(subject, offset, segment.bit_size.unwrap_or(8), value, span);
+                writeln!(self.functions, "    i32.and").expect("write WAT");
+            }
+            offset += segment.bit_size.unwrap_or(0);
+        }
+    }
+
+    fn validate_bit_string_pattern_segments(
+        &mut self, segments: &[ir::BitStringPatternSegment], span: crate::source::Span,
+    ) -> bool {
+        let mut valid = true;
+        for (index, segment) in segments.iter().enumerate() {
+            match segment.type_ {
+                ir::BitSegmentType::Integer => {}
+                ir::BitSegmentType::Binary if segment.bit_size.is_some() || index + 1 == segments.len() => {}
+                _ => {
+                    self.diagnostics.push(
+                        Diagnostic::new(DiagnosticCode::WasmError, "unsupported bit-string pattern segment type")
+                            .with_label(Label::primary(span, "unsupported segment type")),
+                    );
+                    valid = false;
+                }
+            }
+        }
+        valid
+    }
+
+    fn bit_string_integer_segment_test(
+        &mut self, subject: &ir::Expression, offset: u32, bit_size: u32, value: u64, span: crate::source::Span,
+    ) {
+        if bit_size > 64 {
+            self.diagnostics.push(
+                Diagnostic::new(DiagnosticCode::WasmError, "bit-string integer segment is too large")
+                    .with_label(Label::primary(span, "segment too large")),
+            );
+            writeln!(self.functions, "    i32.const 0").expect("write WAT");
+            return;
+        }
+        let mut emitted_any = false;
+        for bit in 0..bit_size {
+            self.expression(subject);
+            writeln!(self.functions, "    i32.const {}", offset + bit).expect("write WAT");
+            writeln!(self.functions, "    call $__bit_array_get_bit").expect("write WAT");
+            let shift = bit_size - bit - 1;
+            writeln!(self.functions, "    i32.const {}", (value >> shift) & 1).expect("write WAT");
+            writeln!(self.functions, "    i32.eq").expect("write WAT");
+            if emitted_any {
+                writeln!(self.functions, "    i32.and").expect("write WAT");
+            }
+            emitted_any = true;
+        }
+        if !emitted_any {
+            writeln!(self.functions, "    i32.const 1").expect("write WAT");
+        }
+        self.uses_runtime = true;
+    }
+
+    fn bind_bit_string_pattern(&mut self, subject: &ir::Expression, segments: &[ir::BitStringPatternSegment]) {
+        let mut offset = 0;
+        for segment in segments {
+            if let Some(local) = segment.binding {
+                match segment.type_ {
+                    ir::BitSegmentType::Binary => self.extract_bit_string_binary_segment(subject, offset),
+                    _ => self.extract_bit_string_integer_segment(subject, offset, segment.bit_size.unwrap_or(8)),
+                }
+                writeln!(self.functions, "    local.set ${}", local.0).expect("write WAT");
+            }
+            offset += segment.bit_size.unwrap_or(0);
+        }
+    }
+
+    fn extract_bit_string_integer_segment(&mut self, subject: &ir::Expression, offset: u32, bit_size: u32) {
+        writeln!(self.functions, "    i64.const 0").expect("write WAT");
+        for bit in 0..bit_size.min(64) {
+            writeln!(self.functions, "    i64.const 1").expect("write WAT");
+            writeln!(self.functions, "    i64.shl").expect("write WAT");
+            self.expression(subject);
+            writeln!(self.functions, "    i32.const {}", offset + bit).expect("write WAT");
+            writeln!(self.functions, "    call $__bit_array_get_bit").expect("write WAT");
+            writeln!(self.functions, "    i64.extend_i32_u").expect("write WAT");
+            writeln!(self.functions, "    i64.or").expect("write WAT");
+        }
+        self.uses_runtime = true;
+    }
+
+    fn extract_bit_string_binary_segment(&mut self, subject: &ir::Expression, offset: u32) {
+        self.expression(subject);
+        writeln!(self.functions, "    i32.const {offset}").expect("write WAT");
+        self.expression(subject);
+        writeln!(self.functions, "    i32.const 4").expect("write WAT");
+        writeln!(self.functions, "    i32.add").expect("write WAT");
+        writeln!(self.functions, "    i32.load").expect("write WAT");
+        writeln!(self.functions, "    i32.const {offset}").expect("write WAT");
+        writeln!(self.functions, "    i32.sub").expect("write WAT");
+        writeln!(self.functions, "    call $__bit_array_slice").expect("write WAT");
+        self.uses_runtime = true;
     }
 
     fn managed_tag_test(&mut self, subject: &ir::Expression, tag: runtime::ObjectTag, size: Option<u32>) {
@@ -1653,6 +1777,42 @@ pub fn boxed() { Box(42) }
         );
         assert_eq!(u32::from_le_bytes(bytes[4..8].try_into().unwrap()), 24);
         assert_eq!(&bytes[8..11], &[1, 2, 3]);
+    }
+
+    #[test]
+    fn runs_bit_string_pattern_matching() {
+        let wasm = compile_wasm(
+            r#"pub fn matches() { case <<1, 2>> { <<1, 2>> -> True _ -> False } }
+pub fn fails() { case <<1, 3>> { <<1, 2>> -> True _ -> False } }
+pub fn binds() { case <<42>> { <<x>> -> x } }
+pub fn rest() { case <<1, 2, 3>> { <<1, rest:bits>> -> rest } }
+"#,
+        );
+        let engine = Engine::default();
+        let module = Module::new(&engine, &wasm.bytes).expect("compile wasm module");
+        let mut store = Store::new(&engine, ());
+        let instance = Instance::new(&mut store, &module, &[]).expect("instantiate module");
+        let matches = instance
+            .get_typed_func::<(), i32>(&mut store, "matches")
+            .expect("get matches export");
+        assert_eq!(matches.call(&mut store, ()).expect("call matches"), 1);
+        let fails = instance
+            .get_typed_func::<(), i32>(&mut store, "fails")
+            .expect("get fails export");
+        assert_eq!(fails.call(&mut store, ()).expect("call fails"), 0);
+        let binds = instance
+            .get_typed_func::<(), i64>(&mut store, "binds")
+            .expect("get binds export");
+        assert_eq!(binds.call(&mut store, ()).expect("call binds"), 42);
+        let rest = instance
+            .get_typed_func::<(), i32>(&mut store, "rest")
+            .expect("get rest export");
+        let pointer = rest.call(&mut store, ()).expect("call rest") as usize;
+        let memory = instance.get_memory(&mut store, "memory").expect("memory export");
+        let mut bytes = [0; 24];
+        memory.read(&store, pointer, &mut bytes).expect("read rest bit array");
+        assert_eq!(u32::from_le_bytes(bytes[4..8].try_into().unwrap()), 16);
+        assert_eq!(&bytes[8..10], &[2, 3]);
     }
 
     #[test]

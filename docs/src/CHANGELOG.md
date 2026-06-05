@@ -16,6 +16,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   and recursive inferred types.
 - The main type checker now uses the shared inference unifier for type
   compatibility checks.
+- Bit-string patterns match integer segments, bind integer and variable
+  bit-array tails, validate segment shapes, and execute in Wasm tests.
 
 ### Changed
 
