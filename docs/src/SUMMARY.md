@@ -20,7 +20,13 @@
   - [Namespaces and imports](./chapter_3/namespaces_and_imports.md)
   - [Patterns, visibility, and packages](./chapter_3/patterns_visibility_packages.md)
   - [The current resolver](./chapter_3/current_resolver.md)
-- [Type systems](./chapter_4.md)
+- [Type checking and type inference](./chapter_4.md)
+  - [Local and top-level inference](./chapter_4/local_top_level_inference.md)
+  - [Algebraic data types](./chapter_4/algebraic_data_types.md)
+  - [Unification and substitution](./chapter_4/unification_and_substitution.md)
+  - [Calls, operators, and branches](./chapter_4/calls_operators_branches.md)
+  - [Patterns and imports](./chapter_4/patterns_imports_opaque.md)
+  - [Module interfaces](./chapter_4/module_interfaces.md)
 - [Intermediate representations and lowering](./chapter_5.md)
 - [Runtime value representation](./chapter_6.md)
 - [WebAssembly code generation](./chapter_7.md)
@@ -28,25 +34,20 @@
   - [Text and binary formats](./chapter_7/text_binary_format.md)
   - [Memory and module boundaries](./chapter_7/memory_tables_imports_exports.md)
   - [Wasmtime and browser](./chapter_7/running_wasmtime_browser.md)
+- [Pattern matching in the compiler](./chapter_8.md)
+  - [Compiling pattern matching](./chapter_8/compiling_pattern_matching.md)
+  - [Binding variables from patterns](./chapter_8/binding_variables.md)
+  - [Exhaustiveness diagnostics](./chapter_8/exhaustiveness_diagnostics.md)
 
 <!--
 TODO:
 - Compiler architecture from source to executable
 - Diagnostics and source spans
-- Type checking and type inference
-  - How local and top-level inference cooperate
-  - Type-checking imported functions, types, constructors, and opaque values
-  - Building module interfaces for downstream compiler phases
 - Lowering and intermediate representations
   - Lowering typed and resolved syntax into a smaller IR
   - Making evaluation order, scopes, captures, and failure paths explicit
   - Distinguishing language lowering from backend-specific limitations
 - Runtime value representation
-- Pattern Matching
-  - Compiling pattern matching
-  - Binding variables from nested patterns, aliases, records, lists, and bit
-    strings
-  - Exhaustiveness, unreachable branch, and redundant pattern diagnostics
 - Linking modules and handling dependencies
 - Standard library and host interop
 - Testing a compiler end to end
