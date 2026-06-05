@@ -1,4 +1,8 @@
-use std::{fs, path::PathBuf, process::ExitCode};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    process::ExitCode,
+};
 
 use compiler_core::{self, source::SourceFile, source::SourceFileId};
 
@@ -9,13 +13,13 @@ use crate::{
 
 pub fn run(command: Command) -> ExitCode {
     match command {
-        Command::Compile { input, output, wat, dump_dir, target } => compile(input, output, wat, dump_dir, target),
-        Command::Project { input } => project(input),
+        Command::Compile { input, output, wat, dump_dir, target } => compile(&input, output, wat, dump_dir, target),
+        Command::Project { input } => project(&input),
     }
 }
 
-fn project(input: PathBuf) -> ExitCode {
-    match compiler_core::project::load_project(&input) {
+fn project(input: &Path) -> ExitCode {
+    match compiler_core::project::load_project(input) {
         Ok(project) => {
             echo::status(
                 "project",
@@ -40,7 +44,7 @@ fn project(input: PathBuf) -> ExitCode {
 }
 
 fn compile(
-    input: PathBuf, output: Option<PathBuf>, wat: Option<Option<PathBuf>>, dump_dir: Option<PathBuf>, target: Target,
+    input: &Path, output: Option<PathBuf>, wat: Option<Option<PathBuf>>, dump_dir: Option<PathBuf>, target: Target,
 ) -> ExitCode {
     if !matches!(target, Target::Wasmtime) {
         echo::status(
@@ -49,8 +53,8 @@ fn compile(
         );
     }
 
-    let source = match fs::read_to_string(&input) {
-        Ok(source) => SourceFile::with_path(SourceFileId(0), input.clone(), source),
+    let source = match fs::read_to_string(input) {
+        Ok(source) => SourceFile::with_path(SourceFileId(0), input, source),
         Err(error) => {
             echo::error(format!("could not read {}: {error}", input.display()));
             return ExitCode::FAILURE;
@@ -105,16 +109,16 @@ struct CompiledModule {
 
 fn compile_with_dumps(source: SourceFile) -> Result<CompiledModule, compiler_core::diagnostic::Diagnostics> {
     let cst = compiler_core::parse::parse(source)?;
-    let ast = compiler_core::ast::build(cst)?;
+    let ast = compiler_core::ast::build(&cst)?;
     let resolved = compiler_core::resolve::resolve(ast.clone())?;
     let typed = compiler_core::types::check(resolved.clone())?;
     let ir = compiler_core::ir::lower(typed.clone())?;
-    let wasm = compiler_core::wasm::emit(ir.clone())?;
+    let wasm = compiler_core::wasm::emit(&ir)?;
 
     Ok(CompiledModule { ast, resolved, typed, ir, wasm })
 }
 
-fn write_debug_dumps(dump_dir: &PathBuf, compiled: &CompiledModule) -> std::io::Result<()> {
+fn write_debug_dumps(dump_dir: &Path, compiled: &CompiledModule) -> std::io::Result<()> {
     fs::create_dir_all(dump_dir)?;
     fs::write(dump_dir.join("ast.txt"), format!("{:#?}\n", compiled.ast))?;
     fs::write(dump_dir.join("resolved.txt"), format!("{:#?}\n", compiled.resolved))?;
@@ -124,7 +128,7 @@ fn write_debug_dumps(dump_dir: &PathBuf, compiled: &CompiledModule) -> std::io::
     Ok(())
 }
 
-fn write_file(path: &PathBuf, contents: &[u8]) -> std::io::Result<()> {
+fn write_file(path: &Path, contents: &[u8]) -> std::io::Result<()> {
     if let Some(parent) = path.parent()
         && !parent.as_os_str().is_empty()
     {

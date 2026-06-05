@@ -1083,7 +1083,7 @@ mod tests {
     fn check_source(source: &str) -> Result<TypedModule, Diagnostics> {
         let source = SourceFile::new(SourceFileId(0), source);
         let cst = parse::parse(source).expect("parse source");
-        let ast = ast::build(cst).expect("build ast");
+        let ast = ast::build(&cst).expect("build ast");
         let resolved = resolve::resolve(ast).expect("resolve names");
         check(resolved)
     }

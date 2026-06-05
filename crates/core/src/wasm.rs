@@ -11,8 +11,8 @@ pub struct WasmModule {
     pub bytes: Vec<u8>,
 }
 
-pub fn emit(module: ir::Module) -> Result<WasmModule, Diagnostics> {
-    let wat = emit_wat(&module)?;
+pub fn emit(module: &ir::Module) -> Result<WasmModule, Diagnostics> {
+    let wat = emit_wat(module)?;
     let bytes = wat::parse_str(&wat).map_err(|error| {
         vec![Diagnostic::new(
             DiagnosticCode::WasmError,
@@ -1016,11 +1016,11 @@ mod tests {
     fn compile_wasm(source: &str) -> WasmModule {
         let source = SourceFile::new(SourceFileId(0), source);
         let cst = parse::parse(source).expect("parse source");
-        let ast = ast::build(cst).expect("build ast");
+        let ast = ast::build(&cst).expect("build ast");
         let resolved = resolve::resolve(ast).expect("resolve names");
         let typed = types::check(resolved).expect("type check source");
         let ir = ir::lower(typed).expect("lower source");
-        emit(ir).expect("emit wasm")
+        emit(&ir).expect("emit wasm")
     }
 
     fn int_expr(source: &str, span: Span) -> ir::Expression {
@@ -1137,7 +1137,7 @@ mod tests {
 
     #[test]
     fn runs_host_import_in_wasmtime() {
-        let wasm = emit(host_import_module(Span::new(SourceFileId(0), 0, 0))).expect("emit wasm");
+        let wasm = emit(&host_import_module(Span::new(SourceFileId(0), 0, 0))).expect("emit wasm");
         let engine = Engine::default();
         let module = Module::new(&engine, &wasm.bytes).expect("compile wasm module");
         let mut store = Store::new(&engine, ());

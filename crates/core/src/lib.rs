@@ -27,11 +27,11 @@ pub fn compile(source: impl Into<String>) -> Result<CompileOutput, Diagnostics> 
 /// Compile an already-created source file.
 pub fn compile_source(source: SourceFile) -> Result<CompileOutput, Diagnostics> {
     let cst = parse::parse(source)?;
-    let ast = ast::build(cst)?;
+    let ast = ast::build(&cst)?;
     let resolved = resolve::resolve(ast)?;
     let typed = types::check(resolved)?;
     let ir = ir::lower(typed)?;
-    let wasm = wasm::emit(ir)?;
+    let wasm = wasm::emit(&ir)?;
 
     Ok(CompileOutput { wasm })
 }

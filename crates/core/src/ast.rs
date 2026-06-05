@@ -530,7 +530,7 @@ pub struct RawSyntax {
     pub source: String,
 }
 
-pub fn build(cst: ConcreteSyntaxTree) -> Result<Module, Diagnostics> {
+pub fn build(cst: &ConcreteSyntaxTree) -> Result<Module, Diagnostics> {
     let root = cst.tree.root_node();
     let builder = AstBuilder { source: &cst.source };
     builder.module(root)
@@ -1256,12 +1256,12 @@ impl AstBuilder<'_> {
     }
 
     fn case_clause_pattern(&self, node: Node<'_>) -> Result<Vec<Pattern>, Diagnostics> {
-        self.pattern_sequence(
-            self.named_children(node)
-                .into_iter()
-                .filter(|child| child.kind() != "list_pattern_tail" && child.kind() != "pattern_spread")
-                .collect(),
-        )
+        let children = self
+            .named_children(node)
+            .into_iter()
+            .filter(|child| child.kind() != "list_pattern_tail" && child.kind() != "pattern_spread")
+            .collect::<Vec<_>>();
+        self.pattern_sequence(&children)
     }
 
     fn pattern(&self, node: Node<'_>) -> Result<Pattern, Diagnostics> {
@@ -1298,15 +1298,15 @@ impl AstBuilder<'_> {
     }
 
     fn pattern_children(&self, node: Node<'_>) -> Result<Vec<Pattern>, Diagnostics> {
-        self.pattern_sequence(
-            self.named_children(node)
-                .into_iter()
-                .filter(|child| child.kind() != "list_pattern_tail" && child.kind() != "pattern_spread")
-                .collect(),
-        )
+        let children = self
+            .named_children(node)
+            .into_iter()
+            .filter(|child| child.kind() != "list_pattern_tail" && child.kind() != "pattern_spread")
+            .collect::<Vec<_>>();
+        self.pattern_sequence(&children)
     }
 
-    fn pattern_sequence(&self, children: Vec<Node<'_>>) -> Result<Vec<Pattern>, Diagnostics> {
+    fn pattern_sequence(&self, children: &[Node<'_>]) -> Result<Vec<Pattern>, Diagnostics> {
         let mut patterns = Vec::new();
         let mut index = 0;
         while index < children.len() {
@@ -1550,7 +1550,7 @@ mod tests {
     fn parse_ast(source: &str) -> Module {
         let source = SourceFile::new(SourceFileId(0), source);
         let cst = parse::parse(source).expect("parse source");
-        build(cst).expect("build ast")
+        build(&cst).expect("build ast")
     }
 
     #[test]

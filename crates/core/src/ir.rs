@@ -842,7 +842,7 @@ impl Lowerer {
             AstExpression::List(list) => Some(Expression {
                 type_: self
                     .typed_expression_type(list.span)
-                    .unwrap_or(Type::List(Box::new(Type::Int))),
+                    .unwrap_or_else(|| Type::List(Box::new(Type::Int))),
                 span: list.span,
                 kind: ExpressionKind::List(
                     list.elements
@@ -894,7 +894,7 @@ impl Lowerer {
             AstExpression::Raw(raw) if raw.kind == "list" => Some(Expression {
                 type_: self
                     .typed_expression_type(raw.span)
-                    .unwrap_or(Type::List(Box::new(Type::Int))),
+                    .unwrap_or_else(|| Type::List(Box::new(Type::Int))),
                 span: raw.span,
                 kind: ExpressionKind::List(raw_literal_arguments(raw, context, self)?),
             }),
@@ -921,12 +921,12 @@ impl Lowerer {
                     span: raw.span,
                 }),
             }),
-            AstExpression::Raw(raw) => self.unsupported_ast_expression(raw.kind.clone(), raw.span),
-            other => self.unsupported_ast_expression(ast_expression_kind(other), Span::from(other)),
+            AstExpression::Raw(raw) => self.unsupported_ast_expression(&raw.kind, raw.span),
+            other => self.unsupported_ast_expression(&ast_expression_kind(other), Span::from(other)),
         }
     }
 
-    fn unsupported_ast_expression(&mut self, kind: String, span: Span) -> Option<Expression> {
+    fn unsupported_ast_expression(&mut self, kind: &str, span: Span) -> Option<Expression> {
         self.diagnostics.push(
             Diagnostic::new(
                 DiagnosticCode::LoweringError,
@@ -1529,7 +1529,7 @@ mod tests {
     fn lower_source(source: &str) -> Module {
         let source = SourceFile::new(SourceFileId(0), source);
         let cst = parse::parse(source).expect("parse source");
-        let ast = ast::build(cst).expect("build ast");
+        let ast = ast::build(&cst).expect("build ast");
         let resolved = resolve::resolve(ast).expect("resolve names");
         let typed = types::check(resolved).expect("type check source");
         lower(typed).expect("lower source")

@@ -113,7 +113,7 @@ pub fn resolve_project(project: &Project) -> Result<ResolvedProject, Diagnostics
     let mut diagnostics = Vec::new();
 
     for (module_info, source) in project.graph.modules.iter().zip(project.sources.iter()) {
-        match parse::parse(source.clone()).and_then(ast::build) {
+        match parse::parse(source.clone()).and_then(|cst| ast::build(&cst)) {
             Ok(ast) => ast_modules.push((module_info.name.clone(), ast)),
             Err(mut errors) => diagnostics.append(&mut errors),
         }
@@ -928,7 +928,7 @@ mod tests {
     fn resolve_source(source: &str) -> Result<ResolvedModule, Diagnostics> {
         let source = SourceFile::new(SourceFileId(0), source);
         let cst = parse::parse(source).expect("parse source");
-        let ast = ast::build(cst).expect("build ast");
+        let ast = ast::build(&cst).expect("build ast");
         resolve(ast)
     }
 
