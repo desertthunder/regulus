@@ -1,6 +1,6 @@
 ---
 source: crates/core/src/ir.rs
-assertion_line: 1629
+assertion_line: 2252
 expression: module
 ---
 Module {
@@ -319,6 +319,7 @@ Module {
         Function {
             name: "choose",
             public: false,
+            closure_captures: [],
             params: [
                 Local {
                     id: LocalId(
@@ -796,6 +797,7 @@ Module {
         Function {
             name: "first",
             public: false,
+            closure_captures: [],
             params: [
                 Local {
                     id: LocalId(

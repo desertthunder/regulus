@@ -1,4 +1,5 @@
 pub mod bit_slices;
+mod closure;
 
 use std::collections::HashMap;
 
@@ -213,6 +214,7 @@ pub enum ExportKind {
 pub struct Function {
     pub name: String,
     pub public: bool,
+    pub closure_captures: Vec<Type>,
     pub params: Vec<Local>,
     pub locals: Vec<Local>,
     pub return_type: Type,
@@ -391,6 +393,7 @@ pub struct FunctionValue {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AnonymousFunction {
+    pub name: String,
     pub params: Vec<Local>,
     pub captures: Vec<Capture>,
     pub body: Block,
@@ -564,6 +567,8 @@ struct Lowerer {
     function_types: HashMap<String, Type>,
     expression_types: HashMap<Span, Type>,
     diagnostics: Diagnostics,
+    lifted_functions: Vec<Function>,
+    anonymous_counter: usize,
 }
 
 impl Lowerer {
@@ -579,7 +584,14 @@ impl Lowerer {
             .iter()
             .map(|expression| (expression.span, expression.type_.clone()))
             .collect();
-        Self { module, function_types, expression_types, diagnostics: Vec::new() }
+        Self {
+            module,
+            function_types,
+            expression_types,
+            diagnostics: Vec::new(),
+            lifted_functions: Vec::new(),
+            anonymous_counter: 0,
+        }
     }
 
     fn lower(mut self) -> Result<Module, Diagnostics> {
@@ -628,6 +640,7 @@ impl Lowerer {
                 functions.push(function);
             }
         }
+        functions.extend(std::mem::take(&mut self.lifted_functions));
 
         if self.diagnostics.is_empty() {
             Ok(Module { span: ast.span, imports, declarations, constants, init, references, exports, functions })
@@ -716,6 +729,7 @@ impl Lowerer {
         Some(Function {
             name: function.name.text.clone(),
             public: function.public,
+            closure_captures: Vec::new(),
             params,
             locals: context.locals,
             return_type,
@@ -1045,6 +1059,7 @@ impl Lowerer {
             type_: Type::Function { params: Vec::new(), return_type: Box::new(type_.clone()) },
             span: use_.span,
             kind: ExpressionKind::AnonymousFunction(AnonymousFunction {
+                name: String::new(),
                 params: Vec::new(),
                 captures: Vec::new(),
                 body: Block {
@@ -1065,102 +1080,17 @@ impl Lowerer {
     fn lower_anonymous_function(
         &mut self, context: &mut FunctionContext, function: &ast::AnonymousFunction,
     ) -> Option<Expression> {
-        context.push_scope();
-        let mut params = Vec::new();
-        for parameter in &function.parameters {
-            let Some(name) = &parameter.name else { continue };
-            let type_ = parameter
-                .type_annotation
-                .as_ref()
-                .and_then(|annotation| Type::from_source(&annotation.source))
-                .unwrap_or(Type::Nil);
-            let local = context.allocate(name, type_);
-            context.bind(name.text.clone(), local.id);
-            params.push(local);
-        }
-        let body = self.lower_block(context, &function.body)?;
-        context.pop_scope();
-        let type_ = self
-            .typed_expression_type(function.span)
-            .unwrap_or_else(|| Type::Function {
-                params: params.iter().map(|param| param.type_.clone()).collect(),
-                return_type: Box::new(body.result.type_.clone()),
-            });
-        Some(Expression {
-            type_: type_.clone(),
-            span: function.span,
-            kind: ExpressionKind::AnonymousFunction(AnonymousFunction {
-                params,
-                captures: Vec::new(),
-                abi: call_abi(&type_, CallBoundary::Internal),
-                body,
-            }),
-        })
+        closure::lower_anonymous_function(self, context, function)
     }
 
     fn lower_capture(&mut self, context: &mut FunctionContext, capture: &ast::Capture) -> Option<Expression> {
-        let function = self.lower_expression(context, &capture.function)?;
-        let Type::Function { params, return_type } = function.type_.clone() else {
-            return None;
-        };
-        let mut callback_context = FunctionContext::default();
-        callback_context.push_scope();
-        let mut callback_params = Vec::new();
-        let mut call_arguments = Vec::new();
-        for (index, param_type) in params.iter().enumerate() {
-            match capture.arguments.get(index).and_then(Option::as_ref) {
-                Some(argument) => call_arguments.push(CallArgument {
-                    label: argument.label.as_ref().map(|label| label.text.clone()),
-                    value: self.lower_expression(context, &argument.value)?,
-                    span: argument.span,
-                }),
-                None => {
-                    let name = ast::Name { span: capture.span, text: format!("_capture_{index}") };
-                    let local = callback_context.allocate(&name, param_type.clone());
-                    callback_context.bind(name.text.clone(), local.id);
-                    call_arguments.push(CallArgument {
-                        label: None,
-                        value: Expression {
-                            type_: param_type.clone(),
-                            span: capture.span,
-                            kind: ExpressionKind::LocalGet(local.id),
-                        },
-                        span: capture.span,
-                    });
-                    callback_params.push(local);
-                }
-            }
-        }
-        let body = Block {
-            instructions: Vec::new(),
-            result: Box::new(Expression {
-                type_: *return_type.clone(),
-                span: capture.span,
-                kind: ExpressionKind::IndirectCall(IndirectCall {
-                    callee: Box::new(function),
-                    arguments: call_arguments,
-                    abi: CallAbi {
-                        params: params.iter().map(AbiValue::from).collect(),
-                        return_: abi_return(&return_type),
-                        boundary: CallBoundary::Internal,
-                    },
-                }),
-            }),
-            span: capture.span,
-        };
-        callback_context.pop_scope();
-        let type_ =
-            Type::Function { params: callback_params.iter().map(|param| param.type_.clone()).collect(), return_type };
-        Some(Expression {
-            type_: type_.clone(),
-            span: capture.span,
-            kind: ExpressionKind::AnonymousFunction(AnonymousFunction {
-                params: callback_params,
-                captures: Vec::new(),
-                abi: call_abi(&type_, CallBoundary::Internal),
-                body,
-            }),
-        })
+        closure::lower_capture(self, context, capture)
+    }
+
+    fn next_anonymous_name(&mut self) -> String {
+        let name = format!("__anon_{}", self.anonymous_counter);
+        self.anonymous_counter += 1;
+        name
     }
 
     fn lower_record_update(&mut self, context: &mut FunctionContext, update: &ast::RecordUpdate) -> Option<Expression> {
@@ -1890,6 +1820,32 @@ mod tests {
         let apply = &module.functions[0];
         assert!(matches!(apply.body.result.kind, ExpressionKind::IndirectCall(_)));
         assert_eq!(apply.abi.params.len(), 2);
+    }
+
+    #[test]
+    fn lowers_partial_application_to_lifted_closure_with_captures() {
+        let module = lower_source(
+            r#"fn add(a: Int, b: Int) -> Int { a + b }
+fn main(x: Int) -> fn(Int) -> Int { add(x, _) }
+"#,
+        );
+        let main = module
+            .functions
+            .iter()
+            .find(|function| function.name == "main")
+            .expect("main");
+        let ExpressionKind::AnonymousFunction(callback) = &main.body.result.kind else {
+            panic!("expected partial application closure");
+        };
+        let lifted = module
+            .functions
+            .iter()
+            .find(|function| function.name == callback.name)
+            .expect("lifted closure");
+
+        assert_eq!(callback.captures.len(), 1);
+        assert_eq!(callback.params.len(), 1);
+        assert_eq!(lifted.closure_captures, vec![Type::Int]);
     }
 
     #[test]

@@ -63,10 +63,8 @@ and explained.
 - [x] Linear memory export and static string objects
 - [x] Bump allocation helper in the runtime prelude
 - [ ] Imported functions
-      ([spec](./docs/src/internal/specs/11_stdlib_and_host_interop.md))
 - [x] Runtime-managed records, lists, tuples, and custom values
 - [ ] Standard library and browser/WASI interop
-      ([spec](./docs/src/internal/specs/11_stdlib_and_host_interop.md))
 
 For more detail, see the book in [docs](./docs/src/introduction.md) and
 the current supported subset in the [supported subset](./docs/src/internal/supported_subset.md)

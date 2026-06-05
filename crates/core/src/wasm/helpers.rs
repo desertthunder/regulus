@@ -880,9 +880,9 @@ pub const MANAGED_VALUE_HELPERS: &str = r#"
   (func $__closure_new (param $function_id i32) (param $capture_count i32) (param $captures i32) (result i32)
     (local $ptr i32)
     local.get $capture_count
-    i32.const 4
+    i32.const {closure_capture_slot_size}
     i32.mul
-    i32.const 12
+    i32.const {closure_captures_offset}
     i32.add
     i32.const 7
     i32.add
@@ -899,16 +899,16 @@ pub const MANAGED_VALUE_HELPERS: &str = r#"
     local.get $capture_count
     i32.store
     local.get $ptr
-    i32.const 8
+    i32.const {closure_function_id_offset}
     i32.add
     local.get $function_id
     i32.store
     local.get $captures
     local.get $ptr
-    i32.const 12
+    i32.const {closure_captures_offset}
     i32.add
     local.get $capture_count
-    i32.const 4
+    i32.const {closure_capture_slot_size}
     i32.mul
     call $__copy_bytes
     local.get $ptr

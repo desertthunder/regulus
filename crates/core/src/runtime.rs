@@ -37,7 +37,9 @@ impl Layout {
     }
 
     pub fn closure_size(self, capture_count: u32) -> u32 {
-        self.align_to(self.header_size + self.word_size + capture_count * self.word_size)
+        self.align_to(
+            self.header_size + self.word_size + capture_count * u32::from(crate::ClosureConstants::CaptureSlotSize),
+        )
     }
 
     pub fn opaque_size(self) -> u32 {
@@ -170,7 +172,7 @@ pub fn custom_object(config: RuntimeConfig, offset: u32, constructor_tag: u32, f
     StaticObject { offset, bytes }
 }
 
-pub fn closure_object(config: RuntimeConfig, offset: u32, function_id: u32, captures: &[u32]) -> StaticObject {
+pub fn closure_object(config: RuntimeConfig, offset: u32, function_id: u32, captures: &[u64]) -> StaticObject {
     let size = config.layout.closure_size(captures.len() as u32);
     let mut bytes = Vec::with_capacity(size as usize);
     bytes.extend_from_slice(&u32::from(ObjectTag::Closure).to_le_bytes());
@@ -437,7 +439,7 @@ mod tests {
         assert_eq!(layout.tuple_size(3, 8), 32);
         assert_eq!(layout.record_size(2, 8), 24);
         assert_eq!(layout.custom_size(2, 8), 32);
-        assert_eq!(layout.closure_size(3), 24);
+        assert_eq!(layout.closure_size(3), 40);
         assert_eq!(layout.opaque_size(), 16);
         assert_eq!(layout.error_size(2, 8), 32);
         assert_eq!(layout.panic_size(1, 8), 24);

@@ -13,6 +13,23 @@ pub mod wasm;
 use diagnostic::Diagnostics;
 use source::{SourceFile, SourceFileId};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClosureConstants {
+    CaptureSlotSize,
+    FunctionIdOffset,
+    CapturesOffset,
+}
+
+impl From<ClosureConstants> for u32 {
+    fn from(value: ClosureConstants) -> Self {
+        match value {
+            ClosureConstants::CaptureSlotSize => 8,
+            ClosureConstants::FunctionIdOffset => 8,
+            ClosureConstants::CapturesOffset => 12,
+        }
+    }
+}
+
 /// Output from a full compile pipeline run.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompileOutput {

@@ -4,7 +4,7 @@ use std::{collections::HashMap, fmt::Write};
 
 use crate::diagnostic::{Diagnostic, DiagnosticCode, Diagnostics, Label};
 use crate::ir::{self, ExpressionKind, Instruction};
-use crate::{ast::LiteralKind, runtime, types::Type};
+use crate::{ClosureConstants, ast::LiteralKind, runtime, types::Type};
 
 /// WebAssembly output from the backend.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -84,13 +84,24 @@ pub fn emit_wat_with_options(module: &ir::Module, options: EmitOptions) -> Resul
                 (
                     function.name.clone(),
                     (
-                        function.params.iter().map(|param| param.type_.clone()).collect(),
+                        function
+                            .params
+                            .iter()
+                            .skip(function.closure_captures.len())
+                            .map(|param| param.type_.clone())
+                            .collect(),
                         function.return_type.clone(),
                     ),
                 )
             })
             .collect(),
+        closure_captures: module
+            .functions
+            .iter()
+            .map(|function| (function.name.clone(), function.closure_captures.clone()))
+            .collect(),
         current_scratch: None,
+        current_capture_slots: None,
         options,
     };
 
@@ -141,7 +152,9 @@ struct Emitter {
     function_ids: HashMap<String, u32>,
     function_order: Vec<String>,
     function_signatures: HashMap<String, (Vec<Type>, Type)>,
+    closure_captures: HashMap<String, Vec<Type>>,
     current_scratch: Option<String>,
+    current_capture_slots: Option<String>,
     options: EmitOptions,
 }
 
@@ -220,13 +233,19 @@ impl Emitter {
         }
 
         let previous_scratch = self.current_scratch.clone();
+        let previous_capture_slots = self.current_capture_slots.clone();
         if block_contains_indirect_call(&function.body) {
             writeln!(self.functions, "    (local $__callee i32)").expect("write WAT");
             self.current_scratch = Some("__callee".into());
         }
+        if block_contains_anonymous_function(&function.body) {
+            writeln!(self.functions, "    (local $__capture_slots i32)").expect("write WAT");
+            self.current_capture_slots = Some("__capture_slots".into());
+        }
 
         self.block(&function.body);
         self.current_scratch = previous_scratch;
+        self.current_capture_slots = previous_capture_slots;
         self.functions.push_str("  )\n");
         self.export_adapters(function);
     }
@@ -330,15 +349,7 @@ impl Emitter {
                 let pointer = self.static_closure(self.function_id(&function.name), &[]);
                 writeln!(self.functions, "    i32.const {pointer}").expect("write WAT");
             }
-            ExpressionKind::AnonymousFunction(function) => {
-                let captures = function
-                    .captures
-                    .iter()
-                    .map(|capture| capture.source.0)
-                    .collect::<Vec<_>>();
-                let pointer = self.static_closure(0, &captures);
-                writeln!(self.functions, "    i32.const {pointer}").expect("write WAT");
-            }
+            ExpressionKind::AnonymousFunction(function) => self.closure_allocation(function, expression.span),
             ExpressionKind::ListCons { head, tail } => {
                 self.expression(head);
                 self.expression(tail);
@@ -521,6 +532,45 @@ impl Emitter {
         self.uses_runtime = true;
     }
 
+    fn closure_allocation(&mut self, function: &ir::AnonymousFunction, span: crate::source::Span) {
+        let Some(slots) = self.current_capture_slots.clone() else {
+            self.diagnostics.push(
+                Diagnostic::new(
+                    DiagnosticCode::WasmError,
+                    "closure allocation needs a capture-slot local",
+                )
+                .with_label(Label::primary(span, "closure allocated here")),
+            );
+            writeln!(self.functions, "    i32.const 0").expect("write WAT");
+            return;
+        };
+        let byte_len = function.captures.len() * closure_constant_usize(ClosureConstants::CaptureSlotSize);
+        writeln!(self.functions, "    i32.const {byte_len}").expect("write WAT");
+        writeln!(self.functions, "    call $__alloc").expect("write WAT");
+        writeln!(self.functions, "    local.set ${slots}").expect("write WAT");
+        for (index, capture) in function.captures.iter().enumerate() {
+            writeln!(self.functions, "    local.get ${slots}").expect("write WAT");
+            writeln!(
+                self.functions,
+                "    i32.const {}",
+                index * closure_constant_usize(ClosureConstants::CaptureSlotSize)
+            )
+            .expect("write WAT");
+            writeln!(self.functions, "    i32.add").expect("write WAT");
+            writeln!(self.functions, "    local.get ${}", capture.source.0).expect("write WAT");
+            match capture.type_ {
+                Type::Int => writeln!(self.functions, "    i64.store").expect("write WAT"),
+                Type::Float => writeln!(self.functions, "    f64.store").expect("write WAT"),
+                _ => writeln!(self.functions, "    i32.store").expect("write WAT"),
+            }
+        }
+        writeln!(self.functions, "    i32.const {}", self.function_id(&function.name)).expect("write WAT");
+        writeln!(self.functions, "    i32.const {}", function.captures.len()).expect("write WAT");
+        writeln!(self.functions, "    local.get ${slots}").expect("write WAT");
+        writeln!(self.functions, "    call $__closure_new").expect("write WAT");
+        self.uses_runtime = true;
+    }
+
     fn indirect_call(&mut self, call: &ir::IndirectCall, span: crate::source::Span) {
         let Some(scratch) = self.current_scratch.clone() else {
             self.diagnostics.push(
@@ -558,7 +608,12 @@ impl Emitter {
         let id = self.function_id(&name);
 
         writeln!(self.functions, "    local.get ${scratch}").expect("write WAT");
-        writeln!(self.functions, "    i32.const 8").expect("write WAT");
+        writeln!(
+            self.functions,
+            "    i32.const {}",
+            u32::from(ClosureConstants::FunctionIdOffset)
+        )
+        .expect("write WAT");
         writeln!(self.functions, "    i32.add").expect("write WAT");
         writeln!(self.functions, "    i32.load").expect("write WAT");
         writeln!(self.functions, "    i32.const {id}").expect("write WAT");
@@ -567,6 +622,24 @@ impl Emitter {
             writeln!(self.functions, "    if").expect("write WAT");
         } else {
             writeln!(self.functions, "    if (result {result_type})").expect("write WAT");
+        }
+        if let Some(captures) = self.closure_captures.get(&name).cloned() {
+            for (index, type_) in captures.iter().enumerate() {
+                writeln!(self.functions, "    local.get ${scratch}").expect("write WAT");
+                writeln!(
+                    self.functions,
+                    "    i32.const {}",
+                    closure_constant_usize(ClosureConstants::CapturesOffset)
+                        + index * closure_constant_usize(ClosureConstants::CaptureSlotSize)
+                )
+                .expect("write WAT");
+                writeln!(self.functions, "    i32.add").expect("write WAT");
+                match type_ {
+                    Type::Int => writeln!(self.functions, "    i64.load").expect("write WAT"),
+                    Type::Float => writeln!(self.functions, "    f64.load").expect("write WAT"),
+                    _ => writeln!(self.functions, "    i32.load").expect("write WAT"),
+                }
+            }
         }
         for argument in &call.arguments {
             self.expression(&argument.value);
@@ -1029,7 +1102,7 @@ impl Emitter {
         ))
     }
 
-    fn static_closure(&mut self, function_id: u32, captures: &[u32]) -> u32 {
+    fn static_closure(&mut self, function_id: u32, captures: &[u64]) -> u32 {
         self.push_static(runtime::closure_object(
             self.config,
             self.next_static_offset,
@@ -1161,7 +1234,20 @@ impl RuntimePrelude {
         self.lines(helpers::COPY_HELPERS);
         self.lines(helpers::STRING_HELPERS);
         self.lines(helpers::BIT_ARRAY_HELPERS);
-        self.lines(helpers::MANAGED_VALUE_HELPERS);
+        let managed_value_helpers = helpers::MANAGED_VALUE_HELPERS
+            .replace(
+                "{closure_capture_slot_size}",
+                &u32::from(ClosureConstants::CaptureSlotSize).to_string(),
+            )
+            .replace(
+                "{closure_function_id_offset}",
+                &u32::from(ClosureConstants::FunctionIdOffset).to_string(),
+            )
+            .replace(
+                "{closure_captures_offset}",
+                &u32::from(ClosureConstants::CapturesOffset).to_string(),
+            );
+        self.lines(&managed_value_helpers);
         self.lines(helpers::EQUALITY_AND_ORDERING_HELPERS);
         self.lines(helpers::DEBUG_HELPERS);
     }
@@ -1183,12 +1269,94 @@ impl From<RuntimePrelude> for String {
     }
 }
 
+fn closure_constant_usize(value: ClosureConstants) -> usize {
+    u32::from(value) as usize
+}
+
 fn block_contains_indirect_call(block: &ir::Block) -> bool {
     block.instructions.iter().any(|instruction| match instruction {
         Instruction::Evaluate { expression, .. }
         | Instruction::LocalSet { value: expression, .. }
         | Instruction::AssertMatch { value: expression, .. } => expression_contains_indirect_call(expression),
     }) || expression_contains_indirect_call(&block.result)
+}
+
+fn block_contains_anonymous_function(block: &ir::Block) -> bool {
+    block.instructions.iter().any(|instruction| match instruction {
+        Instruction::Evaluate { expression, .. }
+        | Instruction::LocalSet { value: expression, .. }
+        | Instruction::AssertMatch { value: expression, .. } => expression_contains_anonymous_function(expression),
+    }) || expression_contains_anonymous_function(&block.result)
+}
+
+fn expression_contains_anonymous_function(expression: &ir::Expression) -> bool {
+    match &expression.kind {
+        ExpressionKind::AnonymousFunction(_) => true,
+        ExpressionKind::DirectCall(call) => call
+            .arguments
+            .iter()
+            .any(|argument| expression_contains_anonymous_function(&argument.value)),
+        ExpressionKind::IndirectCall(call) => {
+            expression_contains_anonymous_function(&call.callee)
+                || call
+                    .arguments
+                    .iter()
+                    .any(|argument| expression_contains_anonymous_function(&argument.value))
+        }
+        ExpressionKind::Branch(branch) => {
+            branch.subjects.iter().any(expression_contains_anonymous_function)
+                || branch.clauses.iter().any(|clause| {
+                    clause
+                        .guard
+                        .as_ref()
+                        .is_some_and(expression_contains_anonymous_function)
+                        || expression_contains_anonymous_function(&clause.body)
+                })
+        }
+        ExpressionKind::Tuple(items) | ExpressionKind::List(items) => {
+            items.iter().any(expression_contains_anonymous_function)
+        }
+        ExpressionKind::BitArrayConcat { left, right }
+        | ExpressionKind::Compare { left, right, .. }
+        | ExpressionKind::RuntimeEquality { left, right } => {
+            expression_contains_anonymous_function(left) || expression_contains_anonymous_function(right)
+        }
+        ExpressionKind::BitStringDeconstruct { bit_array, .. }
+        | ExpressionKind::FieldAccess { record: bit_array, .. }
+        | ExpressionKind::TupleElement { tuple: bit_array, .. }
+        | ExpressionKind::ListDeconstruct { list: bit_array, .. } => expression_contains_anonymous_function(bit_array),
+        ExpressionKind::Record(record) => record
+            .fields
+            .iter()
+            .any(|field| expression_contains_anonymous_function(&field.value)),
+        ExpressionKind::Constructor(constructor) => {
+            constructor.arguments.iter().any(expression_contains_anonymous_function)
+        }
+        ExpressionKind::RecordUpdate { record, updates } => {
+            expression_contains_anonymous_function(record)
+                || updates
+                    .iter()
+                    .any(|field| expression_contains_anonymous_function(&field.value))
+        }
+        ExpressionKind::ListCons { head, tail } => {
+            expression_contains_anonymous_function(head) || expression_contains_anonymous_function(tail)
+        }
+        ExpressionKind::Memory(operation) => match operation {
+            ir::MemoryOperation::Allocate { bytes } => expression_contains_anonymous_function(bytes),
+            ir::MemoryOperation::Load { address, .. } => expression_contains_anonymous_function(address),
+            ir::MemoryOperation::Store { address, value } => {
+                expression_contains_anonymous_function(address) || expression_contains_anonymous_function(value)
+            }
+        },
+        ExpressionKind::Pipeline(pipeline) => {
+            expression_contains_anonymous_function(&pipeline.input)
+                || expression_contains_anonymous_function(&pipeline.call)
+        }
+        ExpressionKind::Use(use_) => {
+            expression_contains_anonymous_function(&use_.callback) || expression_contains_anonymous_function(&use_.call)
+        }
+        _ => false,
+    }
 }
 
 fn expression_contains_indirect_call(expression: &ir::Expression) -> bool {
@@ -1401,6 +1569,7 @@ mod tests {
             boundary: ir::CallBoundary::HostImport { module: "env".into(), name: "inc".into() },
         };
         let imported = ir::Function {
+            closure_captures: Vec::new(),
             name: "host_inc".into(),
             public: false,
             params: vec![ir::Local { id: ir::LocalId(0), name: "x".into(), type_: Type::Int, span }],
@@ -1411,6 +1580,7 @@ mod tests {
             span,
         };
         let exported = ir::Function {
+            closure_captures: Vec::new(),
             name: "main".into(),
             public: true,
             params: Vec::new(),
@@ -1536,6 +1706,7 @@ mod tests {
         let span = Span::new(SourceFileId(0), 0, 0);
         let generic = Type::Generic("value".into());
         let function = ir::Function {
+            closure_captures: Vec::new(),
             name: "id".into(),
             public: true,
             params: vec![ir::Local { id: ir::LocalId(0), name: "x".into(), type_: generic.clone(), span }],
@@ -1688,6 +1859,81 @@ pub fn main() { apply(41, id) }
             .expect("get main export");
 
         assert_eq!(main.call(&mut store, ()).expect("call main"), 41);
+    }
+
+    #[test]
+    fn runs_closure_with_scalar_and_managed_captures() {
+        let wasm = compile_wasm(
+            r#"fn call(f: fn(Int) -> Int, x: Int) -> Int { f(x) }
+pub fn scalar(x: Int) -> Int {
+  let add = fn(y) { x + y }
+  call(add, 2)
+}
+pub fn managed() -> Bool {
+  let prefix = "ok"
+  let same = fn(value) { value == prefix }
+  same("ok")
+}
+"#,
+        );
+        let engine = Engine::default();
+        let module = Module::new(&engine, &wasm.bytes).expect("compile wasm module");
+        let mut store = Store::new(&engine, ());
+        let instance = Instance::new(&mut store, &module, &[]).expect("instantiate module");
+        let scalar = instance
+            .get_typed_func::<i64, i64>(&mut store, "scalar")
+            .expect("get scalar export");
+        let managed = instance
+            .get_typed_func::<(), i32>(&mut store, "managed")
+            .expect("get managed export");
+
+        assert_eq!(scalar.call(&mut store, 40).expect("call scalar"), 42);
+        assert_eq!(managed.call(&mut store, ()).expect("call managed"), 1);
+    }
+
+    #[test]
+    fn runs_partial_application_closure() {
+        let wasm = compile_wasm(
+            r#"fn call(f: fn(Int) -> Int, x: Int) -> Int { f(x) }
+fn add(a: Int, b: Int) -> Int { a + b }
+pub fn partial(x: Int) -> Int {
+  let addx = add(x, _)
+  call(addx, 2)
+}
+"#,
+        );
+        let engine = Engine::default();
+        let module = Module::new(&engine, &wasm.bytes).expect("compile wasm module");
+        let mut store = Store::new(&engine, ());
+        let instance = Instance::new(&mut store, &module, &[]).expect("instantiate module");
+        let partial = instance
+            .get_typed_func::<i64, i64>(&mut store, "partial")
+            .expect("get partial export");
+
+        assert_eq!(partial.call(&mut store, 40).expect("call partial"), 42);
+    }
+
+    #[test]
+    fn runs_nested_closures_capturing_multiple_scopes() {
+        let wasm = compile_wasm(
+            r#"pub fn nested(x: Int) -> Int {
+  let outer = fn(y) {
+    let inner = fn(z) { x + y + z }
+    inner(3)
+  }
+  outer(2)
+}
+"#,
+        );
+        let engine = Engine::default();
+        let module = Module::new(&engine, &wasm.bytes).expect("compile wasm module");
+        let mut store = Store::new(&engine, ());
+        let instance = Instance::new(&mut store, &module, &[]).expect("instantiate module");
+        let nested = instance
+            .get_typed_func::<i64, i64>(&mut store, "nested")
+            .expect("get nested export");
+
+        assert_eq!(nested.call(&mut store, 37).expect("call nested"), 42);
     }
 
     #[test]

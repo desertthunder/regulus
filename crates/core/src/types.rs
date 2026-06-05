@@ -2131,6 +2131,24 @@ mod tests {
     }
 
     #[test]
+    fn checks_partial_application_capture_types() {
+        let typed = check_source(
+            r#"fn call(f: fn(Int) -> Int, x: Int) -> Int { f(x) }
+fn add(a: Int, b: Int) -> Int { a + b }
+fn main(x: Int) -> Int {
+  let addx = add(x, _)
+  call(addx, 2)
+}
+"#,
+        )
+        .expect("type check source");
+
+        assert!(typed.expressions.iter().any(|expression| {
+            expression.type_ == Type::Function { params: vec![Type::Int], return_type: Box::new(Type::Int) }
+        }));
+    }
+
+    #[test]
     fn reports_argument_type_mismatches() {
         let diagnostics =
             check_source("fn id(x: Int) -> Int { x }\nfn main() { id(\"no\") }").expect_err("type check should fail");

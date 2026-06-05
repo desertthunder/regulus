@@ -26,10 +26,10 @@ Replace placeholder semantics for represented language forms with full behavior.
 
 ### Closures and captures
 
-- [ ] Represent scalar and managed captures in closure environments.
-- [ ] Emit closure allocation for captured scalar and managed values.
-- [ ] Emit closure invocation that passes recovered captures correctly.
-- [ ] Add tests for captured values, partial application, and indirect calls.
+- [x] Represent scalar and managed captures in closure environments.
+- [x] Emit closure allocation for captured scalar and managed values.
+- [x] Emit closure invocation that passes recovered captures correctly.
+- [x] Add tests for captured values, partial application, and indirect calls.
 
 ### `use` lowering
 

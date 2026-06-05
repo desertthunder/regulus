@@ -924,23 +924,21 @@ impl AstBuilder<'_> {
     }
 
     fn call_or_capture(&self, node: Node<'_>) -> Result<Expression, Diagnostics> {
-        if self.text(node).contains('_') {
-            let call = self.call(node)?;
-            let arguments = call
-                .arguments
-                .into_iter()
-                .map(|argument| match argument.value {
-                    Expression::Variable(Name { text, .. }) if text == "_" => None,
-                    _ => Some(argument),
-                })
-                .collect();
-            return Ok(Expression::Capture(Capture {
-                span: call.span,
-                function: call.function,
-                arguments,
-            }));
+        let call = self.call(node)?;
+        if !call.arguments.iter().any(is_capture_hole) {
+            return Ok(Expression::Call(call));
         }
-        self.call(node).map(Expression::Call)
+
+        let arguments = call
+            .arguments
+            .into_iter()
+            .map(|argument| if is_capture_hole(&argument) { None } else { Some(argument) })
+            .collect();
+        Ok(Expression::Capture(Capture {
+            span: call.span,
+            function: call.function,
+            arguments,
+        }))
     }
 
     fn call(&self, node: Node<'_>) -> Result<Call, Diagnostics> {
@@ -1534,6 +1532,11 @@ impl AstBuilder<'_> {
     }
 }
 
+fn is_capture_hole(argument: &Argument) -> bool {
+    matches!(&argument.value, Expression::Variable(Name { text, .. }) if text == "_")
+        || matches!(&argument.value, Expression::Raw(raw) if raw.kind == "hole" && raw.source == "_")
+}
+
 fn is_type_node(kind: &str) -> bool {
     matches!(
         kind,
@@ -1584,6 +1587,19 @@ pub fn main() {
 
         assert_eq!(case.subjects.len(), 1);
         assert_eq!(case.clauses.len(), 2);
+    }
+
+    #[test]
+    fn detects_capture_holes_from_argument_nodes_only() {
+        let ast = parse_ast("fn main(foo_bar) { add(foo_bar) add(_) }");
+        let Statement::Expression(Expression::Call(_)) = &ast.functions[0].body.statements[0] else {
+            panic!("identifier underscores should not create captures");
+        };
+        let Statement::Expression(Expression::Capture(capture)) = &ast.functions[0].body.statements[1] else {
+            panic!("discard argument should create a capture");
+        };
+
+        assert_eq!(capture.arguments, vec![None]);
     }
 
     #[test]
