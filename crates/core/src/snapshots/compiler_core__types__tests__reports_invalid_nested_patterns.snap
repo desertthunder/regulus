@@ -1,7 +1,8 @@
 ---
 source: crates/core/src/types.rs
+assertion_line: 2448
 expression: "diagnostics.iter().map(|diagnostic|\ndiagnostic.render_plain()).collect::<Vec<_>>().join(\"\\n\\n\")"
 ---
 TypeError: expected `Int` but found `String`
-  --> file 0 bytes 107..108
+  --> file 0 bytes 94..117
       type mismatch

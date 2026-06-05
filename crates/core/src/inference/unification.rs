@@ -35,6 +35,10 @@ impl Unifier {
         Self::default()
     }
 
+    pub fn with_substitutions(substitutions: Substitutions) -> Self {
+        Self { substitutions }
+    }
+
     pub fn substitutions(&self) -> &Substitutions {
         &self.substitutions
     }

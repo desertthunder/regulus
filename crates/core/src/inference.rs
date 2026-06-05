@@ -13,7 +13,7 @@ pub mod substitutions;
 pub mod unification;
 
 pub use constraints::{
-    Constraint, ConstraintGeneration, ConstraintGenerationError, ConstraintGenerator, ConstraintSet,
+    Constraint, ConstraintGeneration, ConstraintGenerationError, ConstraintGenerator, ConstraintSet, InferredExpression,
 };
 pub use generics::{Environment, Scheme, TypeVarSupply};
 pub use interfaces::{InferenceInterface, constructor_scheme, environment_from_interfaces};

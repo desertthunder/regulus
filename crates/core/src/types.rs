@@ -1,8 +1,23 @@
+// Copyright (c) 2026, Owais Jamil
+
+//! Type checking and type inference for resolved Gleam modules.
+//!
+//! This module owns the compiler's current type representation, module
+//! interface model, expression typing records, pattern type checks,
+//! exhaustiveness inputs, and project-level type checking glue. The checker
+//! uses the shared inference engine for substitutions and unification so
+//! unannotated functions, local values, generic constructors, and imported
+//! generic functions can infer stable types before lowering.
+
 use std::collections::HashMap;
 
 use crate::{
     ast::{self, Declaration, Expression, LiteralKind, Pattern, Statement},
     diagnostic::{Diagnostic, DiagnosticCode, Diagnostics, Label},
+    inference::{
+        ConstraintGenerationError, ConstraintGenerator, Environment, Field, InferenceVariable, Scheme, Substitutions,
+        TypeTerm, UnificationError, Unifier,
+    },
     project::Project,
     resolve::{self, ResolvedModule},
     source::Span,
@@ -177,7 +192,7 @@ struct TypeChecker {
     expressions: Vec<TypedExpression>,
     scopes: Vec<HashMap<String, ScopedType>>,
     diagnostics: Diagnostics,
-    inference_substitutions: HashMap<String, Type>,
+    inference_substitutions: Substitutions,
     next_inference_variable: usize,
 }
 
@@ -193,7 +208,7 @@ impl TypeChecker {
             expressions: Vec::new(),
             scopes: Vec::new(),
             diagnostics: Vec::new(),
-            inference_substitutions: HashMap::new(),
+            inference_substitutions: Substitutions::new(),
             next_inference_variable: 0,
         }
     }
@@ -345,38 +360,43 @@ impl TypeChecker {
     }
 
     fn check_function(&mut self, function: &ast::Function) {
-        self.push_scope();
-
-        let mut params = Vec::new();
-        for parameter in &function.parameters {
-            let Some(name) = &parameter.name else {
-                continue;
-            };
-            let type_ = match &parameter.type_annotation {
-                Some(type_annotation) => match self.parse_type_annotation(type_annotation) {
-                    Some(type_) => type_,
-                    None => continue,
-                },
-                None => self.fresh_inference_type(),
-            };
-            self.define(name.text.clone(), type_.clone());
-            params.push(type_);
-        }
-
-        let body_type = self.check_block(&function.body).unwrap_or(Type::Nil);
-        let return_type = match &function.return_type {
-            Some(annotation) => match self.parse_type_annotation(annotation) {
-                Some(type_) => {
-                    self.expect_same(&type_, &body_type, function.body.span);
-                    type_
-                }
-                None => body_type.clone(),
-            },
-            None => body_type.clone(),
+        let mut generator =
+            ConstraintGenerator::new(self.inference_environment()).with_constructors(self.constructors.clone());
+        let function_type = match generator.infer_function(function) {
+            Ok(type_) => type_,
+            Err(error) => {
+                self.push_constraint_generation_error(error);
+                return;
+            }
+        };
+        let generation = generator.finish(function_type);
+        let substitutions = match generation.constraints.solve() {
+            Ok(substitutions) => substitutions,
+            Err(error) => {
+                self.push_unification_error(error);
+                return;
+            }
         };
 
-        let function_type = Type::Function { params, return_type: Box::new(return_type) };
+        let Some(function_type) = type_term_to_type(&substitutions.walk(&generation.type_)) else {
+            self.diagnostics.push(
+                Diagnostic::new(DiagnosticCode::TypeError, "could not infer function type")
+                    .with_label(Label::primary(function.span, "inference failed")),
+            );
+            return;
+        };
         let function_type = self.finalize_type(&function_type, &mut HashMap::new());
+
+        let mut typed_expression_map = HashMap::new();
+        for expression in generation.expressions {
+            if let Some(type_) = type_term_to_type(&substitutions.walk(&expression.type_)) {
+                let type_ = self.finalize_type(&type_, &mut HashMap::new());
+                typed_expression_map.insert(expression.span, type_.clone());
+                self.expressions.push(TypedExpression { span: expression.span, type_ });
+            }
+        }
+        self.check_function_case_coverage(function, &typed_expression_map);
+
         self.function_types
             .insert(function.name.text.clone(), function_type.clone());
         self.interface
@@ -384,8 +404,131 @@ impl TypeChecker {
             .insert(function.name.text.clone(), function_type.clone());
         self.functions
             .push(TypedFunction { name: function.name.clone(), type_: function_type });
+    }
 
-        self.pop_scope();
+    fn check_function_case_coverage(&mut self, function: &ast::Function, expression_types: &HashMap<Span, Type>) {
+        for statement in &function.body.statements {
+            self.check_statement_case_coverage(statement, expression_types);
+        }
+    }
+
+    fn check_statement_case_coverage(&mut self, statement: &Statement, expression_types: &HashMap<Span, Type>) {
+        match statement {
+            Statement::Let(let_) => self.check_expression_case_coverage(&let_.value, expression_types),
+            Statement::LetAssert(let_) => self.check_expression_case_coverage(&let_.value, expression_types),
+            Statement::Expression(expression) => self.check_expression_case_coverage(expression, expression_types),
+        }
+    }
+
+    fn check_expression_case_coverage(&mut self, expression: &Expression, expression_types: &HashMap<Span, Type>) {
+        match expression {
+            Expression::Case(case) => {
+                let subject_types = case
+                    .subjects
+                    .iter()
+                    .filter_map(|subject| expression_types.get(&subject.span()).cloned())
+                    .collect::<Vec<_>>();
+                if subject_types.len() == case.subjects.len() {
+                    self.check_case_coverage(case, &subject_types);
+                }
+                for clause in &case.clauses {
+                    self.check_expression_case_coverage(&clause.value, expression_types);
+                    if let Some(guard) = &clause.guard {
+                        self.check_expression_case_coverage(guard, expression_types);
+                    }
+                }
+            }
+            Expression::Call(call) => {
+                self.check_expression_case_coverage(&call.function, expression_types);
+                for argument in &call.arguments {
+                    self.check_expression_case_coverage(&argument.value, expression_types);
+                }
+            }
+            Expression::Block(block) => {
+                for statement in &block.statements {
+                    self.check_statement_case_coverage(statement, expression_types);
+                }
+            }
+            Expression::Tuple(tuple) => tuple
+                .elements
+                .iter()
+                .for_each(|element| self.check_expression_case_coverage(element, expression_types)),
+            Expression::List(list) => {
+                for element in &list.elements {
+                    self.check_expression_case_coverage(element, expression_types);
+                }
+                if let Some(spread) = &list.spread {
+                    self.check_expression_case_coverage(spread, expression_types);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn inference_environment(&self) -> Environment {
+        let mut environment = Environment::new();
+        for (name, type_) in &self.function_types {
+            environment.insert(name.clone(), Scheme::from_type(type_));
+        }
+        for (name, type_) in &self.external_values {
+            environment.insert(name.clone(), Scheme::from_type(type_));
+        }
+        environment
+    }
+
+    fn push_constraint_generation_error(&mut self, error: ConstraintGenerationError) {
+        match error {
+            ConstraintGenerationError::UnknownValue { name, span } => self.diagnostics.push(
+                Diagnostic::new(DiagnosticCode::TypeError, format!("no type known for `{name}`"))
+                    .with_label(Label::primary(span, "unknown type")),
+            ),
+            ConstraintGenerationError::UnknownConstructor { name, span } => self.diagnostics.push(
+                Diagnostic::new(DiagnosticCode::TypeError, format!("unknown constructor `{name}`"))
+                    .with_label(Label::primary(span, "unknown constructor here")),
+            ),
+            ConstraintGenerationError::UnsupportedAnnotation { source, span } => self.diagnostics.push(
+                Diagnostic::new(
+                    DiagnosticCode::TypeError,
+                    format!("unsupported type annotation `{source}`"),
+                )
+                .with_label(Label::primary(span, "unsupported type annotation")),
+            ),
+            ConstraintGenerationError::TupleIndexOutOfBounds { span, .. } => self.diagnostics.push(
+                Diagnostic::new(DiagnosticCode::TypeError, "tuple index is out of bounds")
+                    .with_label(Label::primary(span, "out of bounds")),
+            ),
+        }
+    }
+
+    fn push_unification_error(&mut self, error: UnificationError) {
+        match error {
+            UnificationError::Mismatch { expected, actual, span } => {
+                let expected = type_term_to_type(&expected).unwrap_or(Type::Nil);
+                let actual = type_term_to_type(&actual).unwrap_or(Type::Nil);
+                self.diagnostics.push(
+                    Diagnostic::new(
+                        DiagnosticCode::TypeError,
+                        format!("expected `{}` but found `{}`", expected.display(), actual.display()),
+                    )
+                    .with_label(Label::primary(span.unwrap_or(self.module.ast.span), "type mismatch")),
+                );
+            }
+            UnificationError::ArityMismatch { expected, actual, span } => self.diagnostics.push(
+                Diagnostic::new(
+                    DiagnosticCode::TypeError,
+                    format!("function expected {expected} arguments but got {actual}"),
+                )
+                .with_label(Label::primary(span.unwrap_or(self.module.ast.span), "arity mismatch")),
+            ),
+            UnificationError::FieldMismatch { field, span } => self.diagnostics.push(
+                Diagnostic::new(DiagnosticCode::TypeError, format!("unknown field `{field}`"))
+                    .with_label(Label::primary(span.unwrap_or(self.module.ast.span), "unknown field")),
+            ),
+            UnificationError::OccursCheck { span, .. } => self.diagnostics.push(
+                Diagnostic::new(DiagnosticCode::TypeError, "recursive type inferred")
+                    .with_label(Label::primary(span.unwrap_or(self.module.ast.span), "recursive type")),
+            ),
+        }
     }
 
     fn function_type_from_annotations(&mut self, function: &ast::Function) -> Option<Type> {
@@ -1292,11 +1435,19 @@ impl TypeChecker {
 
     fn resolve_inference_type(&self, type_: &Type) -> Type {
         match type_ {
-            Type::Generic(name) if Self::is_inference_variable_name(name) => self
-                .inference_substitutions
-                .get(name)
-                .map(|type_| self.resolve_inference_type(type_))
-                .unwrap_or_else(|| type_.clone()),
+            Type::Generic(name) if Self::is_inference_variable_name(name) => {
+                let Some(variable) = inference_variable_from_name(name) else {
+                    return type_.clone();
+                };
+                let walked = self.inference_substitutions.walk(&TypeTerm::Variable(variable));
+                if walked == TypeTerm::Variable(variable) {
+                    type_.clone()
+                } else {
+                    type_term_to_type(&walked)
+                        .map(|type_| self.resolve_inference_type(&type_))
+                        .unwrap_or_else(|| type_.clone())
+                }
+            }
             Type::Tuple(items) => Type::Tuple(items.iter().map(|item| self.resolve_inference_type(item)).collect()),
             Type::List(item) => Type::List(Box::new(self.resolve_inference_type(item))),
             Type::Record { name, fields } => Type::Record {
@@ -1326,92 +1477,57 @@ impl TypeChecker {
     }
 
     fn unify_types(&mut self, expected: &Type, actual: &Type, span: Span) -> Result<(), ()> {
-        let expected = self.resolve_inference_type(expected);
-        let actual = self.resolve_inference_type(actual);
-        match (&expected, &actual) {
-            (Type::Generic(name), type_) if Self::is_inference_variable_name(name) => {
-                self.bind_inference_variable(name, type_, span)
+        let mut unifier = Unifier::with_substitutions(self.inference_substitutions.clone());
+        let expected = self.type_to_inference_term(expected);
+        let actual = self.type_to_inference_term(actual);
+        match unifier.unify(&expected, &actual, Some(span)) {
+            Ok(_) => {
+                self.inference_substitutions = unifier.into_substitutions();
+                Ok(())
             }
-            (type_, Type::Generic(name)) if Self::is_inference_variable_name(name) => {
-                self.bind_inference_variable(name, type_, span)
+            Err(crate::inference::UnificationError::OccursCheck { .. }) => {
+                self.diagnostics.push(
+                    Diagnostic::new(DiagnosticCode::TypeError, "recursive type inferred")
+                        .with_label(Label::primary(span, "recursive type")),
+                );
+                Err(())
             }
-            (Type::Tuple(expected), Type::Tuple(actual)) if expected.len() == actual.len() => expected
-                .iter()
-                .zip(actual.iter())
-                .try_for_each(|(expected, actual)| self.unify_types(expected, actual, span)),
-            (Type::List(expected), Type::List(actual)) => self.unify_types(expected, actual, span),
-            (
-                Type::Record { name: expected_name, fields: expected },
-                Type::Record { name: actual_name, fields: actual },
-            ) if expected_name == actual_name && expected.len() == actual.len() => expected
-                .iter()
-                .zip(actual.iter())
-                .try_for_each(|(expected, actual)| self.unify_types(&expected.type_, &actual.type_, span)),
-            (
-                Type::Custom { name: expected_name, args: expected },
-                Type::Custom { name: actual_name, args: actual },
-            ) if expected_name == actual_name && expected.len() == actual.len() => expected
-                .iter()
-                .zip(actual.iter())
-                .try_for_each(|(expected, actual)| self.unify_types(expected, actual, span)),
-            (
-                Type::Opaque { name: expected_name, args: expected },
-                Type::Opaque { name: actual_name, args: actual },
-            ) if expected_name == actual_name && expected.len() == actual.len() => expected
-                .iter()
-                .zip(actual.iter())
-                .try_for_each(|(expected, actual)| self.unify_types(expected, actual, span)),
-            (
-                Type::Function { params: expected_params, return_type: expected_return },
-                Type::Function { params: actual_params, return_type: actual_return },
-            ) if expected_params.len() == actual_params.len() => {
-                for (expected, actual) in expected_params.iter().zip(actual_params.iter()) {
-                    self.unify_types(expected, actual, span)?;
-                }
-                self.unify_types(expected_return, actual_return, span)
-            }
-            _ if expected == actual => Ok(()),
-            _ => Err(()),
+            Err(_) => Err(()),
         }
     }
 
-    fn bind_inference_variable(&mut self, name: &str, type_: &Type, span: Span) -> Result<(), ()> {
-        if let Type::Generic(actual) = type_
-            && actual == name
-        {
-            return Ok(());
-        }
-        if self.type_contains_inference_variable(type_, name) {
-            self.diagnostics.push(
-                Diagnostic::new(DiagnosticCode::TypeError, "recursive type inferred")
-                    .with_label(Label::primary(span, "recursive type")),
-            );
-            return Err(());
-        }
-        self.inference_substitutions.insert(name.to_string(), type_.clone());
-        Ok(())
-    }
-
-    fn type_contains_inference_variable(&self, type_: &Type, name: &str) -> bool {
-        match self.resolve_inference_type(type_) {
-            Type::Generic(found) => found == name,
-            Type::Tuple(items) => items
-                .iter()
-                .any(|item| self.type_contains_inference_variable(item, name)),
-            Type::List(item) => self.type_contains_inference_variable(&item, name),
-            Type::Record { fields, .. } => fields
-                .iter()
-                .any(|field| self.type_contains_inference_variable(&field.type_, name)),
-            Type::Custom { args, .. } | Type::Opaque { args, .. } => {
-                args.iter().any(|arg| self.type_contains_inference_variable(arg, name))
-            }
-            Type::Function { params, return_type } => {
-                params
+    fn type_to_inference_term(&self, type_: &Type) -> TypeTerm {
+        match type_ {
+            Type::Int => TypeTerm::Int,
+            Type::Float => TypeTerm::Float,
+            Type::String => TypeTerm::String,
+            Type::BitArray => TypeTerm::BitArray,
+            Type::Bool => TypeTerm::Bool,
+            Type::Nil => TypeTerm::Nil,
+            Type::Tuple(items) => TypeTerm::Tuple(items.iter().map(|item| self.type_to_inference_term(item)).collect()),
+            Type::List(item) => TypeTerm::List(Box::new(self.type_to_inference_term(item))),
+            Type::Record { name, fields } => TypeTerm::Record {
+                name: name.clone(),
+                fields: fields
                     .iter()
-                    .any(|param| self.type_contains_inference_variable(param, name))
-                    || self.type_contains_inference_variable(&return_type, name)
-            }
-            _ => false,
+                    .map(|field| Field { name: field.name.clone(), type_: self.type_to_inference_term(&field.type_) })
+                    .collect(),
+            },
+            Type::Custom { name, args } => TypeTerm::Custom {
+                name: name.clone(),
+                args: args.iter().map(|arg| self.type_to_inference_term(arg)).collect(),
+            },
+            Type::Generic(name) => inference_variable_from_name(name)
+                .map(TypeTerm::Variable)
+                .unwrap_or_else(|| TypeTerm::Generic(name.clone())),
+            Type::Opaque { name, args } => TypeTerm::Opaque {
+                name: name.clone(),
+                args: args.iter().map(|arg| self.type_to_inference_term(arg)).collect(),
+            },
+            Type::Function { params, return_type } => TypeTerm::Function {
+                params: params.iter().map(|param| self.type_to_inference_term(param)).collect(),
+                return_type: Box::new(self.type_to_inference_term(return_type)),
+            },
         }
     }
 
@@ -1654,6 +1770,48 @@ trait ExpressionSpan {
 impl ExpressionSpan for Expression {
     fn span(&self) -> Span {
         Span::from(self)
+    }
+}
+
+fn inference_variable_from_name(name: &str) -> Option<InferenceVariable> {
+    name.strip_prefix('$')
+        .and_then(|id| id.parse::<u64>().ok())
+        .map(InferenceVariable)
+}
+
+fn type_term_to_type(type_: &TypeTerm) -> Option<Type> {
+    match type_ {
+        TypeTerm::Int => Some(Type::Int),
+        TypeTerm::Float => Some(Type::Float),
+        TypeTerm::String => Some(Type::String),
+        TypeTerm::BitArray => Some(Type::BitArray),
+        TypeTerm::Bool => Some(Type::Bool),
+        TypeTerm::Nil => Some(Type::Nil),
+        TypeTerm::Tuple(items) => Some(Type::Tuple(
+            items.iter().map(type_term_to_type).collect::<Option<Vec<_>>>()?,
+        )),
+        TypeTerm::List(item) => Some(Type::List(Box::new(type_term_to_type(item)?))),
+        TypeTerm::Record { name, fields } => Some(Type::Record {
+            name: name.clone(),
+            fields: fields
+                .iter()
+                .map(|field| Some(FieldInfo { name: field.name.clone(), type_: type_term_to_type(&field.type_)? }))
+                .collect::<Option<Vec<_>>>()?,
+        }),
+        TypeTerm::Custom { name, args } => Some(Type::Custom {
+            name: name.clone(),
+            args: args.iter().map(type_term_to_type).collect::<Option<Vec<_>>>()?,
+        }),
+        TypeTerm::Generic(name) => Some(Type::Generic(name.clone())),
+        TypeTerm::Opaque { name, args } => Some(Type::Opaque {
+            name: name.clone(),
+            args: args.iter().map(type_term_to_type).collect::<Option<Vec<_>>>()?,
+        }),
+        TypeTerm::Function { params, return_type } => Some(Type::Function {
+            params: params.iter().map(type_term_to_type).collect::<Option<Vec<_>>>()?,
+            return_type: Box::new(type_term_to_type(return_type)?),
+        }),
+        TypeTerm::Variable(variable) => Some(Type::Generic(format!("${}", variable.0))),
     }
 }
 

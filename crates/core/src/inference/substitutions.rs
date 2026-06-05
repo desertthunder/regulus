@@ -63,6 +63,10 @@ impl Substitutions {
         self.variables.get(&variable)
     }
 
+    pub fn iter(&self) -> impl Iterator<Item = (&InferenceVariable, &TypeTerm)> {
+        self.variables.iter()
+    }
+
     pub fn is_empty(&self) -> bool {
         self.variables.is_empty()
     }

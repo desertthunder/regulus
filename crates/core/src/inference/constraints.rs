@@ -72,9 +72,16 @@ pub enum ConstraintGenerationError {
 pub type Result<T> = std::result::Result<T, ConstraintGenerationError>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InferredExpression {
+    pub span: Span,
+    pub type_: TypeTerm,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConstraintGeneration {
     pub type_: TypeTerm,
     pub constraints: ConstraintSet,
+    pub expressions: Vec<InferredExpression>,
     pub environment: Environment,
 }
 
@@ -85,6 +92,7 @@ pub struct ConstraintGenerator {
     environment: Environment,
     constructors: HashMap<String, ConstructorInfo>,
     constraints: ConstraintSet,
+    expressions: Vec<InferredExpression>,
     scopes: Vec<HashMap<String, Scheme>>,
 }
 
@@ -95,6 +103,7 @@ impl ConstraintGenerator {
             environment,
             constructors: HashMap::new(),
             constraints: ConstraintSet::new(),
+            expressions: Vec::new(),
             scopes: vec![HashMap::new()],
         }
     }
@@ -105,10 +114,22 @@ impl ConstraintGenerator {
     }
 
     pub fn finish(self, type_: TypeTerm) -> ConstraintGeneration {
-        ConstraintGeneration { type_, constraints: self.constraints, environment: self.environment }
+        ConstraintGeneration {
+            type_,
+            constraints: self.constraints,
+            expressions: self.expressions,
+            environment: self.environment,
+        }
     }
 
     pub fn infer_expression(&mut self, expression: &Expression) -> Result<TypeTerm> {
+        let type_ = self.infer_expression_inner(expression)?;
+        self.expressions
+            .push(InferredExpression { span: expression_span(expression), type_: type_.clone() });
+        Ok(type_)
+    }
+
+    fn infer_expression_inner(&mut self, expression: &Expression) -> Result<TypeTerm> {
         match expression {
             Expression::Literal(literal) => Ok(literal_type(&literal.kind)),
             Expression::Variable(name) => self.lookup_name(name),
@@ -161,6 +182,26 @@ impl ConstraintGenerator {
         }
     }
 
+    pub fn infer_function(&mut self, function: &ast::Function) -> Result<TypeTerm> {
+        self.push_scope();
+        let mut params = Vec::new();
+        for parameter in &function.parameters {
+            let type_ = self.annotation_or_fresh(parameter.type_annotation.as_ref())?;
+            if let Some(name) = &parameter.name {
+                self.define(name.text.clone(), Scheme::monomorphic(type_.clone()));
+            }
+            params.push(type_);
+        }
+        let body = self.infer_block(&function.body)?;
+        let return_type = match &function.return_type {
+            Some(annotation) => self.annotation_or_fresh(Some(annotation))?,
+            None => body.clone(),
+        };
+        self.constraints.push(return_type.clone(), body, function.body.span);
+        self.pop_scope();
+        Ok(TypeTerm::Function { params, return_type: Box::new(return_type) })
+    }
+
     pub fn infer_block(&mut self, block: &ast::Block) -> Result<TypeTerm> {
         self.push_scope();
         let mut last = TypeTerm::Nil;
@@ -168,9 +209,19 @@ impl ConstraintGenerator {
             last = match statement {
                 Statement::Let(let_) => {
                     let value = self.infer_expression(&let_.value)?;
-                    let expected = self.annotation_or_fresh(let_.type_annotation.as_ref())?;
-                    self.constraints.push(expected.clone(), value, let_.span);
-                    self.bind_pattern(&let_.pattern, &expected)?;
+                    if let ast::Pattern::Name(name) = &let_.pattern
+                        && let_.type_annotation.is_none()
+                        && eligible_for_local_generalization(&let_.value)
+                    {
+                        self.define(
+                            name.text.clone(),
+                            Scheme::generalize_top_level(&value, &Substitutions::new()),
+                        );
+                    } else {
+                        let expected = self.annotation_or_fresh(let_.type_annotation.as_ref())?;
+                        self.constraints.push(expected.clone(), value, let_.span);
+                        self.bind_pattern(&let_.pattern, &expected)?;
+                    }
                     TypeTerm::Nil
                 }
                 Statement::LetAssert(let_assert) => {
@@ -243,14 +294,20 @@ impl ConstraintGenerator {
             .collect::<Result<Vec<_>>>()?;
         let return_type = self.supply.fresh_type();
         self.constraints.push(
-            TypeTerm::Function { params, return_type: Box::new(return_type.clone()) },
             function,
+            TypeTerm::Function { params, return_type: Box::new(return_type.clone()) },
             call.span,
         );
         Ok(return_type)
     }
 
     fn infer_field_access(&mut self, access: &ast::FieldAccess) -> Result<TypeTerm> {
+        if let Expression::Variable(module) = access.record.as_ref()
+            && let Some(scheme) = self.environment.get(&format!("{}.{}", module.text, access.field.text))
+        {
+            return Ok(scheme.instantiate(&mut self.supply));
+        }
+
         let record = self.infer_expression(&access.record)?;
         let field_type = self.supply.fresh_type();
         self.constraints.push(
@@ -404,8 +461,14 @@ impl ConstraintGenerator {
             params.push(type_);
         }
         let body = self.infer_block(&function.body)?;
-        let return_type = self.annotation_or_fresh(function.return_type.as_ref())?;
-        self.constraints.push(return_type.clone(), body, function.body.span);
+        let return_type = match &function.return_type {
+            Some(annotation) => {
+                let return_type = self.annotation_or_fresh(Some(annotation))?;
+                self.constraints.push(return_type.clone(), body, function.body.span);
+                return_type
+            }
+            None => body,
+        };
         self.pop_scope();
         Ok(TypeTerm::Function { params, return_type: Box::new(return_type) })
     }
@@ -572,6 +635,18 @@ impl ConstraintGenerator {
     fn pop_scope(&mut self) {
         self.scopes.pop();
     }
+}
+
+fn eligible_for_local_generalization(expression: &Expression) -> bool {
+    matches!(
+        expression,
+        Expression::Literal(_)
+            | Expression::AnonymousFunction(_)
+            | Expression::Tuple(_)
+            | Expression::List(_)
+            | Expression::Record(_)
+            | Expression::Block(_)
+    )
 }
 
 fn literal_type(kind: &LiteralKind) -> TypeTerm {

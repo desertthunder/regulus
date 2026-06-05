@@ -14,6 +14,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   and patterns, and imported generic functions.
 - Type diagnostics now include ambiguous return types, generic arity mismatches,
   and recursive inferred types.
+- The main type checker now uses the shared inference unifier for type
+  compatibility checks.
 
 ### Changed
 
