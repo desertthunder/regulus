@@ -8,8 +8,8 @@ with a precise target/ABI diagnostic.
 ## Scope
 
 This spec covers target representation, runtime support, imports, exports, and
-WebAssembly emission. Language semantics before code generation are covered in
-[Gleam language completeness](./09_gleam_language_completeness.md).
+WebAssembly emission. Language semantics before code generation are covered by
+the syntax, resolution, type checking, pattern matching, and IR specs.
 
 ## Value representation
 

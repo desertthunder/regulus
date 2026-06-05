@@ -568,11 +568,12 @@ struct Lowerer {
 
 impl Lowerer {
     fn new(module: TypedModule) -> Self {
-        let function_types = module
+        let mut function_types = module
             .functions
             .iter()
             .map(|function| (function.name.text.clone(), function.type_.clone()))
-            .collect();
+            .collect::<HashMap<_, _>>();
+        function_types.extend(module.interface.functions.clone());
         let expression_types = module
             .expressions
             .iter()
@@ -902,10 +903,15 @@ impl Lowerer {
                 span: bit_array.span,
                 kind: ExpressionKind::BitArray(ast_bit_array_literal(bit_array)),
             }),
-            AstExpression::Panic(panic) | AstExpression::Todo(panic) => Some(Expression {
+            AstExpression::Panic(panic) => Some(Expression {
                 type_: self.typed_expression_type(panic.span).unwrap_or(Type::Nil),
                 span: panic.span,
                 kind: ExpressionKind::Failure(FailurePath { reason: FailureReason::Panic, span: panic.span }),
+            }),
+            AstExpression::Todo(todo) => Some(Expression {
+                type_: self.typed_expression_type(todo.span).unwrap_or(Type::Nil),
+                span: todo.span,
+                kind: ExpressionKind::Failure(FailurePath { reason: FailureReason::Todo, span: todo.span }),
             }),
             AstExpression::Assert(assert) => Some(Expression {
                 type_: self.typed_expression_type(assert.span).unwrap_or(Type::Nil),
@@ -952,9 +958,239 @@ impl Lowerer {
                     span: raw.span,
                 }),
             }),
+            AstExpression::BinaryOperation(operation) => self.lower_binary_operation(context, operation),
+            AstExpression::Pipeline(pipeline) => self.lower_pipeline(context, pipeline),
+            AstExpression::UnaryOperation(operation) => self.lower_unary_operation(context, operation),
+            AstExpression::Use(use_) => self.lower_use(context, use_),
+            AstExpression::AnonymousFunction(function) => self.lower_anonymous_function(context, function),
+            AstExpression::Capture(capture) => self.lower_capture(context, capture),
+            AstExpression::RecordUpdate(update) => self.lower_record_update(context, update),
+            AstExpression::TupleAccess(access) => self.lower_tuple_access(context, access),
+            AstExpression::Echo(echo) => self.lower_expression(context, &echo.value),
             AstExpression::Raw(raw) => self.unsupported_ast_expression(&raw.kind, raw.span),
-            other => self.unsupported_ast_expression(&ast_expression_kind(other), Span::from(other)),
         }
+    }
+
+    fn lower_binary_operation(
+        &mut self, context: &mut FunctionContext, operation: &ast::BinaryOperation,
+    ) -> Option<Expression> {
+        let left = self.lower_expression(context, &operation.left)?;
+        let right = self.lower_expression(context, &operation.right)?;
+        let type_ = self.typed_expression_type(operation.span).unwrap_or(Type::Nil);
+        let kind = match comparison_op(&operation.operator) {
+            Some(op) => ExpressionKind::Compare { op, left: Box::new(left), right: Box::new(right) },
+            None if matches!(
+                operation.operator,
+                ast::BinaryOperator::Equal | ast::BinaryOperator::NotEqual
+            ) =>
+            {
+                ExpressionKind::RuntimeEquality { left: Box::new(left), right: Box::new(right) }
+            }
+            None => ExpressionKind::DirectCall(DirectCall {
+                function: operator_function_name(&operation.operator).into(),
+                arguments: vec![
+                    CallArgument { label: None, span: Span::from(operation.left.as_ref()), value: left },
+                    CallArgument { label: None, span: Span::from(operation.right.as_ref()), value: right },
+                ],
+                abi: CallAbi { params: Vec::new(), return_: abi_return(&type_), boundary: CallBoundary::Internal },
+            }),
+        };
+        Some(Expression { type_, span: operation.span, kind })
+    }
+
+    fn lower_pipeline(&mut self, context: &mut FunctionContext, pipeline: &ast::Pipeline) -> Option<Expression> {
+        let input = self.lower_expression(context, &pipeline.value)?;
+        let call = self.lower_expression(context, &pipeline.into)?;
+        let type_ = self
+            .typed_expression_type(pipeline.span)
+            .unwrap_or_else(|| call.type_.clone());
+        Some(Expression {
+            type_,
+            span: pipeline.span,
+            kind: ExpressionKind::Pipeline(PipelineLowering {
+                input: Box::new(input),
+                call: Box::new(call),
+                inserted_argument: 0,
+            }),
+        })
+    }
+
+    fn lower_unary_operation(
+        &mut self, context: &mut FunctionContext, operation: &ast::UnaryOperation,
+    ) -> Option<Expression> {
+        let value = self.lower_expression(context, &operation.value)?;
+        let type_ = self
+            .typed_expression_type(operation.span)
+            .unwrap_or_else(|| value.type_.clone());
+        Some(Expression {
+            type_: type_.clone(),
+            span: operation.span,
+            kind: ExpressionKind::DirectCall(DirectCall {
+                function: match operation.operator {
+                    ast::UnaryOperator::BooleanNot => "__op_not".into(),
+                    ast::UnaryOperator::IntegerNegate => "__op_negate".into(),
+                },
+                arguments: vec![CallArgument { label: None, span: Span::from(operation.value.as_ref()), value }],
+                abi: CallAbi { params: Vec::new(), return_: abi_return(&type_), boundary: CallBoundary::Internal },
+            }),
+        })
+    }
+
+    fn lower_use(&mut self, context: &mut FunctionContext, use_: &ast::Use) -> Option<Expression> {
+        let call = self.lower_expression(context, &use_.value)?;
+        let type_ = self
+            .typed_expression_type(use_.span)
+            .unwrap_or_else(|| call.type_.clone());
+        let callback = Expression {
+            type_: Type::Function { params: Vec::new(), return_type: Box::new(type_.clone()) },
+            span: use_.span,
+            kind: ExpressionKind::AnonymousFunction(AnonymousFunction {
+                params: Vec::new(),
+                captures: Vec::new(),
+                body: Block {
+                    instructions: Vec::new(),
+                    result: Box::new(self.nil_expression(use_.span)),
+                    span: use_.span,
+                },
+                abi: CallAbi { params: Vec::new(), return_: abi_return(&type_), boundary: CallBoundary::Internal },
+            }),
+        };
+        Some(Expression {
+            type_,
+            span: use_.span,
+            kind: ExpressionKind::Use(UseLowering { callback: Box::new(callback), call: Box::new(call) }),
+        })
+    }
+
+    fn lower_anonymous_function(
+        &mut self, context: &mut FunctionContext, function: &ast::AnonymousFunction,
+    ) -> Option<Expression> {
+        context.push_scope();
+        let mut params = Vec::new();
+        for parameter in &function.parameters {
+            let Some(name) = &parameter.name else { continue };
+            let type_ = parameter
+                .type_annotation
+                .as_ref()
+                .and_then(|annotation| Type::from_source(&annotation.source))
+                .unwrap_or(Type::Nil);
+            let local = context.allocate(name, type_);
+            context.bind(name.text.clone(), local.id);
+            params.push(local);
+        }
+        let body = self.lower_block(context, &function.body)?;
+        context.pop_scope();
+        let type_ = self
+            .typed_expression_type(function.span)
+            .unwrap_or_else(|| Type::Function {
+                params: params.iter().map(|param| param.type_.clone()).collect(),
+                return_type: Box::new(body.result.type_.clone()),
+            });
+        Some(Expression {
+            type_: type_.clone(),
+            span: function.span,
+            kind: ExpressionKind::AnonymousFunction(AnonymousFunction {
+                params,
+                captures: Vec::new(),
+                abi: call_abi(&type_, CallBoundary::Internal),
+                body,
+            }),
+        })
+    }
+
+    fn lower_capture(&mut self, context: &mut FunctionContext, capture: &ast::Capture) -> Option<Expression> {
+        let function = self.lower_expression(context, &capture.function)?;
+        let Type::Function { params, return_type } = function.type_.clone() else {
+            return None;
+        };
+        let mut callback_context = FunctionContext::default();
+        callback_context.push_scope();
+        let mut callback_params = Vec::new();
+        let mut call_arguments = Vec::new();
+        for (index, param_type) in params.iter().enumerate() {
+            match capture.arguments.get(index).and_then(Option::as_ref) {
+                Some(argument) => call_arguments.push(CallArgument {
+                    label: argument.label.as_ref().map(|label| label.text.clone()),
+                    value: self.lower_expression(context, &argument.value)?,
+                    span: argument.span,
+                }),
+                None => {
+                    let name = ast::Name { span: capture.span, text: format!("_capture_{index}") };
+                    let local = callback_context.allocate(&name, param_type.clone());
+                    callback_context.bind(name.text.clone(), local.id);
+                    call_arguments.push(CallArgument {
+                        label: None,
+                        value: Expression {
+                            type_: param_type.clone(),
+                            span: capture.span,
+                            kind: ExpressionKind::LocalGet(local.id),
+                        },
+                        span: capture.span,
+                    });
+                    callback_params.push(local);
+                }
+            }
+        }
+        let body = Block {
+            instructions: Vec::new(),
+            result: Box::new(Expression {
+                type_: *return_type.clone(),
+                span: capture.span,
+                kind: ExpressionKind::IndirectCall(IndirectCall {
+                    callee: Box::new(function),
+                    arguments: call_arguments,
+                    abi: CallAbi {
+                        params: params.iter().map(AbiValue::from).collect(),
+                        return_: abi_return(&return_type),
+                        boundary: CallBoundary::Internal,
+                    },
+                }),
+            }),
+            span: capture.span,
+        };
+        callback_context.pop_scope();
+        let type_ =
+            Type::Function { params: callback_params.iter().map(|param| param.type_.clone()).collect(), return_type };
+        Some(Expression {
+            type_: type_.clone(),
+            span: capture.span,
+            kind: ExpressionKind::AnonymousFunction(AnonymousFunction {
+                params: callback_params,
+                captures: Vec::new(),
+                abi: call_abi(&type_, CallBoundary::Internal),
+                body,
+            }),
+        })
+    }
+
+    fn lower_record_update(&mut self, context: &mut FunctionContext, update: &ast::RecordUpdate) -> Option<Expression> {
+        let record = self.lower_expression(context, &update.spread)?;
+        let updates = update
+            .updates
+            .iter()
+            .filter_map(|argument| {
+                let name = argument.label.as_ref()?.text.clone();
+                Some(RecordFieldValue { name, value: self.lower_expression(context, &argument.value)? })
+            })
+            .collect::<Vec<_>>();
+        let type_ = self
+            .typed_expression_type(update.span)
+            .unwrap_or_else(|| record.type_.clone());
+        Some(Expression {
+            type_,
+            span: update.span,
+            kind: ExpressionKind::RecordUpdate { record: Box::new(record), updates },
+        })
+    }
+
+    fn lower_tuple_access(&mut self, context: &mut FunctionContext, access: &ast::TupleAccess) -> Option<Expression> {
+        let tuple = self.lower_expression(context, &access.tuple)?;
+        let type_ = self.typed_expression_type(access.span).unwrap_or(Type::Nil);
+        Some(Expression {
+            type_,
+            span: access.span,
+            kind: ExpressionKind::TupleElement { tuple: Box::new(tuple), index: access.index.text.parse().ok()? },
+        })
     }
 
     fn unsupported_ast_expression(&mut self, kind: &str, span: Span) -> Option<Expression> {
@@ -1214,31 +1450,44 @@ impl FunctionContext {
     }
 }
 
-fn ast_expression_kind(expression: &AstExpression) -> String {
-    match expression {
-        AstExpression::Literal(_) => "literal".into(),
-        AstExpression::Variable(_) => "variable".into(),
-        AstExpression::Call(_) => "call".into(),
-        AstExpression::FieldAccess(_) => "field_access".into(),
-        AstExpression::Block(_) => "block".into(),
-        AstExpression::Case(_) => "case".into(),
-        AstExpression::BinaryOperation(_) => "binary_expression".into(),
-        AstExpression::Pipeline(_) => "pipeline".into(),
-        AstExpression::UnaryOperation(_) => "unary_expression".into(),
-        AstExpression::Use(_) => "use".into(),
-        AstExpression::AnonymousFunction(_) => "anonymous_function".into(),
-        AstExpression::Capture(_) => "capture".into(),
-        AstExpression::Record(_) => "record".into(),
-        AstExpression::RecordUpdate(_) => "record_update".into(),
-        AstExpression::Tuple(_) => "tuple".into(),
-        AstExpression::TupleAccess(_) => "tuple_access".into(),
-        AstExpression::List(_) => "list".into(),
-        AstExpression::BitArray(_) => "bit_array".into(),
-        AstExpression::Panic(_) => "panic".into(),
-        AstExpression::Todo(_) => "todo".into(),
-        AstExpression::Assert(_) => "assert".into(),
-        AstExpression::Echo(_) => "echo".into(),
-        AstExpression::Raw(raw) => raw.kind.clone(),
+fn comparison_op(operator: &ast::BinaryOperator) -> Option<ComparisonOp> {
+    match operator {
+        ast::BinaryOperator::Equal => Some(ComparisonOp::Equal),
+        ast::BinaryOperator::NotEqual => Some(ComparisonOp::NotEqual),
+        ast::BinaryOperator::LessThan | ast::BinaryOperator::FloatLessThan => Some(ComparisonOp::Less),
+        ast::BinaryOperator::LessThanEqual | ast::BinaryOperator::FloatLessThanEqual => Some(ComparisonOp::LessEqual),
+        ast::BinaryOperator::GreaterThan | ast::BinaryOperator::FloatGreaterThan => Some(ComparisonOp::Greater),
+        ast::BinaryOperator::GreaterThanEqual | ast::BinaryOperator::FloatGreaterThanEqual => {
+            Some(ComparisonOp::GreaterEqual)
+        }
+        _ => None,
+    }
+}
+
+fn operator_function_name(operator: &ast::BinaryOperator) -> &'static str {
+    match operator {
+        ast::BinaryOperator::Add => "__op_add",
+        ast::BinaryOperator::Subtract => "__op_subtract",
+        ast::BinaryOperator::Multiply => "__op_multiply",
+        ast::BinaryOperator::Divide => "__op_divide",
+        ast::BinaryOperator::Remainder => "__op_remainder",
+        ast::BinaryOperator::FloatAdd => "__op_float_add",
+        ast::BinaryOperator::FloatSubtract => "__op_float_subtract",
+        ast::BinaryOperator::FloatMultiply => "__op_float_multiply",
+        ast::BinaryOperator::FloatDivide => "__op_float_divide",
+        ast::BinaryOperator::And => "__op_and",
+        ast::BinaryOperator::Or => "__op_or",
+        ast::BinaryOperator::StringConcat => "__op_string_concat",
+        ast::BinaryOperator::Equal
+        | ast::BinaryOperator::NotEqual
+        | ast::BinaryOperator::LessThan
+        | ast::BinaryOperator::LessThanEqual
+        | ast::BinaryOperator::GreaterThan
+        | ast::BinaryOperator::GreaterThanEqual
+        | ast::BinaryOperator::FloatLessThan
+        | ast::BinaryOperator::FloatLessThanEqual
+        | ast::BinaryOperator::FloatGreaterThan
+        | ast::BinaryOperator::FloatGreaterThanEqual => "__op_compare",
     }
 }
 

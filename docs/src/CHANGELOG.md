@@ -20,5 +20,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   tuples, records, custom values, closures, managed pointers, and allocation helpers.
 - Pattern matching now parses, resolves, type-checks, lowers, diagnoses, and emits the supported
   scalar and structured pattern forms with explicit branch behavior.
+- Structured language support now covers declarations, constants, externals,
+  target groups, operators, pipelines, `use`, anonymous functions, captures,
+  records, updates, tuples, lists, bit arrays, imported members, opaque values,
+  and module interfaces.
 - Core IR now represents module declarations, constants, managed value forms, function values, call
   ABI metadata, structured control flow, failure paths, and stable debug output.

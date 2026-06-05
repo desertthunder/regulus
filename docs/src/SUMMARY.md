@@ -43,10 +43,19 @@ TODO:
   - Representing nested expressions and patterns without losing order
   - How AST design shapes later resolver, type checker, and IR code
 - Type checking and type inference
+  - How local and top-level inference cooperate
+  - Type-checking imported functions, types, constructors, and opaque values
+  - Building module interfaces for downstream compiler phases
 - Lowering and intermediate representations
+  - Lowering typed and resolved syntax into a smaller IR
+  - Making evaluation order, scopes, captures, and failure paths explicit
+  - Distinguishing language lowering from backend-specific limitations
 - Runtime value representation
 - Pattern Matching
   - Compiling pattern matching
+  - Binding variables from nested patterns, aliases, records, lists, and bit
+    strings
+  - Exhaustiveness, unreachable branch, and redundant pattern diagnostics
 - Code generation for WebAssembly
 - Linking modules and handling dependencies
 - Standard library and host interop
@@ -75,13 +84,11 @@ TODO:
   - [Pattern matching](internal/specs/06_pattern_matching.md)
   - [Core IR for real programs](internal/specs/07_core_ir_for_real_programs.md)
   - [WASM backend and runtime](internal/specs/08_wasm_backend_and_runtime.md)
-  - [Gleam language completeness](internal/specs/09_gleam_language_completeness.md)
   - [WASM backend completeness](internal/specs/10_wasm_backend_completeness.md)
   - [Standard library and host interop](internal/specs/11_stdlib_and_host_interop.md)
   - [CLI and build outputs](internal/specs/12_cli_and_build_outputs.md)
 - [Tasks]()
   - [WASM backend and runtime](internal/tasks/08_wasm_backend_and_runtime.md)
-  - [Gleam language completeness](internal/tasks/09_gleam_language_completeness.md)
   - [WASM backend completeness](internal/tasks/10_wasm_backend_completeness.md)
   - [Standard library and host interop](internal/tasks/11_stdlib_and_host_interop.md)
   - [CLI and build outputs](internal/tasks/12_cli_and_build_outputs.md)
