@@ -161,6 +161,12 @@ pub fn check_project(project: &Project) -> Result<TypedProject, Diagnostics> {
     if diagnostics.is_empty() { Ok(TypedProject { modules, interfaces }) } else { Err(diagnostics) }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ScopedType {
+    type_: Type,
+    generalized: bool,
+}
+
 struct TypeChecker {
     module: ResolvedModule,
     function_types: HashMap<String, Type>,
@@ -169,7 +175,7 @@ struct TypeChecker {
     interface: ModuleInterface,
     functions: Vec<TypedFunction>,
     expressions: Vec<TypedExpression>,
-    scopes: Vec<HashMap<String, Type>>,
+    scopes: Vec<HashMap<String, ScopedType>>,
     diagnostics: Diagnostics,
     inference_substitutions: HashMap<String, Type>,
     next_inference_variable: usize,
@@ -214,6 +220,10 @@ impl TypeChecker {
 
         if self.diagnostics.is_empty() {
             self.finalize_inferred_types();
+            self.check_ambiguous_function_types();
+        }
+
+        if self.diagnostics.is_empty() {
             Ok(TypedModule {
                 resolved: self.module,
                 functions: self.functions,
@@ -423,12 +433,24 @@ impl TypeChecker {
             last_type = match statement {
                 Statement::Let(let_) => {
                     let value_type = self.check_expression(&let_.value)?;
-                    if let Some(annotation) = &let_.type_annotation
+                    let pattern_type = if let Some(annotation) = &let_.type_annotation
                         && let Some(expected) = self.parse_type_annotation(annotation)
                     {
                         self.expect_same(&expected, &value_type, let_.span);
+                        expected
+                    } else if eligible_for_local_generalization(&let_.value) {
+                        self.finalize_type(&value_type, &mut HashMap::new())
+                    } else {
+                        value_type
+                    };
+                    if let Pattern::Name(name) = &let_.pattern
+                        && let_.type_annotation.is_none()
+                        && eligible_for_local_generalization(&let_.value)
+                    {
+                        self.define_generalized(name.text.clone(), pattern_type);
+                    } else {
+                        self.bind_pattern(&let_.pattern, &pattern_type);
                     }
-                    self.bind_pattern(&let_.pattern, &value_type);
                     Type::Nil
                 }
                 Statement::LetAssert(let_assert) => {
@@ -1163,8 +1185,11 @@ impl TypeChecker {
 
     fn lookup_name(&mut self, name: &ast::Name) -> Option<Type> {
         for scope in self.scopes.iter().rev() {
-            if let Some(type_) = scope.get(&name.text) {
-                return Some(type_.clone());
+            if let Some(scoped) = scope.get(&name.text).cloned() {
+                if scoped.generalized {
+                    return Some(self.instantiate_named_generics(&scoped.type_));
+                }
+                return Some(scoped.type_);
             }
         }
 
@@ -1185,7 +1210,10 @@ impl TypeChecker {
 
     fn parse_type_annotation(&mut self, annotation: &ast::TypeAnnotation) -> Option<Type> {
         match parse_type_source(&annotation.source) {
-            Some(type_) => Some(type_),
+            Some(type_) => {
+                self.validate_type_annotation_arity(&type_, annotation.span);
+                Some(type_)
+            }
             None => {
                 self.diagnostics.push(
                     Diagnostic::new(
@@ -1196,6 +1224,45 @@ impl TypeChecker {
                 );
                 None
             }
+        }
+    }
+
+    fn validate_type_annotation_arity(&mut self, type_: &Type, span: Span) {
+        match type_ {
+            Type::Tuple(items) => {
+                for item in items {
+                    self.validate_type_annotation_arity(item, span);
+                }
+            }
+            Type::List(item) => self.validate_type_annotation_arity(item, span),
+            Type::Custom { name, args } | Type::Opaque { name, args } => {
+                if let Some(declaration) = self.interface.types.get(name)
+                    && declaration.parameters.len() != args.len()
+                {
+                    self.diagnostics.push(
+                        Diagnostic::new(
+                            DiagnosticCode::TypeError,
+                            format!(
+                                "type `{}` expected {} type arguments but got {}",
+                                name,
+                                declaration.parameters.len(),
+                                args.len()
+                            ),
+                        )
+                        .with_label(Label::primary(span, "wrong number of type arguments")),
+                    );
+                }
+                for arg in args {
+                    self.validate_type_annotation_arity(arg, span);
+                }
+            }
+            Type::Function { params, return_type } => {
+                for param in params {
+                    self.validate_type_annotation_arity(param, span);
+                }
+                self.validate_type_annotation_arity(return_type, span);
+            }
+            _ => {}
         }
     }
 
@@ -1476,9 +1543,46 @@ impl TypeChecker {
         }
     }
 
+    fn check_ambiguous_function_types(&mut self) {
+        for function in &self.functions {
+            let Type::Function { params, return_type } = &function.type_ else {
+                continue;
+            };
+            let parameter_generics = params
+                .iter()
+                .flat_map(generic_names_in_type)
+                .collect::<std::collections::BTreeSet<_>>();
+            let ambiguous = generic_names_in_type(return_type)
+                .into_iter()
+                .filter(|name| !parameter_generics.contains(name))
+                .collect::<Vec<_>>();
+            if ambiguous.is_empty() {
+                continue;
+            }
+            self.diagnostics.push(
+                Diagnostic::new(
+                    DiagnosticCode::TypeError,
+                    format!(
+                        "ambiguous inferred type `{}` in return type of `{}`",
+                        ambiguous[0], function.name.text
+                    ),
+                )
+                .with_label(Label::primary(function.name.span, "ambiguous inferred type")),
+            );
+        }
+    }
+
     fn define(&mut self, name: String, type_: Type) {
+        self.define_scoped(name, type_, false);
+    }
+
+    fn define_generalized(&mut self, name: String, type_: Type) {
+        self.define_scoped(name, type_, true);
+    }
+
+    fn define_scoped(&mut self, name: String, type_: Type, generalized: bool) {
         if let Some(scope) = self.scopes.last_mut() {
-            scope.insert(name, type_);
+            scope.insert(name, ScopedType { type_, generalized });
         }
     }
 
@@ -1551,6 +1655,45 @@ impl ExpressionSpan for Expression {
     fn span(&self) -> Span {
         Span::from(self)
     }
+}
+
+fn generic_names_in_type(type_: &Type) -> Vec<String> {
+    let mut names = Vec::new();
+    collect_generic_names(type_, &mut names);
+    names.sort();
+    names.dedup();
+    names
+}
+
+fn collect_generic_names(type_: &Type, names: &mut Vec<String>) {
+    match type_ {
+        Type::Generic(name) if !TypeChecker::is_inference_variable_name(name) => names.push(name.clone()),
+        Type::Tuple(items) => items.iter().for_each(|item| collect_generic_names(item, names)),
+        Type::List(item) => collect_generic_names(item, names),
+        Type::Record { fields, .. } => fields
+            .iter()
+            .for_each(|field| collect_generic_names(&field.type_, names)),
+        Type::Custom { args, .. } | Type::Opaque { args, .. } => {
+            args.iter().for_each(|arg| collect_generic_names(arg, names));
+        }
+        Type::Function { params, return_type } => {
+            params.iter().for_each(|param| collect_generic_names(param, names));
+            collect_generic_names(return_type, names);
+        }
+        _ => {}
+    }
+}
+
+fn eligible_for_local_generalization(expression: &Expression) -> bool {
+    matches!(
+        expression,
+        Expression::Literal(_)
+            | Expression::AnonymousFunction(_)
+            | Expression::Tuple(_)
+            | Expression::List(_)
+            | Expression::Record(_)
+            | Expression::Block(_)
+    )
 }
 
 fn generic_name(index: usize) -> String {
@@ -1903,7 +2046,8 @@ mod tests {
     fn infers_generic_lists_and_polymorphic_calls() {
         let typed = check_source(
             r#"fn id(x) { x }
-fn main() { #(id(1), id("one"), []) }
+fn singleton(x) { [x] }
+fn main() { #(id(1), id("one"), singleton(True)) }
 "#,
         )
         .expect("type check source");
@@ -1920,9 +2064,42 @@ fn main() { #(id(1), id("one"), []) }
                 return_type: Box::new(Type::Tuple(vec![
                     Type::Int,
                     Type::String,
-                    Type::List(Box::new(Type::Generic("a".into())))
+                    Type::List(Box::new(Type::Bool))
                 ]))
             }
+        );
+    }
+
+    #[test]
+    fn reports_ambiguous_return_types() {
+        let diagnostics = check_source("fn main() { [] }").expect_err("ambiguous type should fail");
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic
+                .message
+                .contains("ambiguous inferred type `a` in return type of `main`")
+        }));
+    }
+
+    #[test]
+    fn generalizes_eligible_local_bindings() {
+        let typed = check_source(
+            r#"fn main() {
+  let id = fn(x) { x }
+  #(id(1), id("one"))
+}
+"#,
+        )
+        .expect("type check source");
+
+        let main = typed
+            .functions
+            .iter()
+            .find(|function| function.name.text == "main")
+            .expect("main type");
+        assert_eq!(
+            main.type_,
+            Type::Function { params: vec![], return_type: Box::new(Type::Tuple(vec![Type::Int, Type::String])) }
         );
     }
 
@@ -2000,6 +2177,22 @@ fn main() { #(unwrap(Box(1)), unwrap(Box("one"))) }
             Some(Type::Custom { name: "Result".into(), args: vec![Type::Int, Type::String] })
         );
         assert_eq!(Type::from_source("value"), Some(Type::Generic("value".into())));
+    }
+
+    #[test]
+    fn reports_generic_arity_mismatches() {
+        let diagnostics = check_source(
+            r#"pub type Box(value) { Box(value) }
+fn main(value: Box(Int, String)) { value }
+"#,
+        )
+        .expect_err("arity should fail");
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic
+                .message
+                .contains("type `Box` expected 1 type arguments but got 2")
+        }));
     }
 
     #[test]

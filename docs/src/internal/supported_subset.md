@@ -60,12 +60,14 @@ updates, pipelines, unary and binary operations, anonymous functions, captures,
 `use`, `case`, guards, nested patterns, simple exhaustiveness checks, module
 interfaces, and imported constructor patterns across project modules.
 
-The type checker infers unannotated function parameters, local values,
+The type checker infers unannotated function parameters, eligible local values,
 anonymous-function parameters, generic functions, empty and generic lists,
 generic custom-type constructors, constructor patterns, polymorphic calls, and
-imported generic functions. The inference layer has reusable inference
-variables, type schemes, substitutions, constraint generation, unification,
-occurs checks, generalization, constructor schemes, and inference interfaces.
+imported generic functions. It reports ambiguous return types, recursive
+inferred types, and generic arity mismatches. The inference layer has reusable
+inference variables, type schemes, substitutions, constraint generation,
+unification, occurs checks, generalization, constructor schemes, and inference
+interfaces.
 
 ### Core IR
 
