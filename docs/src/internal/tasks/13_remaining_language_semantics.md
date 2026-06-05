@@ -43,8 +43,7 @@ Replace placeholder semantics for represented language forms with full behavior.
 - [ ] Resolve and type-check updated fields against declaration order.
 - [ ] Infer field access and record-update field types from known record
       declarations.
-- [ ] Decide whether open-record-style inference is supported or rejected with
-      diagnostics.
+- [ ] Support open-record-style inference is with diagnostics.
 - [ ] Lower record updates into explicit field copy and replacement operations.
 - [ ] Emit Wasm allocation for updated records/custom values.
 - [ ] Add tests for scalar and managed field updates.

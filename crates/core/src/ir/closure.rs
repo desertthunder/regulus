@@ -192,7 +192,7 @@ pub(super) fn lower_capture(
 
 pub(super) fn lower_synthetic_anonymous_function(
     lowerer: &mut Lowerer, context: &mut FunctionContext, span: super::Span, outer_local_count: usize,
-    original_params: Vec<Local>, mut body: Block, type_: Type,
+    original_params: Vec<Local>, mut body: Block, type_: &Type,
 ) -> Expression {
     let name = lowerer.next_anonymous_name();
     let captures = captured_locals(context, &body, outer_local_count);
@@ -237,7 +237,7 @@ pub(super) fn lower_synthetic_anonymous_function(
             name,
             params: original_params,
             captures,
-            abi: call_abi(&type_, CallBoundary::Internal),
+            abi: call_abi(type_, CallBoundary::Internal),
             body: empty_body(lowerer, span),
         }),
     }
