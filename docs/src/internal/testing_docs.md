@@ -2,9 +2,10 @@
 
 Compiler tests should be small, layered, and easy to connect to the docs. A
 single language feature usually passes through parsing, AST construction, name
-resolution, type checking, lowering, WebAssembly generation, and execution. Tests
-should make that path visible without requiring every test to run the whole
-compiler.
+resolution, type checking, lowering, WebAssembly generation, and execution.
+
+Tests should make that path visible without requiring every test to run the
+whole compiler.
 
 ## Fixture layout
 
@@ -23,8 +24,8 @@ fixtures/
 ```
 
 Each fixture should focus on one language feature unless it is an end-to-end
-case. Use short Gleam snippets with descriptive names. End-to-end fixtures should
-compile to WebAssembly and run in Wasmtime.
+case. Use short Gleam snippets with descriptive names. End-to-end fixtures
+should compile to WebAssembly and run in Wasmtime.
 
 ## Test layers
 
@@ -36,7 +37,12 @@ Use the narrowest test that proves the behavior:
 - Core IR tests for lowering and local allocation.
 - WAT snapshots for deterministic WebAssembly text output.
 - Wasmtime tests for exported functions that should execute.
+- Memory inspection tests for managed objects and runtime layout.
 - Diagnostic snapshots for stable, color-free error rendering.
+
+Backend tests should cover WAT snapshots, Wasmtime execution, and memory
+inspection. Add focused diagnostics tests whenever a new unsupported ABI
+or backend shape is recognized before WAT assembly.
 
 Snapshot tests use `insta`. Prefer inline snapshots for short output and fixture
 or snapshot files for larger IR, WAT, or diagnostic output.
@@ -81,5 +87,5 @@ cargo test
 mdbook build docs
 ```
 
-Changes that add generated output should also check that snapshots are stable and
-that fixture names clearly describe the behavior being tested.
+Changes that add generated output should also check that snapshots are stable
+and that fixture names clearly describe the behavior being tested.

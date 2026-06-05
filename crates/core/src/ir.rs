@@ -436,7 +436,7 @@ pub struct RecordFieldValue {
     pub value: Expression,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ComparisonOp {
     Equal,
     NotEqual,

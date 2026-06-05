@@ -29,12 +29,12 @@ Gleam language support.
 
 ### Code generation
 
-- [ ] Emit every IR expression and instruction form.
-- [ ] Emit branches, guards, lowered patterns, and failure paths.
-- [ ] Emit all operators and short-circuiting boolean expressions.
-- [ ] Emit direct calls, imported calls, exported calls, indirect calls, and
+- [x] Emit every IR expression and instruction form.
+- [x] Emit branches, guards, lowered patterns, and failure paths.
+- [x] Emit all operators and short-circuiting boolean expressions.
+- [x] Emit direct calls, imported calls, exported calls, indirect calls, and
       closure calls.
-- [ ] Emit module constants and module initialization in dependency order.
+- [x] Emit module constants and module initialization in dependency order.
 
 ### Imports, exports, and targets
 

@@ -52,8 +52,11 @@ The backend emits:
 - locals, local assignment, blocks, and expression evaluation
 - direct calls, imported calls, exported calls, and indirect calls through
   function values
+- arithmetic, comparison, string-concat, equality, and boolean operators
 - branches, guards, scalar pattern tests, managed tag tests, pattern bindings,
   and `let assert` failure paths
+- lowered pipeline, use, list-deconstruct, bit-string-deconstruct, and
+  record-update IR forms
 - memory allocation, loads, and stores for backend-lowered memory operations
 - static data for managed literals and constants where possible
 
@@ -77,14 +80,3 @@ validated before emission. The current raw ABI supports:
 Managed values can be exported directly for low-level Wasmtime tests. Safer
 browser or user-facing APIs should use adapters that read or write memory using
 the documented object layout.
-
-## Tests
-
-Backend tests should cover three layers:
-
-1. WAT snapshots for deterministic text output.
-2. Wasmtime execution for exported behavior.
-3. Memory inspection for managed objects and runtime layout.
-
-Add focused diagnostics tests whenever a new unsupported ABI or backend shape is
-recognized before assembly.

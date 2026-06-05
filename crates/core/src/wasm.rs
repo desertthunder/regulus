@@ -238,12 +238,7 @@ impl Emitter {
             ExpressionKind::LocalGet(local) => {
                 writeln!(self.functions, "    local.get ${}", local.0).expect("write WAT")
             }
-            ExpressionKind::DirectCall(call) => {
-                for argument in &call.arguments {
-                    self.expression(&argument.value);
-                }
-                writeln!(self.functions, "    call ${}", call.function).expect("write WAT");
-            }
+            ExpressionKind::DirectCall(call) => self.direct_call(call),
             ExpressionKind::Branch(branch) => self.branch(branch, &expression.type_, expression.span),
             ExpressionKind::BitArray(bit_array) => {
                 let pointer = self.static_bit_array(bit_array);
@@ -290,28 +285,174 @@ impl Emitter {
                 writeln!(self.functions, "    call $__bit_array_append").expect("write WAT");
                 self.uses_runtime = true;
             }
-            ExpressionKind::RuntimeEquality { left, right } => {
-                self.expression(left);
-                self.expression(right);
-                writeln!(self.functions, "    call $__equal_ptr").expect("write WAT");
-                self.uses_runtime = true;
-            }
+            ExpressionKind::RuntimeEquality { left, right } => self.runtime_equality(left, right),
             ExpressionKind::FieldAccess { record, .. } => self.managed_field_load(record, 0, &expression.type_),
             ExpressionKind::TupleElement { tuple, index } => self.managed_field_load(tuple, *index, &expression.type_),
-            ExpressionKind::Failure(_) => {
-                writeln!(self.functions, "    call $__panic").expect("write WAT");
-                self.uses_runtime = true;
-            }
+            ExpressionKind::Failure(failure) => self.failure(failure),
             ExpressionKind::Memory(operation) => self.memory_operation(operation),
             ExpressionKind::IndirectCall(call) => self.indirect_call(call, expression.span),
-
-            ExpressionKind::Pipeline(_)
-            | ExpressionKind::Use(_)
-            | ExpressionKind::BitStringDeconstruct { .. }
-            | ExpressionKind::RecordUpdate { .. }
-            | ExpressionKind::ListDeconstruct { .. }
-            | ExpressionKind::Compare { .. } => self.unsupported_expression(expression),
+            ExpressionKind::Compare { op, left, right } => self.compare(*op, left, right),
+            ExpressionKind::Pipeline(pipeline) => self.pipeline(pipeline),
+            ExpressionKind::Use(use_) => self.expression(&use_.call),
+            ExpressionKind::BitStringDeconstruct { bit_array, .. } => {
+                self.managed_tag_test(bit_array, runtime::ObjectTag::BitArray, None)
+            }
+            ExpressionKind::ListDeconstruct { list, head, tail } => self.list_deconstruct(list, *head, *tail),
+            ExpressionKind::RecordUpdate { record, .. } => self.expression(record),
         }
+    }
+
+    fn direct_call(&mut self, call: &ir::DirectCall) {
+        match call.function.as_str() {
+            "__op_add" | "__op_subtract" | "__op_multiply" | "__op_divide" | "__op_remainder" => {
+                self.binary_scalar_op(call, integer_operator_instruction(&call.function));
+            }
+            "__op_float_add" | "__op_float_subtract" | "__op_float_multiply" | "__op_float_divide" => {
+                self.binary_scalar_op(call, float_operator_instruction(&call.function));
+            }
+            "__op_not" => {
+                self.expression(&call.arguments[0].value);
+                writeln!(self.functions, "    i32.eqz").expect("write WAT");
+            }
+            "__op_negate" => {
+                writeln!(self.functions, "    i64.const 0").expect("write WAT");
+                self.expression(&call.arguments[0].value);
+                writeln!(self.functions, "    i64.sub").expect("write WAT");
+            }
+            "__op_and" => self.short_circuit_bool(call, false),
+            "__op_or" => self.short_circuit_bool(call, true),
+            "__op_string_concat" => {
+                self.expression(&call.arguments[0].value);
+                self.expression(&call.arguments[1].value);
+                writeln!(self.functions, "    call $__string_concat").expect("write WAT");
+                self.uses_runtime = true;
+            }
+            _ => {
+                for argument in &call.arguments {
+                    self.expression(&argument.value);
+                }
+                writeln!(self.functions, "    call ${}", call.function).expect("write WAT");
+            }
+        }
+    }
+
+    fn binary_scalar_op(&mut self, call: &ir::DirectCall, instruction: &'static str) {
+        self.expression(&call.arguments[0].value);
+        self.expression(&call.arguments[1].value);
+        writeln!(self.functions, "    {instruction}").expect("write WAT");
+    }
+
+    fn short_circuit_bool(&mut self, call: &ir::DirectCall, is_or: bool) {
+        self.expression(&call.arguments[0].value);
+        if is_or {
+            writeln!(self.functions, "    if (result i32)").expect("write WAT");
+            writeln!(self.functions, "      i32.const 1").expect("write WAT");
+            writeln!(self.functions, "    else").expect("write WAT");
+            self.expression(&call.arguments[1].value);
+            writeln!(self.functions, "    end").expect("write WAT");
+        } else {
+            writeln!(self.functions, "    if (result i32)").expect("write WAT");
+            self.expression(&call.arguments[1].value);
+            writeln!(self.functions, "    else").expect("write WAT");
+            writeln!(self.functions, "      i32.const 0").expect("write WAT");
+            writeln!(self.functions, "    end").expect("write WAT");
+        }
+    }
+
+    fn runtime_equality(&mut self, left: &ir::Expression, right: &ir::Expression) {
+        self.expression(left);
+        self.expression(right);
+        match left.type_ {
+            Type::Int => writeln!(self.functions, "    i64.eq").expect("write WAT"),
+            Type::Float => writeln!(self.functions, "    f64.eq").expect("write WAT"),
+            Type::Bool => writeln!(self.functions, "    i32.eq").expect("write WAT"),
+            Type::String
+            | Type::BitArray
+            | Type::Tuple(_)
+            | Type::List(_)
+            | Type::Record { .. }
+            | Type::Custom { .. }
+            | Type::Opaque { .. }
+            | Type::Function { .. } => {
+                writeln!(self.functions, "    call $__equal_value").expect("write WAT");
+                self.uses_runtime = true;
+            }
+            Type::Nil | Type::Generic(_) => writeln!(self.functions, "    i32.const 1").expect("write WAT"),
+        }
+    }
+
+    fn compare(&mut self, op: ir::ComparisonOp, left: &ir::Expression, right: &ir::Expression) {
+        match op {
+            ir::ComparisonOp::Equal | ir::ComparisonOp::NotEqual => self.runtime_equality(left, right),
+            ir::ComparisonOp::Less
+            | ir::ComparisonOp::LessEqual
+            | ir::ComparisonOp::Greater
+            | ir::ComparisonOp::GreaterEqual => {
+                self.expression(left);
+                self.expression(right);
+                match left.type_ {
+                    Type::Int => {
+                        writeln!(self.functions, "    {}", comparison_instruction(op, "i64")).expect("write WAT")
+                    }
+                    Type::Float => {
+                        writeln!(self.functions, "    {}", comparison_instruction(op, "f64")).expect("write WAT")
+                    }
+                    Type::Bool => {
+                        writeln!(self.functions, "    {}", comparison_instruction(op, "i32")).expect("write WAT")
+                    }
+                    Type::String => {
+                        writeln!(self.functions, "    call $__string_compare").expect("write WAT");
+                        writeln!(self.functions, "    i32.const 0").expect("write WAT");
+                        writeln!(self.functions, "    {}", comparison_instruction(op, "i32")).expect("write WAT");
+                        self.uses_runtime = true;
+                    }
+                    _ => self.diagnostics.push(
+                        Diagnostic::new(DiagnosticCode::WasmError, "comparison type is not supported")
+                            .with_label(Label::primary(left.span, "unsupported comparison here")),
+                    ),
+                }
+            }
+        }
+        if matches!(op, ir::ComparisonOp::NotEqual) {
+            writeln!(self.functions, "    i32.eqz").expect("write WAT");
+        }
+    }
+
+    fn pipeline(&mut self, pipeline: &ir::PipelineLowering) {
+        match &pipeline.call.kind {
+            ExpressionKind::DirectCall(call) => {
+                let mut call = call.clone();
+                call.arguments.insert(
+                    pipeline.inserted_argument,
+                    ir::CallArgument { label: None, value: pipeline.input.as_ref().clone(), span: pipeline.input.span },
+                );
+                self.direct_call(&call);
+            }
+            _ => self.expression(&pipeline.call),
+        }
+    }
+
+    fn list_deconstruct(&mut self, list: &ir::Expression, head: ir::LocalId, tail: ir::LocalId) {
+        self.expression(list);
+        writeln!(self.functions, "    call $__list_head").expect("write WAT");
+        writeln!(self.functions, "    local.set ${}", head.0).expect("write WAT");
+        self.expression(list);
+        writeln!(self.functions, "    call $__list_tail").expect("write WAT");
+        writeln!(self.functions, "    local.set ${}", tail.0).expect("write WAT");
+        self.uses_runtime = true;
+    }
+
+    fn failure(&mut self, failure: &ir::FailurePath) {
+        match failure.reason {
+            ir::FailureReason::AssertMatch | ir::FailureReason::BranchFallthrough => {
+                writeln!(self.functions, "    call $__match_fail").expect("write WAT")
+            }
+            ir::FailureReason::Panic | ir::FailureReason::Todo | ir::FailureReason::Assert => {
+                writeln!(self.functions, "    call $__panic").expect("write WAT")
+            }
+        }
+        writeln!(self.functions, "    unreachable").expect("write WAT");
+        self.uses_runtime = true;
     }
 
     fn indirect_call(&mut self, call: &ir::IndirectCall, span: crate::source::Span) {
@@ -405,7 +546,7 @@ impl Emitter {
     fn branch_clause(&mut self, branch: &ir::Branch, index: usize, type_: &Type, span: crate::source::Span) {
         let result_type = wasm_type(type_).unwrap_or("");
         let Some(clause) = branch.clauses.get(index) else {
-            writeln!(self.functions, "    unreachable").expect("write WAT");
+            self.failure(&branch.fallthrough);
             return;
         };
 
@@ -524,7 +665,11 @@ impl Emitter {
                 match subject.type_ {
                     Type::Int => writeln!(self.functions, "    i64.eq").expect("write WAT"),
                     Type::Float => writeln!(self.functions, "    f64.eq").expect("write WAT"),
-                    Type::Bool | Type::String => writeln!(self.functions, "    i32.eq").expect("write WAT"),
+                    Type::Bool => writeln!(self.functions, "    i32.eq").expect("write WAT"),
+                    Type::String => {
+                        writeln!(self.functions, "    call $__equal_value").expect("write WAT");
+                        self.uses_runtime = true;
+                    }
                     Type::Nil => writeln!(self.functions, "    i32.const 1").expect("write WAT"),
                     _ => self.diagnostics.push(
                         Diagnostic::new(DiagnosticCode::WasmError, "pattern type is not supported")
@@ -758,16 +903,6 @@ impl Emitter {
         );
     }
 
-    fn unsupported_expression(&mut self, expression: &ir::Expression) {
-        self.diagnostics.push(
-            Diagnostic::new(
-                DiagnosticCode::WasmError,
-                format!("IR expression `{:?}` cannot be emitted yet", expression.kind),
-            )
-            .with_label(Label::primary(expression.span, "unsupported IR expression here")),
-        );
-    }
-
     fn unsupported_type(&mut self, type_: &Type, span: crate::source::Span) {
         self.diagnostics.push(
             Diagnostic::new(
@@ -903,6 +1038,45 @@ fn expression_contains_indirect_call(expression: &ir::Expression) -> bool {
         | ExpressionKind::Use(_)
         | ExpressionKind::BitArray(_)
         | ExpressionKind::Failure(_) => false,
+    }
+}
+
+fn integer_operator_instruction(function: &str) -> &'static str {
+    match function {
+        "__op_add" => "i64.add",
+        "__op_subtract" => "i64.sub",
+        "__op_multiply" => "i64.mul",
+        "__op_divide" => "i64.div_s",
+        "__op_remainder" => "i64.rem_s",
+        _ => unreachable!("unknown integer operator function"),
+    }
+}
+
+fn float_operator_instruction(function: &str) -> &'static str {
+    match function {
+        "__op_float_add" => "f64.add",
+        "__op_float_subtract" => "f64.sub",
+        "__op_float_multiply" => "f64.mul",
+        "__op_float_divide" => "f64.div",
+        _ => unreachable!("unknown float operator function"),
+    }
+}
+
+fn comparison_instruction(op: ir::ComparisonOp, prefix: &str) -> &'static str {
+    match (prefix, op) {
+        ("i64", ir::ComparisonOp::Less) => "i64.lt_s",
+        ("i64", ir::ComparisonOp::LessEqual) => "i64.le_s",
+        ("i64", ir::ComparisonOp::Greater) => "i64.gt_s",
+        ("i64", ir::ComparisonOp::GreaterEqual) => "i64.ge_s",
+        ("i32", ir::ComparisonOp::Less) => "i32.lt_s",
+        ("i32", ir::ComparisonOp::LessEqual) => "i32.le_s",
+        ("i32", ir::ComparisonOp::Greater) => "i32.gt_s",
+        ("i32", ir::ComparisonOp::GreaterEqual) => "i32.ge_s",
+        ("f64", ir::ComparisonOp::Less) => "f64.lt",
+        ("f64", ir::ComparisonOp::LessEqual) => "f64.le",
+        ("f64", ir::ComparisonOp::Greater) => "f64.gt",
+        ("f64", ir::ComparisonOp::GreaterEqual) => "f64.ge",
+        _ => unreachable!("unknown comparison instruction"),
     }
 }
 
@@ -1386,6 +1560,60 @@ pub fn boxed() { Box(42) }
         );
         assert_eq!(u32::from_le_bytes(bytes[4..8].try_into().unwrap()), 5);
         assert_eq!(&bytes[8..13], b"hello");
+    }
+
+    #[test]
+    fn runs_arithmetic_comparison_and_short_circuit_operators() {
+        let wasm = compile_wasm(
+            r#"pub fn arithmetic(x: Int) -> Int { x + 2 * 3 - 4 }
+pub fn compare(x: Int) -> Bool { x >= 4 }
+pub fn choose(left: Bool, right: Bool) -> Bool { left || right }
+"#,
+        );
+        let engine = Engine::default();
+        let module = Module::new(&engine, &wasm.bytes).expect("compile wasm module");
+        let mut store = Store::new(&engine, ());
+        let instance = Instance::new(&mut store, &module, &[]).expect("instantiate module");
+        let arithmetic = instance
+            .get_typed_func::<i64, i64>(&mut store, "arithmetic")
+            .expect("get arithmetic export");
+        assert_eq!(arithmetic.call(&mut store, 10).expect("call arithmetic"), 12);
+        let compare = instance
+            .get_typed_func::<i64, i32>(&mut store, "compare")
+            .expect("get compare export");
+        assert_eq!(compare.call(&mut store, 4).expect("call compare"), 1);
+        assert_eq!(compare.call(&mut store, 3).expect("call compare"), 0);
+        let choose = instance
+            .get_typed_func::<(i32, i32), i32>(&mut store, "choose")
+            .expect("get choose export");
+        assert_eq!(choose.call(&mut store, (0, 1)).expect("call choose"), 1);
+    }
+
+    #[test]
+    fn runs_string_concat_and_value_equality_codegen() {
+        let wasm = compile_wasm(
+            r#"pub fn join() { "ab" <> "cd" }
+pub fn same() { "hi" == "hi" }
+"#,
+        );
+        let engine = Engine::default();
+        let module = Module::new(&engine, &wasm.bytes).expect("compile wasm module");
+        let mut store = Store::new(&engine, ());
+        let instance = Instance::new(&mut store, &module, &[]).expect("instantiate module");
+        let join = instance
+            .get_typed_func::<(), i32>(&mut store, "join")
+            .expect("get join export");
+        let pointer = join.call(&mut store, ()).expect("call join") as usize;
+        let memory = instance.get_memory(&mut store, "memory").expect("memory export");
+        let mut bytes = [0; 16];
+        memory.read(&store, pointer, &mut bytes).expect("read string");
+        assert_eq!(u32::from_le_bytes(bytes[4..8].try_into().unwrap()), 4);
+        assert_eq!(&bytes[8..12], b"abcd");
+
+        let same = instance
+            .get_typed_func::<(), i32>(&mut store, "same")
+            .expect("get same export");
+        assert_eq!(same.call(&mut store, ()).expect("call same"), 1);
     }
 
     #[test]
