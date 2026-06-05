@@ -38,10 +38,14 @@
   - [Compiling pattern matching](./chapter_8/compiling_pattern_matching.md)
   - [Binding variables from patterns](./chapter_8/binding_variables.md)
   - [Exhaustiveness diagnostics](./chapter_8/exhaustiveness_diagnostics.md)
+- [Compiler architecture](./chapter_9.md)
+  - [Phase boundaries](./chapter_9/phase_boundaries.md)
+  - [Pass pipelines and invariants](./chapter_9/pass_pipeline_invariants.md)
+  - [Project input and module graph](./chapter_9/project_to_modules.md)
+  - [Artifacts and execution](./chapter_9/artifacts_execution.md)
 
 <!--
 TODO:
-- Compiler architecture from source to executable
 - Diagnostics and source spans
 - Lowering and intermediate representations
   - Lowering typed and resolved syntax into a smaller IR
@@ -51,11 +55,6 @@ TODO:
 - Linking modules and handling dependencies
 - Standard library and host interop
 - Testing a compiler end to end
-- This Project
-  - The project pipeline in detail
-  - The project CLI and build outputs
-  - Extending the compiler with a new Gleam feature
-
 -->
 
 # Development
@@ -63,6 +62,14 @@ TODO:
 - [Supported subset](internal/supported_subset.md)
 - [Development changelog](./CHANGELOG.md)
 - [Tests & Documentation](internal/testing_docs.md)
+
+<!--
+TODO:
+- This Project
+  - The project pipeline in detail
+  - The project CLI and build outputs
+  - Extending the compiler with a new Gleam feature
+-->
 
 # Internal Docs
 
