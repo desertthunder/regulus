@@ -79,8 +79,8 @@ integer -> digit+
 ```
 
 Real languages need more detail for underscores, bases, floats, strings,
-comments, and operators. Lexers also need lookahead because the end of a token is
-not always known from the first character. Seeing `=` might mean the token is
+comments, and operators. Lexers also need lookahead because the end of a token
+is not always known from the first character. Seeing `=` might mean the token is
 `=`, or it might be the start of `==`. Seeing `/` might mean division, the start
 of a comment, or part of another operator depending on the language.
 
@@ -103,5 +103,4 @@ keeps the important lexer-era information:
 That is enough for later passes to report errors precisely without keeping every
 whitespace or punctuation token in the AST.
 
-[^1]: Cornell CS 4120, "Lexical Analysis and Regular Expressions":
-    https://www.cs.cornell.edu/courses/cs4120/2022sp/notes/lexing/
+[^1]: Cornell CS 4120, "Lexical Analysis and Regular Expressions": https://www.cs.cornell.edu/courses/cs4120/2022sp/notes/lexing/

@@ -93,5 +93,4 @@ source name -> symbol -> kind, namespace, span, module visibility
 That link turns a syntax tree into a program the rest of the compiler can reason
 about.
 
-[^1]: Rust Reference, "Name resolution":
-    https://doc.rust-lang.org/beta/reference/names/name-resolution.html
+[^1]: Rust Reference, "Name resolution": https://doc.rust-lang.org/beta/reference/names/name-resolution.html

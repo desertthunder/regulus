@@ -5,8 +5,8 @@ language tools.[^1] It lets this project use an existing Gleam parser before
 implementing its own lexer and parser.
 
 The `tree-sitter-gleam` crate embeds the Gleam grammar and exposes it through
-the Rust `tree-sitter` API.[^2] Its README states that the grammar can parse the
-entire Gleam language and is largely based on Gleam's own parser.[^3]
+the Rust `tree-sitter` API.[^2] The grammar can parse the entire Gleam language
+and is largely based on Gleam's own parser.[^3]
 
 Tree-sitter also represents syntax errors in the tree. Malformed source can
 produce a tree that contains error nodes. This compiler checks for those nodes
@@ -116,7 +116,9 @@ This keeps the compiler tied to the actual Gleam grammar and gives later passes
 a compact AST built for this project.
 
 [^1]: Tree-sitter documentation, "Introduction": https://tree-sitter.github.io/tree-sitter/
+
 [^2]: `tree-sitter` Rust crate documentation: https://docs.rs/tree-sitter
+
 [^3]: `tree-sitter-gleam` README: https://github.com/gleam-lang/tree-sitter-gleam
-[^4]: `tree-sitter-gleam` grammar source, `source_file` and module statements:
-    https://github.com/gleam-lang/tree-sitter-gleam/blob/main/grammar.js
+
+[^4]: `tree-sitter-gleam` grammar source, `source_file` and module statements: https://github.com/gleam-lang/tree-sitter-gleam/blob/main/grammar.js

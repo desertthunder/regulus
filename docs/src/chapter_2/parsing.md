@@ -13,10 +13,11 @@ expression -> "(" expression ")"
 This is enough to describe examples like `1`, `x`, `1 + 2`, and `(1 + 2)`, but
 it has a problem. It does not say how to group `1 + 2 * 3`.
 
-Crafting Interpreters uses this problem to introduce precedence and associativity
-in expression parsing.[^1] Precedence decides which operator binds more tightly:
-`*` should group before `+`. Associativity decides how operators at the same
-precedence group: in many languages, `a - b - c` means `(a - b) - c`.
+Crafting Interpreters uses this problem to introduce precedence and
+associativity in expression parsing.[^1] Precedence decides which operator
+binds more tightly: `*` should group before `+`. Associativity decides how
+operators at the same precedence group: in many languages, `a - b - c` means
+`(a - b) - c`.
 
 A parser can encode those rules by splitting `expression` into layers:
 
@@ -46,9 +47,6 @@ generation all rely on the parser to choose that tree.
 precedence-climbing parser instead of writing one function per precedence level.
 The data structure produced is the same kind of tree; the implementation is just
 more compact for languages with many operators.</span>
-
-[^1]: Robert Nystrom, "Parsing Expressions," Crafting Interpreters:
-    https://craftinginterpreters.com/parsing-expressions.html
 
 ## Context-free grammars
 
@@ -112,7 +110,8 @@ That keeps later compiler passes simpler. They can assume the AST was built from
 syntax that tree-sitter accepted, and users get a source location for parse
 errors.
 
-[^2]: Cornell CS 4120, "Context-Free Grammars":
-    https://www.cs.cornell.edu/courses/cs4120/2022sp/notes/grammars/
-[^3]: Tree-sitter documentation, "Introduction":
-    https://tree-sitter.github.io/tree-sitter/
+[^1]: Robert Nystrom, "Parsing Expressions," Crafting Interpreters: https://craftinginterpreters.com/parsing-expressions.html
+
+[^2]: Cornell CS 4120, "Context-Free Grammars": https://www.cs.cornell.edu/courses/cs4120/2022sp/notes/grammars/
+
+[^3]: Tree-sitter documentation, "Introduction": https://tree-sitter.github.io/tree-sitter/
