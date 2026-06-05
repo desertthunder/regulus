@@ -163,6 +163,7 @@ pub enum ReferenceTargetName {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReferenceKind {
     Function,
+    Constant,
     Import,
     Imported,
     Parameter,
@@ -170,6 +171,7 @@ pub enum ReferenceKind {
     Type,
     Constructor,
     Field,
+    Label,
     Prelude,
 }
 
@@ -1503,14 +1505,16 @@ fn visibility(public: bool) -> Visibility {
 impl From<&SymbolKind> for ReferenceKind {
     fn from(kind: &SymbolKind) -> Self {
         match kind {
-            SymbolKind::Function { .. } => Self::Function,
+            SymbolKind::Function { .. } | SymbolKind::ExternalFunction { .. } => Self::Function,
+            SymbolKind::Constant { .. } => Self::Constant,
             SymbolKind::Import { .. } => Self::Import,
             SymbolKind::Imported { .. } => Self::Imported,
             SymbolKind::Parameter => Self::Parameter,
             SymbolKind::Local => Self::Local,
-            SymbolKind::Type => Self::Type,
-            SymbolKind::Constructor => Self::Constructor,
-            SymbolKind::Field => Self::Field,
+            SymbolKind::Type { .. } => Self::Type,
+            SymbolKind::Constructor { .. } => Self::Constructor,
+            SymbolKind::Field { .. } => Self::Field,
+            SymbolKind::Label => Self::Label,
             SymbolKind::Prelude => Self::Prelude,
         }
     }

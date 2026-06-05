@@ -19,12 +19,12 @@ backend target.
 
 ### Resolution
 
-- [ ] Resolve all value, type, constructor, field, module, and label names.
-- [ ] Resolve aliases, unqualified imports, dependency modules, and prelude
+- [x] Resolve all value, type, constructor, field, module, and label names.
+- [x] Resolve aliases, unqualified imports, dependency modules, and prelude
       names according to Gleam rules.
-- [ ] Enforce public, private, and opaque module boundaries.
-- [ ] Load dependency package interfaces or official compiler metadata.
-- [ ] Add diagnostics for unknown, duplicate, private, and ambiguous names.
+- [x] Enforce public, private, and opaque module boundaries.
+- [x] Load dependency package interfaces or official compiler metadata.
+- [x] Add diagnostics for unknown, duplicate, private, and ambiguous names.
 
 ### Type checking
 

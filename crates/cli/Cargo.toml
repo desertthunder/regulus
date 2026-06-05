@@ -7,3 +7,6 @@ edition = "2024"
 clap = { version = "4.5.40", features = ["derive"] }
 compiler_core = { path = "../core" }
 owo-colors = "4.2.1"
+
+[lints]
+workspace = true

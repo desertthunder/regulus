@@ -1,5 +1,6 @@
 ---
 source: crates/core/src/ir.rs
+assertion_line: 1629
 expression: module
 ---
 Module {
@@ -60,6 +61,76 @@ Module {
         steps: [],
     },
     references: [
+        Reference {
+            name: "Int",
+            target: LocalSymbol {
+                name: "Int",
+                kind: Prelude,
+            },
+            span: Span {
+                file_id: SourceFileId(
+                    0,
+                ),
+                start: 22,
+                end: 25,
+            },
+        },
+        Reference {
+            name: "Int",
+            target: LocalSymbol {
+                name: "Int",
+                kind: Prelude,
+            },
+            span: Span {
+                file_id: SourceFileId(
+                    0,
+                ),
+                start: 36,
+                end: 39,
+            },
+        },
+        Reference {
+            name: "Outcome",
+            target: LocalSymbol {
+                name: "Outcome",
+                kind: Type,
+            },
+            span: Span {
+                file_id: SourceFileId(
+                    0,
+                ),
+                start: 62,
+                end: 69,
+            },
+        },
+        Reference {
+            name: "Bool",
+            target: LocalSymbol {
+                name: "Bool",
+                kind: Prelude,
+            },
+            span: Span {
+                file_id: SourceFileId(
+                    0,
+                ),
+                start: 77,
+                end: 81,
+            },
+        },
+        Reference {
+            name: "Int",
+            target: LocalSymbol {
+                name: "Int",
+                kind: Prelude,
+            },
+            span: Span {
+                file_id: SourceFileId(
+                    0,
+                ),
+                start: 86,
+                end: 89,
+            },
+        },
         Reference {
             name: "result",
             target: LocalSymbol {
@@ -170,6 +241,48 @@ Module {
                 ),
                 start: 209,
                 end: 214,
+            },
+        },
+        Reference {
+            name: "Int",
+            target: LocalSymbol {
+                name: "Int",
+                kind: Prelude,
+            },
+            span: Span {
+                file_id: SourceFileId(
+                    0,
+                ),
+                start: 237,
+                end: 248,
+            },
+        },
+        Reference {
+            name: "Int",
+            target: LocalSymbol {
+                name: "Int",
+                kind: Prelude,
+            },
+            span: Span {
+                file_id: SourceFileId(
+                    0,
+                ),
+                start: 237,
+                end: 248,
+            },
+        },
+        Reference {
+            name: "Int",
+            target: LocalSymbol {
+                name: "Int",
+                kind: Prelude,
+            },
+            span: Span {
+                file_id: SourceFileId(
+                    0,
+                ),
+                start: 253,
+                end: 256,
             },
         },
         Reference {

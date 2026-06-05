@@ -445,9 +445,7 @@ impl TypeChecker {
             ),
             Expression::Raw(raw) if raw.kind == "list" => Type::List(Box::new(Type::Int)),
             Expression::Raw(raw) if raw.kind == "record" => {
-                let Some(name) = raw.source.split(['(', ' ']).next() else {
-                    return None;
-                };
+                let name = raw.source.split(['(', ' ']).next()?;
                 let Some(constructor) = self.constructors.get(name).cloned() else {
                     self.diagnostics.push(
                         Diagnostic::new(DiagnosticCode::TypeError, format!("unknown constructor `{name}`"))

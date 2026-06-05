@@ -22,13 +22,16 @@ pub enum Namespace {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SymbolKind {
     Function { public: bool },
+    Constant { public: bool },
+    ExternalFunction { public: bool },
     Import { module: String },
     Imported { module: String, member: String },
     Parameter,
     Local,
-    Type,
-    Constructor,
-    Field,
+    Type { public: bool, opaque: bool },
+    Constructor { public: bool },
+    Field { public: bool },
+    Label,
     Prelude,
 }
 
@@ -171,8 +174,8 @@ impl Resolver {
         self.collect_imports(module_scope);
         self.collect_declarations(module_scope);
 
-        for function in self.module.functions.clone() {
-            self.resolve_function(module_scope, &function);
+        for declaration in self.module.declarations.clone() {
+            self.resolve_declaration(module_scope, &declaration);
         }
 
         if self.diagnostics.is_empty() {
@@ -273,38 +276,124 @@ impl Resolver {
 
     fn collect_declarations(&mut self, scope: ScopeId) {
         for declaration in self.module.declarations.clone() {
-            match declaration {
-                Declaration::Function(function) => {
-                    self.define(
-                        scope,
-                        &function.name,
-                        Namespace::Value,
-                        SymbolKind::Function { public: function.public },
-                    );
-                }
-                Declaration::TypeDefinition(type_) => self.collect_type_definition(scope, &type_),
-                Declaration::TypeAlias(alias) => {
-                    self.define(scope, &alias.name, Namespace::Type, SymbolKind::Type);
-                }
-                _ => {}
+            self.collect_declaration(scope, &declaration);
+        }
+    }
+
+    fn collect_declaration(&mut self, scope: ScopeId, declaration: &Declaration) {
+        match declaration {
+            Declaration::Function(function) => {
+                self.define(
+                    scope,
+                    &function.name,
+                    Namespace::Value,
+                    SymbolKind::Function { public: function.public },
+                );
             }
+            Declaration::Constant(constant) => {
+                self.define(
+                    scope,
+                    &constant.name,
+                    Namespace::Value,
+                    SymbolKind::Constant { public: constant.public },
+                );
+            }
+            Declaration::ExternalFunction(function) => {
+                self.define(
+                    scope,
+                    &function.name,
+                    Namespace::Value,
+                    SymbolKind::ExternalFunction { public: function.public },
+                );
+            }
+            Declaration::ExternalType(type_) => {
+                self.define(
+                    scope,
+                    &type_.name,
+                    Namespace::Type,
+                    SymbolKind::Type { public: type_.public, opaque: type_.opaque },
+                );
+            }
+            Declaration::TypeDefinition(type_) => self.collect_type_definition(scope, type_),
+            Declaration::TypeAlias(alias) => {
+                self.define(
+                    scope,
+                    &alias.name,
+                    Namespace::Type,
+                    SymbolKind::Type { public: alias.public, opaque: alias.opaque },
+                );
+            }
+            Declaration::TargetGroup(group) => {
+                for declaration in &group.declarations {
+                    self.collect_declaration(scope, declaration);
+                }
+            }
+            _ => {}
         }
     }
 
     fn collect_type_definition(&mut self, scope: ScopeId, type_: &ast::TypeDefinition) {
-        self.define(scope, &type_.name, Namespace::Type, SymbolKind::Type);
+        self.define(
+            scope,
+            &type_.name,
+            Namespace::Type,
+            SymbolKind::Type { public: type_.public, opaque: type_.opaque },
+        );
         for constructor in &type_.constructors {
             self.define(
                 scope,
                 &constructor.name,
                 Namespace::Constructor,
-                SymbolKind::Constructor,
+                SymbolKind::Constructor { public: type_.public && !type_.opaque },
             );
             for argument in &constructor.arguments {
                 if let Some(label) = &argument.label {
-                    self.define(scope, label, Namespace::Field, SymbolKind::Field);
+                    self.define(
+                        scope,
+                        label,
+                        Namespace::Field,
+                        SymbolKind::Field { public: type_.public && !type_.opaque },
+                    );
                 }
             }
+        }
+    }
+
+    fn resolve_declaration(&mut self, scope: ScopeId, declaration: &Declaration) {
+        match declaration {
+            Declaration::Function(function) => self.resolve_function(scope, function),
+            Declaration::Constant(constant) => {
+                if let Some(type_) = &constant.type_annotation {
+                    self.resolve_type_annotation(scope, type_);
+                }
+                self.resolve_expression(scope, &constant.value);
+            }
+            Declaration::ExternalFunction(function) => {
+                for parameter in &function.parameters {
+                    if let Some(type_) = &parameter.type_annotation {
+                        self.resolve_type_annotation(scope, type_);
+                    }
+                }
+                self.resolve_type_annotation(scope, &function.return_type);
+            }
+            Declaration::ExternalType(_) => {}
+            Declaration::TypeAlias(alias) => self.resolve_type_annotation(scope, &alias.value),
+            Declaration::TypeDefinition(type_) => {
+                for constructor in &type_.constructors {
+                    for argument in &constructor.arguments {
+                        self.resolve_type_annotation(scope, &argument.type_annotation);
+                    }
+                }
+            }
+            Declaration::TargetGroup(group) => {
+                for declaration in &group.declarations {
+                    self.resolve_declaration(scope, declaration);
+                }
+            }
+            Declaration::Import(_)
+            | Declaration::Attribute(_)
+            | Declaration::Comment(_)
+            | Declaration::Statement(_) => {}
         }
     }
 
@@ -312,9 +401,15 @@ impl Resolver {
         let function_scope = self.new_scope(Some(parent));
 
         for parameter in &function.parameters {
+            if let Some(type_) = &parameter.type_annotation {
+                self.resolve_type_annotation(parent, type_);
+            }
             if let Some(name) = &parameter.name {
                 self.define(function_scope, name, Namespace::Value, SymbolKind::Parameter);
             }
+        }
+        if let Some(type_) = &function.return_type {
+            self.resolve_type_annotation(parent, type_);
         }
 
         self.resolve_block(function_scope, &function.body);
@@ -399,10 +494,11 @@ impl Resolver {
                     self.resolve_expression(scope, &argument.value);
                 }
             }
-            Expression::Record(record) => self.resolve_arguments(scope, &record.arguments),
+            Expression::Record(record) => self.resolve_record(scope, record),
             Expression::RecordUpdate(update) => {
+                self.resolve_constructor_name(scope, &update.constructor);
                 self.resolve_expression(scope, &update.spread);
-                self.resolve_arguments(scope, &update.updates);
+                self.resolve_record_arguments(scope, &update.updates);
             }
             Expression::Tuple(tuple) => {
                 for element in &tuple.elements {
@@ -441,34 +537,110 @@ impl Resolver {
         }
     }
 
+    fn resolve_type_annotation(&mut self, scope: ScopeId, type_: &ast::TypeAnnotation) {
+        for name in type_annotation_names(type_) {
+            self.resolve_type_name(scope, &name);
+        }
+    }
+
+    fn resolve_type_name(&mut self, scope: ScopeId, name: &ast::Name) {
+        if let Some(symbol) = self.lookup(scope, Namespace::Type, &name.text) {
+            if let SymbolKind::Imported { module, member } = &self.symbols[symbol.0 as usize].kind.clone() {
+                self.resolve_project_member(
+                    module,
+                    Namespace::Type,
+                    &ast::Name { span: name.span, text: member.clone() },
+                );
+            }
+            self.references
+                .push(ResolvedReference { name: name.clone(), target: ReferenceTarget::Symbol(symbol) });
+            return;
+        }
+
+        if self.project_modules.values().any(|interface| {
+            interface
+                .members
+                .get(&(Namespace::Type, name.text.clone()))
+                .is_some_and(|member| member.public)
+        }) {
+            return;
+        }
+
+        self.diagnostics.push(
+            Diagnostic::new(DiagnosticCode::ResolveError, format!("unknown type `{}`", name.text))
+                .with_label(Label::primary(name.span, "type not found")),
+        );
+    }
+
     fn resolve_arguments(&mut self, scope: ScopeId, arguments: &[ast::Argument]) {
         for argument in arguments {
             self.resolve_expression(scope, &argument.value);
         }
     }
 
+    fn resolve_record(&mut self, scope: ScopeId, record: &ast::Record) {
+        self.resolve_constructor_name(scope, &record.constructor);
+        self.resolve_record_arguments(scope, &record.arguments);
+    }
+
+    fn resolve_record_arguments(&mut self, scope: ScopeId, arguments: &[ast::Argument]) {
+        for argument in arguments {
+            if let Some(label) = &argument.label {
+                self.resolve_pattern_symbol(scope, Namespace::Field, label, "field");
+            }
+            self.resolve_expression(scope, &argument.value);
+        }
+    }
+
+    fn resolve_constructor_name(&mut self, scope: ScopeId, constructor: &ast::ConstructorName) {
+        match constructor {
+            ast::ConstructorName::Local(name) => {
+                self.resolve_pattern_symbol(scope, Namespace::Constructor, name, "constructor");
+            }
+            ast::ConstructorName::Remote { module, name, .. } => {
+                self.resolve_qualified_member(scope, module, Namespace::Constructor, name);
+            }
+        }
+    }
+
     fn resolve_field_access(&mut self, scope: ScopeId, field_access: &ast::FieldAccess) {
         if let Expression::Variable(record) = field_access.record.as_ref()
-            && let Some(module) = self.lookup(scope, Namespace::Module, &record.text)
-            && let SymbolKind::Import { module: module_name } = &self.symbols[module.0 as usize].kind.clone()
+            && self.resolve_qualified_member(scope, record, Namespace::Value, &field_access.field)
         {
-            let symbol = self.resolve_project_member(module_name, Namespace::Value, &field_access.field);
-            self.references.push(ResolvedReference {
-                name: record.clone(),
-                target: ReferenceTarget::QualifiedMember { module, member: field_access.field.clone(), symbol },
-            });
             return;
         }
 
         self.resolve_expression(scope, &field_access.record);
     }
 
+    fn resolve_qualified_member(
+        &mut self, scope: ScopeId, module: &ast::Name, namespace: Namespace, member: &ast::Name,
+    ) -> bool {
+        let Some(module_symbol) = self.lookup(scope, Namespace::Module, &module.text) else {
+            self.diagnostics.push(
+                Diagnostic::new(
+                    DiagnosticCode::ResolveError,
+                    format!("unknown module `{}`", module.text),
+                )
+                .with_label(Label::primary(module.span, "module not found")),
+            );
+            return false;
+        };
+        let SymbolKind::Import { module: module_name } = &self.symbols[module_symbol.0 as usize].kind.clone() else {
+            return false;
+        };
+        let symbol = self.resolve_project_member(module_name, namespace, member);
+        self.references.push(ResolvedReference {
+            name: module.clone(),
+            target: ReferenceTarget::QualifiedMember { module: module_symbol, member: member.clone(), symbol },
+        });
+        true
+    }
+
     fn resolve_project_member(
         &mut self, module_name: &str, namespace: Namespace, member: &ast::Name,
     ) -> Option<SymbolId> {
-        let Some(interface) = self.project_modules.get(module_name) else {
-            return None;
-        };
+        let interface = self.project_modules.get(module_name)?;
         let Some(found) = interface.members.get(&(namespace, member.text.clone())).cloned() else {
             self.diagnostics.push(
                 Diagnostic::new(
@@ -512,7 +684,7 @@ impl Resolver {
                     self.bind_pattern_inner(scope, element, kind.clone(), names);
                 }
                 if let Some(ast::ListPatternTail::Name(name)) = &list.tail {
-                    self.define_pattern_name(scope, name, kind.clone(), names);
+                    self.define_pattern_name(scope, name, kind, names);
                 }
             }
             Pattern::Constructor(constructor) => {
@@ -564,28 +736,7 @@ impl Resolver {
                 self.resolve_pattern_symbol(scope, Namespace::Constructor, name, "constructor");
             }
             ast::ConstructorName::Remote { module, name, .. } => {
-                let Some(module_symbol) = self.lookup(scope, Namespace::Module, &module.text) else {
-                    self.diagnostics.push(
-                        Diagnostic::new(
-                            DiagnosticCode::ResolveError,
-                            format!("unknown module `{}`", module.text),
-                        )
-                        .with_label(Label::primary(module.span, "module not found")),
-                    );
-                    return;
-                };
-                if let SymbolKind::Import { module: module_name } = &self.symbols[module_symbol.0 as usize].kind.clone()
-                {
-                    let symbol = self.resolve_project_member(module_name, Namespace::Constructor, name);
-                    self.references.push(ResolvedReference {
-                        name: module.clone(),
-                        target: ReferenceTarget::QualifiedMember {
-                            module: module_symbol,
-                            member: name.clone(),
-                            symbol,
-                        },
-                    });
-                }
+                self.resolve_qualified_member(scope, module, Namespace::Constructor, name);
             }
         }
     }
@@ -623,9 +774,17 @@ impl Resolver {
             .lookup(scope, Namespace::Value, &name.text)
             .or_else(|| self.lookup(scope, Namespace::Constructor, &name.text))
         {
-            Some(symbol) => self
-                .references
-                .push(ResolvedReference { name: name.clone(), target: ReferenceTarget::Symbol(symbol) }),
+            Some(symbol) => {
+                if let SymbolKind::Imported { module, member } = &self.symbols[symbol.0 as usize].kind.clone() {
+                    self.resolve_project_member(
+                        module,
+                        Namespace::Value,
+                        &ast::Name { span: name.span, text: member.clone() },
+                    );
+                }
+                self.references
+                    .push(ResolvedReference { name: name.clone(), target: ReferenceTarget::Symbol(symbol) });
+            }
             None => self.diagnostics.push(
                 Diagnostic::new(DiagnosticCode::ResolveError, format!("unknown name `{}`", name.text))
                     .with_label(Label::primary(name.span, "not found in scope")),
@@ -674,6 +833,15 @@ impl Resolver {
     }
 }
 
+fn type_annotation_names(type_: &ast::TypeAnnotation) -> Vec<ast::Name> {
+    type_
+        .source
+        .split(|character: char| !(character == '_' || character == '/' || character.is_ascii_alphanumeric()))
+        .filter(|part| part.chars().next().is_some_and(char::is_uppercase))
+        .map(|text| ast::Name { span: type_.span, text: text.to_string() })
+        .collect()
+}
+
 fn module_interface(module: &ast::Module) -> ModuleInterface {
     let mut members = HashMap::new();
 
@@ -686,21 +854,40 @@ fn module_interface(module: &ast::Module) -> ModuleInterface {
 
     for declaration in &module.declarations {
         match declaration {
+            Declaration::Constant(constant) => {
+                members.insert(
+                    (Namespace::Value, constant.name.text.clone()),
+                    ModuleMember { public: constant.public, span: constant.span },
+                );
+            }
+            Declaration::ExternalFunction(function) => {
+                members.insert(
+                    (Namespace::Value, function.name.text.clone()),
+                    ModuleMember { public: function.public, span: function.span },
+                );
+            }
+            Declaration::ExternalType(type_) => {
+                members.insert(
+                    (Namespace::Type, type_.name.text.clone()),
+                    ModuleMember { public: type_.public, span: type_.span },
+                );
+            }
             Declaration::TypeDefinition(type_) => {
                 members.insert(
                     (Namespace::Type, type_.name.text.clone()),
                     ModuleMember { public: type_.public, span: type_.span },
                 );
+                let exported_details = type_.public && !type_.opaque;
                 for constructor in &type_.constructors {
                     members.insert(
                         (Namespace::Constructor, constructor.name.text.clone()),
-                        ModuleMember { public: type_.public, span: constructor.span },
+                        ModuleMember { public: exported_details, span: constructor.span },
                     );
                     for argument in &constructor.arguments {
                         if let Some(label) = &argument.label {
                             members.insert(
                                 (Namespace::Field, label.text.clone()),
-                                ModuleMember { public: type_.public, span: label.span },
+                                ModuleMember { public: exported_details, span: label.span },
                             );
                         }
                     }
@@ -711,6 +898,15 @@ fn module_interface(module: &ast::Module) -> ModuleInterface {
                     (Namespace::Type, alias.name.text.clone()),
                     ModuleMember { public: alias.public, span: alias.span },
                 );
+            }
+            Declaration::TargetGroup(group) => {
+                let nested = module_interface(&ast::Module {
+                    span: group.span,
+                    declarations: group.declarations.clone(),
+                    imports: Vec::new(),
+                    functions: Vec::new(),
+                });
+                members.extend(nested.members);
             }
             _ => {}
         }
@@ -981,6 +1177,64 @@ fn main(person) { case person { Missing(age: value) -> value } }
         let resolved = resolve_project(&project).expect("resolve project");
 
         assert_eq!(resolved.modules.len(), 2);
+    }
+
+    #[test]
+    fn resolves_records_constants_externals_and_type_annotations() {
+        let resolved = resolve_source(
+            r#"pub const answer: Int = 42
+pub external type Handle
+pub type User { User(name: String) }
+external fn load(handle: Handle) -> User = "host" "load"
+fn main(handle: Handle) { User(name: "Ada") }
+"#,
+        )
+        .expect("resolve declarations and records");
+
+        assert!(
+            resolved
+                .references
+                .iter()
+                .any(|reference| reference.name.text == "User")
+        );
+        assert!(
+            resolved
+                .references
+                .iter()
+                .any(|reference| reference.name.text == "name")
+        );
+        assert!(
+            resolved
+                .references
+                .iter()
+                .any(|reference| reference.name.text == "Handle")
+        );
+    }
+
+    #[test]
+    fn rejects_opaque_constructors_across_project_modules() {
+        let dir = tempdir().expect("tempdir");
+        write(
+            &dir.path().join("gleam.toml"),
+            "name = \"sample\"\nversion = \"1.0.0\"\n",
+        );
+        write(
+            &dir.path().join("src/app.gleam"),
+            "pub opaque type Boxed { Boxed(Int) }\n",
+        );
+        write(
+            &dir.path().join("src/main.gleam"),
+            "import app\nfn main() { app.Boxed(1) }\n",
+        );
+        let project = project::load_project(dir.path()).expect("load project");
+
+        let diagnostics = resolve_project(&project).expect_err("opaque constructor should fail");
+
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains("member `Boxed` is private"))
+        );
     }
 
     #[test]

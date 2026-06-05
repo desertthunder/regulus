@@ -14,3 +14,6 @@ wat = "1.251.0"
 insta = "1.43.2"
 tempfile = "3.27.0"
 wasmtime = "45.0.0"
+
+[lints]
+workspace = true
