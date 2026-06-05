@@ -17,12 +17,12 @@ Infer full Gleam expression, function, pattern, and module interface types.
 
 ### Constraint generation
 
-- [ ] Generate constraints for literals, variables, lets, calls, operators,
+- [x] Generate constraints for literals, variables, lets, calls, operators,
       pipelines, captures, anonymous functions, `use`, and field access.
-- [ ] Generate constraints for tuples, lists, records, constructors, and record
+- [x] Generate constraints for tuples, lists, records, constructors, and record
       updates.
-- [ ] Generate constraints for `case` subjects, guards, and branch results.
-- [ ] Generate constraints for tuple, list, constructor, record, alias, and
+- [x] Generate constraints for `case` subjects, guards, and branch results.
+- [x] Generate constraints for tuple, list, constructor, record, alias, and
       nested patterns.
 
 ### Generics and interfaces
