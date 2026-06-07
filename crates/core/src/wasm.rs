@@ -2682,6 +2682,83 @@ pub fn same() { "hi" == "hi" }
     }
 
     #[test]
+    fn runtime_helpers_compare_nested_managed_values_structurally() {
+        let instance = runtime_helper_instance(
+            r#"
+  (data (i32.const 2048) "aa")
+  (data (i32.const 2050) "bb")
+  (func $nested_equal (export "nested_equal") (result i32)
+    (local $left_inner i32) (local $right_inner i32)
+    i32.const 3000
+    i32.const 2048
+    i32.const 2
+    call $__string_new
+    i64.extend_i32_u
+    i64.store
+    i32.const 3008
+    i64.const 7
+    i64.store
+    i32.const 2
+    i32.const 3000
+    call $__tuple_new
+    local.set $left_inner
+    i32.const 3000
+    i32.const 2048
+    i32.const 2
+    call $__string_new
+    i64.extend_i32_u
+    i64.store
+    i32.const 3008
+    i64.const 7
+    i64.store
+    i32.const 2
+    i32.const 3000
+    call $__tuple_new
+    local.set $right_inner
+    local.get $left_inner
+    i64.extend_i32_u
+    i32.const 0
+    call $__list_cons
+    local.get $right_inner
+    i64.extend_i32_u
+    i32.const 0
+    call $__list_cons
+    call $__equal_value)
+  (func $nested_order (export "nested_order") (result i32)
+    i32.const 3000
+    i32.const 2048
+    i32.const 2
+    call $__string_new
+    i64.extend_i32_u
+    i64.store
+    i32.const 1
+    i32.const 3000
+    call $__tuple_new
+    i32.const 3000
+    i32.const 2050
+    i32.const 2
+    call $__string_new
+    i64.extend_i32_u
+    i64.store
+    i32.const 1
+    i32.const 3000
+    call $__tuple_new
+    call $__compare_value)
+"#,
+        );
+        let (engine, mut store, instance) = instance;
+        let _engine = engine;
+        let nested_equal = instance
+            .get_typed_func::<(), i32>(&mut store, "nested_equal")
+            .expect("get nested_equal export");
+        assert_eq!(nested_equal.call(&mut store, ()).expect("call nested_equal"), 1);
+        let nested_order = instance
+            .get_typed_func::<(), i32>(&mut store, "nested_order")
+            .expect("get nested_order export");
+        assert_eq!(nested_order.call(&mut store, ()).expect("call nested_order"), -1);
+    }
+
+    #[test]
     fn runtime_helpers_allocate_and_append_bit_arrays() {
         let instance = runtime_helper_instance(
             r#"

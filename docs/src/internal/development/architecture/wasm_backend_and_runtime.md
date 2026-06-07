@@ -35,7 +35,7 @@ The prelude currently provides:
 - list construction and deconstruction
 - tuple, record, custom, closure, opaque, error, and panic-value allocation
 - field access helpers
-- equality and scalar ordering helpers
+- recursive equality and ordering helpers
 - panic, assertion, match-failure, and debug helpers
 
 The prelude is not user code and it is not emitted for modules that only need
@@ -72,10 +72,7 @@ Gleam language. These areas still need design or implementation before every
 accepted source program can execute with full Gleam semantics:
 
 - long-term heap growth, lifetime, and allocation failure behavior
-- recursive equality and ordering for every comparable managed value
-- full debug rendering and host-readable panic/error payloads
-- scalar captures in closure environments
-- full bit-string deconstruction semantics
+- allocation failure and checked heap growth on every allocation path
 - target-specific browser and WASI adapters
 - standard library and dependency-backed imports
 
@@ -88,11 +85,11 @@ Wasmtime, browser, and WASI-oriented modules.
 
 Host imports must use the target's host module name:
 
-| Target | Host module |
-| --- | --- |
-| Wasmtime | `env` |
-| Browser | `browser` |
-| WASI | `wasi_snapshot_preview1` |
+| Target   | Host module              |
+| -------- | ------------------------ |
+| Wasmtime | `env`                    |
+| Browser  | `browser`                |
+| WASI     | `wasi_snapshot_preview1` |
 
 The current raw ABI supports:
 

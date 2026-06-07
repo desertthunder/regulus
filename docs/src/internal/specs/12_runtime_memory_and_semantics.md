@@ -1,8 +1,7 @@
 # Open runtime memory and value semantics
 
 Current runtime layout and helper behavior are documented in
-[Runtime representation](../development/runtime_representation.md) and
-[WASM backend and runtime](../development/wasm_backend_and_runtime.md). This
+[Runtime representation][runtime] and [WASM backend and runtime][wasm]. This
 spec tracks the remaining design decisions.
 
 ## Memory management
@@ -22,12 +21,20 @@ rules.
 
 ## Equality and ordering
 
-Runtime equality should match Gleam semantics for all comparable values.
-Managed values need recursive structural equality with cycle-safe or acyclic
-guarantees.
+Runtime equality matches Gleam semantics for comparable scalar and managed
+values. Managed value equality is recursive and structural for strings, bit
+arrays, lists, tuples, records, custom values, results, options, errors, and
+panics. Runtime values are acyclic, so equality does not need cycle detection.
 
-Ordering helpers should support every type Gleam allows to be ordered and should
-reject unsupported ordering before code generation when possible.
+Closures and opaque values only compare equal when they are the same object.
+Distinct closure or opaque objects are not structurally comparable.
+
+Ordering helpers support orderable scalar values and recursive ordering for
+managed values used by runtime helpers. Strings and bit arrays use lexicographic
+byte ordering. Lists, tuples, records, custom values, errors, and panics compare
+slot-by-slot after tag, length, or constructor metadata. Closures and opaque
+values have pointer ordering only as a runtime fallback. Source-level ordering
+operators reject unsupported types before WAT assembly.
 
 ## Inspection and debug rendering
 
@@ -49,3 +56,6 @@ rendered payload fields without knowing compiler internals.
 ## Active tasks
 
 See [Runtime memory tasks](../tasks/12_runtime_memory_and_semantics.md).
+
+[runtime]: ../development/architecture/runtime_representation.md
+[wasm]: ../development/architecture/wasm_backend_and_runtime.md

@@ -63,18 +63,20 @@ TODO:
 
 - [Supported subset](internal/supported_subset.md)
 - [Development changelog](./CHANGELOG.md)
-- [Tests & Documentation](internal/testing_docs.md)
 - [Development docs]()
   - [Project model](internal/development/project_model_and_modules.md)
   - [Gleam syntax](internal/development/full_gleam_syntax.md)
   - [Name resolution](internal/development/full_name_resolution.md)
   - [Types and interfaces](internal/development/gleam_types_and_interfaces.md)
   - [Type inference](internal/development/type_and_generic_inference.md)
-  - [Runtime representation](internal/development/runtime_representation.md)
   - [Pattern matching](internal/development/pattern_matching.md)
-  - [Core IR](internal/development/core_ir_for_real_programs.md)
-  - [WASM backend and runtime](internal/development/wasm_backend_and_runtime.md)
   - [CLI and build outputs](internal/development/cli_and_build_outputs.md)
+  - [Architecture]()
+    - [Runtime representation](internal/development/architecture/runtime_representation.md)
+    - [Core IR](internal/development/architecture/core_ir.md)
+    - [WASM backend and runtime](internal/development/architecture/wasm_backend_and_runtime.md)
+  - [Contributor]()
+    - [Tests & Documentation](internal/development/contributor/testing.md)
 
 <!--
 TODO:
@@ -88,11 +90,9 @@ TODO:
 
 - [Specs]()
   - [Runtime memory](internal/specs/12_runtime_memory_and_semantics.md)
-  - [Language semantics](internal/specs/13_remaining_language_semantics.md)
   - [Stdlib and host interop](internal/specs/14_stdlib_and_host_interop.md)
   - [CLI and build outputs](internal/specs/15_cli_and_build_outputs.md)
 - [Active tasks]()
   - [Runtime memory](internal/tasks/12_runtime_memory_and_semantics.md)
-  - [Language semantics](internal/tasks/13_remaining_language_semantics.md)
   - [Stdlib and host interop](internal/tasks/14_stdlib_and_host_interop.md)
   - [CLI and build outputs](internal/tasks/15_cli_and_build_outputs.md)

@@ -87,5 +87,5 @@ cargo test
 mdbook build docs
 ```
 
-Changes that add generated output should also check that snapshots are stable
-and that fixture names clearly describe the behavior being tested.
+Changes that add generated output should also check that snapshots are
+stable and that fixture names clearly describe the behavior being tested.

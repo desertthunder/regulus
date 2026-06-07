@@ -127,18 +127,14 @@ backend work as the accepted source surface grows.
 ### Runtime and memory management
 
 - Freeing, garbage collection, reference counting, or heap growth checks.
-- Full recursive structural equality and ordering for all managed values.
-- Full string inspection/debug rendering of arbitrary values.
-- Complete panic/error payload reporting.
 
 ## Backend approximations to know about
 
 Some IR forms are emitted but still have intentionally small semantics:
 
 - Residual raw `Use` IR is rejected before WAT assembly.
-- `BitStringDeconstruct` checks for a bit-array object, not full segment
-  matches.
-- Managed equality is not yet full recursive Gleam equality.
+- `BitStringDeconstruct` supports current segment matching but is still
+  smaller than full Gleam bit-string semantics.
 
 ## Validation coverage
 
