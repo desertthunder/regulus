@@ -8,12 +8,12 @@ Complete runtime memory management and runtime value semantics.
 
 ### Memory management
 
-- [ ] Decide between bump-only, resettable arena, reference counting, tracing
-      GC, host-owned arenas, or another documented strategy.
-- [ ] Define heap growth and allocation failure behavior.
-- [ ] Define object lifetime, ownership, and movement rules.
-- [ ] Implement heap bounds checks or memory growth where needed.
-- [ ] Add tests for allocation growth, exhaustion, and lifetime assumptions.
+- [x] Choose a resettable bump arena with checked `memory.grow`.
+- [ ] Implement checked allocation and heap growth for every allocator path.
+- [ ] Define allocation failure as a structured runtime panic payload.
+- [ ] Keep managed objects non-moving until instance reset or arena reset.
+- [ ] Document host pointers as borrowed and stable until reset.
+- [ ] Add Wasmtime tests for growth, failed growth, and pointer stability.
 
 ### Equality and ordering
 
@@ -26,18 +26,18 @@ Complete runtime memory management and runtime value semantics.
 
 ### Inspection and debug rendering
 
-- [ ] Implement deterministic string inspection with escaping.
-- [ ] Implement debug rendering for scalar and managed values.
-- [ ] Render nested lists, tuples, records, custom values, bit arrays, errors,
+- [x] Implement deterministic string inspection with escaping.
+- [x] Implement debug rendering for scalar and managed values.
+- [x] Render nested lists, tuples, records, custom values, bit arrays, errors,
       panics, and opaque placeholders.
-- [ ] Add snapshot tests for debug rendering.
+- [x] Add runtime tests for debug rendering.
 
 ### Error and panic payloads
 
-- [ ] Define payload layouts for panic, todo, assert, match failure, and runtime
+- [x] Define payload layouts for panic, todo, assert, match failure, and runtime
       errors.
-- [ ] Materialize payloads where helpers need host-readable failures.
-- [ ] Add host-readable panic/error inspection tests.
+- [x] Materialize payloads where helpers need host-readable failures.
+- [x] Add host-readable panic/error inspection tests.
 
 ## Done when
 

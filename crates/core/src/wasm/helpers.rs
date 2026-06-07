@@ -727,6 +727,28 @@ pub const DEBUG_HELPERS: &str = r#"
   (func $__debug_inspect (param $ptr i32) (result i32)
     local.get $ptr
   )
+  (func $__debug_reason (param $ptr i32) (result i32)
+    local.get $ptr
+    i32.const 8
+    i32.add
+    i32.load
+  )
+  (func $__debug_payload_i64 (param $ptr i32) (param $index i32) (result i64)
+    local.get $ptr
+    i32.const 12
+    i32.add
+    local.get $index
+    i32.const 8
+    i32.mul
+    i32.add
+    i64.load
+  )
+  (func $__debug_payload_i32 (param $ptr i32) (param $index i32) (result i32)
+    local.get $ptr
+    local.get $index
+    call $__debug_payload_i64
+    i32.wrap_i64
+  )
 "#;
 
 pub const MANAGED_VALUE_HELPERS: &str = r#"

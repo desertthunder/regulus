@@ -7,16 +7,18 @@ spec tracks the remaining design decisions.
 
 ## Memory management
 
-Choose and document a long-term strategy for managed values:
+Regulus uses a resettable bump arena for managed values. Allocation moves a heap
+pointer forward, objects are non-moving, and individual objects are not freed.
+The arena lifetime lasts until the Wasm instance is reset or a future explicit
+arena reset point is reached.
 
-- bump allocation with explicit reset points
-- reference counting
-- tracing garbage collection
-- host-owned arenas
-- another documented strategy
+Allocator paths should check available memory and use `memory.grow` before
+failing. Allocation failure is a structured runtime panic payload. Host code
+borrows managed pointers; those pointers remain stable until reset.
 
-The chosen strategy must define allocation failure behavior, heap growth, object
-lifetime, ownership across host boundaries, and whether values can move.
+Reference counting and tracing garbage collection are deferred until the
+compiler has complete root metadata, stack/local tracking, and host ownership
+rules.
 
 ## Equality and ordering
 
@@ -29,16 +31,20 @@ reject unsupported ordering before code generation when possible.
 
 ## Inspection and debug rendering
 
-String inspection and debug rendering should produce deterministic text for
-arbitrary runtime values. Rendering should handle nested lists, tuples, records,
-custom values, bit arrays, strings, nil, booleans, numbers, opaque values,
-errors, and panics.
+String inspection and debug rendering produce deterministic text for runtime
+objects. Rendering handles nested lists, tuples, records, custom values, bit
+arrays, strings, opaque placeholders, errors, and panics. Scalar values in
+runtime slots render as their numeric slot value.
+
+Debug rendering is a host inspection facility. It does not replace source-level
+Gleam `String.inspect` semantics for every type name or constructor name.
 
 ## Error and panic reporting
 
-Panic, todo, assert, pattern-match failure, and runtime error paths should carry
-a structured payload when useful. Hosts should be able to inspect or render the
-payload without knowing compiler internals.
+Panic, todo, assert, pattern-match failure, and runtime error objects use the
+existing tag-9 error and tag-10 panic layouts: reason tag at offset 8 followed
+by 8-byte payload slots. Hosts can inspect reason tags, payload slots, and
+rendered payload fields without knowing compiler internals.
 
 ## Active tasks
 

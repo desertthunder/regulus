@@ -234,6 +234,132 @@ pub fn bit_array_payload_len(bit_len: u32) -> u32 {
     bit_len.div_ceil(8)
 }
 
+pub fn debug_render(memory: &[u8], pointer: u32) -> Option<String> {
+    debug_render_at(memory, pointer as usize, 0)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DebugPayload {
+    pub reason: u32,
+    pub fields: Vec<String>,
+}
+
+impl DebugPayload {
+    pub fn panic(memory: &[u8], pointer: u32) -> Option<DebugPayload> {
+        Self::new(memory, pointer, ObjectTag::Panic)
+    }
+
+    pub fn error(memory: &[u8], pointer: u32) -> Option<DebugPayload> {
+        Self::new(memory, pointer, ObjectTag::Error)
+    }
+
+    fn new(memory: &[u8], pointer: u32, expected: ObjectTag) -> Option<DebugPayload> {
+        let offset = pointer as usize;
+        let header = read_header(memory, offset)?;
+        if header.tag != expected {
+            return None;
+        }
+        let reason = read_u32(memory, offset + 8)?;
+        let fields = (0..header.size)
+            .map(|index| render_slot(memory, read_u64(memory, offset + 12 + index as usize * 8)?, 1))
+            .collect::<Option<Vec<_>>>()?;
+        Some(DebugPayload { reason, fields })
+    }
+}
+
+fn debug_render_at(memory: &[u8], offset: usize, depth: usize) -> Option<String> {
+    if offset == 0 {
+        return Some("[]".into());
+    }
+    if depth > 16 {
+        return Some("...".into());
+    }
+    let header = read_header(memory, offset)?;
+    match header.tag {
+        ObjectTag::String => {
+            let start = offset + 8;
+            let end = start.checked_add(header.size as usize)?;
+            let bytes = memory.get(start..end)?;
+            Some(format!("\"{}\"", escape_debug_string(bytes)))
+        }
+        ObjectTag::ListCons => {
+            let head = render_slot(memory, read_u64(memory, offset + 8)?, depth + 1)?;
+            let tail = read_u32(memory, offset + 16)?;
+            Some(format!(
+                "[{head} | {}]",
+                debug_render_at(memory, tail as usize, depth + 1)?
+            ))
+        }
+        ObjectTag::Tuple => render_fields(memory, offset + 8, header.size, "#(", ")", depth),
+        ObjectTag::Record => render_fields(memory, offset + 8, header.size, "Record(", ")", depth),
+        ObjectTag::Custom => {
+            let constructor = read_u32(memory, offset + 8)?;
+            let fields = render_fields(memory, offset + 12, header.size, "(", ")", depth)?;
+            Some(format!("Custom#{constructor}{fields}"))
+        }
+        ObjectTag::Closure => Some(format!("<closure:{} captures>", header.size)),
+        ObjectTag::BitArray => {
+            let bytes = bit_array_payload_len(header.size) as usize;
+            let data = memory.get(offset + 8..offset + 8 + bytes)?;
+            Some(format!("<<{}:{}>>", hex_bytes(data), header.size))
+        }
+        ObjectTag::Opaque => Some(format!("<opaque:{}>", read_u32(memory, offset + 8)?)),
+        ObjectTag::Error => render_payload_object(memory, offset, header.size, "Error", depth),
+        ObjectTag::Panic => render_payload_object(memory, offset, header.size, "Panic", depth),
+    }
+}
+
+fn render_payload_object(memory: &[u8], offset: usize, fields: u32, name: &str, depth: usize) -> Option<String> {
+    let reason = read_u32(memory, offset + 8)?;
+    let fields = render_fields(memory, offset + 12, fields, "(", ")", depth)?;
+    Some(format!("{name}#{reason}{fields}"))
+}
+
+fn render_fields(memory: &[u8], start: usize, count: u32, prefix: &str, suffix: &str, depth: usize) -> Option<String> {
+    let fields = (0..count)
+        .map(|index| render_slot(memory, read_u64(memory, start + index as usize * 8)?, depth + 1))
+        .collect::<Option<Vec<_>>>()?;
+    Some(format!("{prefix}{}{suffix}", fields.join(", ")))
+}
+
+fn render_slot(memory: &[u8], value: u64, depth: usize) -> Option<String> {
+    let pointer = value as usize;
+    if pointer != 0 && read_header(memory, pointer).is_some() {
+        debug_render_at(memory, pointer, depth)
+    } else {
+        Some(value.to_string())
+    }
+}
+
+fn read_header(memory: &[u8], offset: usize) -> Option<ObjectHeader> {
+    let tag = ObjectTag::try_from(read_u32(memory, offset)?).ok()?;
+    let size = read_u32(memory, offset + 4)?;
+    Some(ObjectHeader { tag, size })
+}
+
+fn read_u32(memory: &[u8], offset: usize) -> Option<u32> {
+    Some(u32::from_le_bytes(memory.get(offset..offset + 4)?.try_into().ok()?))
+}
+
+fn read_u64(memory: &[u8], offset: usize) -> Option<u64> {
+    Some(u64::from_le_bytes(memory.get(offset..offset + 8)?.try_into().ok()?))
+}
+
+fn escape_debug_string(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes)
+        .chars()
+        .flat_map(char::escape_default)
+        .collect()
+}
+
+fn hex_bytes(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 pub fn bit_array_get_bit(data: &[u8], bit_len: u32, index: u32) -> Option<u8> {
     if index >= bit_len {
         return None;
@@ -406,6 +532,49 @@ mod tests {
         assert_eq!(
             bit_array_append(&[0b1010_0000], 4, &[0b1100_0000], 4),
             vec![0b1010_1100]
+        );
+    }
+
+    #[test]
+    fn renders_debug_strings_for_nested_runtime_objects() {
+        let config = RuntimeConfig::DEFAULT;
+        let string = string_object(config, 1024, "Ada\n");
+        let custom = custom_object(config, 1040, 7, &[1024, 42]);
+        let panic = panic_object(config, 1072, 3, &[1040]);
+        let bit_array = bit_array_object(config, 1096, &[0b1010_0000], 4);
+        let mut memory = vec![0; 2048];
+        memory[1024..1024 + string.bytes.len()].copy_from_slice(&string.bytes);
+        memory[1040..1040 + custom.bytes.len()].copy_from_slice(&custom.bytes);
+        memory[1072..1072 + panic.bytes.len()].copy_from_slice(&panic.bytes);
+        memory[1096..1096 + bit_array.bytes.len()].copy_from_slice(&bit_array.bytes);
+
+        assert_eq!(debug_render(&memory, 1024), Some("\"Ada\\n\"".into()));
+        assert_eq!(debug_render(&memory, 1040), Some("Custom#7(\"Ada\\n\", 42)".into()));
+        assert_eq!(
+            debug_render(&memory, 1072),
+            Some("Panic#3(Custom#7(\"Ada\\n\", 42))".into())
+        );
+        assert_eq!(debug_render(&memory, 1096), Some("<<a0:4>>".into()));
+    }
+
+    #[test]
+    fn exposes_debug_payloads_for_errors_and_panics() {
+        let config = RuntimeConfig::DEFAULT;
+        let string = string_object(config, 1024, "bad");
+        let error = error_object(config, 1040, 5, &[1024, 7]);
+        let panic = panic_object(config, 1072, 9, &[1040]);
+        let mut memory = vec![0; 2048];
+        memory[1024..1024 + string.bytes.len()].copy_from_slice(&string.bytes);
+        memory[1040..1040 + error.bytes.len()].copy_from_slice(&error.bytes);
+        memory[1072..1072 + panic.bytes.len()].copy_from_slice(&panic.bytes);
+
+        assert_eq!(
+            DebugPayload::error(&memory, 1040),
+            Some(DebugPayload { reason: 5, fields: vec!["\"bad\"".into(), "7".into()] })
+        );
+        assert_eq!(
+            DebugPayload::panic(&memory, 1072),
+            Some(DebugPayload { reason: 9, fields: vec!["Error#5(\"bad\", 7)".into()] })
         );
     }
 

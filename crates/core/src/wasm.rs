@@ -2747,6 +2747,13 @@ pub fn same() { "hi" == "hi" }
     i32.const 1
     i32.const 2048
     call $__panic_value_new)
+  (func $panic_reason (export "panic_reason") (result i32)
+    call $panic_value
+    call $__debug_reason)
+  (func $panic_payload_0 (export "panic_payload_0") (result i64)
+    call $panic_value
+    i32.const 0
+    call $__debug_payload_i64)
   (func $tuple_tag (export "tuple_tag") (result i32)
     call $tuple
     call $__debug_tag)
@@ -2808,6 +2815,15 @@ pub fn same() { "hi" == "hi" }
             .expect("read panic object");
         assert_eq!(u32::from_le_bytes(panic_bytes[0..4].try_into().unwrap()), 10);
         assert_eq!(u32::from_le_bytes(panic_bytes[8..12].try_into().unwrap()), 3);
+
+        let panic_reason = instance
+            .get_typed_func::<(), i32>(&mut store, "panic_reason")
+            .expect("get panic_reason export");
+        assert_eq!(panic_reason.call(&mut store, ()).expect("call panic reason"), 3);
+        let panic_payload_0 = instance
+            .get_typed_func::<(), i64>(&mut store, "panic_payload_0")
+            .expect("get panic_payload_0 export");
+        assert_eq!(panic_payload_0.call(&mut store, ()).expect("call panic payload"), 42);
 
         let assert_ok = instance
             .get_typed_func::<(), ()>(&mut store, "assert_ok")
