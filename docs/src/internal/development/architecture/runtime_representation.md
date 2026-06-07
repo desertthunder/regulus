@@ -35,8 +35,10 @@ Pointer, bool, nil, and ordering values use the low 32 bits and leave padding
 zeroed.
 
 The current runtime uses a bump allocator with a mutable heap pointer and no
-freeing. This gives arena lifetime: objects live until the instance is reset.
-Static objects are emitted as data segments before the dynamic heap.
+freeing. Allocation checks the aligned end pointer and grows linear memory when
+needed. Objects are non-moving: existing managed pointers remain stable across
+`memory.grow` and live until the instance is reset. Static objects are emitted
+as data segments before the dynamic heap.
 
 ## Tags
 
@@ -72,9 +74,9 @@ and `Option` values. `Ok`, `Error`, `Some`, and `None` are constructor tags in
 normal tag-5 custom objects. Runtime error objects use tag 9 and are separate
 from the `Result.Error` constructor.
 
-Closures store a stable function id followed by captured managed-value pointers.
-Current closure captures are pointer-shaped; scalar captures must be boxed or
-spilled into a managed environment before closure allocation.
+Closures store a stable function id followed by captured values in 8-byte
+slots. Managed captures use pointers and scalar captures use their raw slot
+representation.
 
 Opaque values are owned by the dependency or host interface that created them.
 The backend may pass opaque pointers around and compare identity, but may not
@@ -82,6 +84,9 @@ inspect payload contents without a dependency-specific helper.
 
 Panic and runtime error objects are materialized when a helper needs to report
 or render a failure. Direct panic paths may trap without allocating one.
+Allocation failure writes a reserved tag-10 panic object before trapping. Its
+reason tag is `1`, payload slot 0 is the requested allocation size, and payload
+slot 1 is the heap pointer before allocation.
 
 ## ABI and ownership
 

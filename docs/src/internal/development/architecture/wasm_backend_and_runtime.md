@@ -28,7 +28,7 @@ The prelude currently provides:
 
 - exported linear memory
 - a mutable bump-allocation heap pointer
-- `__alloc` for aligned allocation
+- `__alloc` for aligned, checked allocation and heap growth
 - byte and slot copy helpers
 - string construction, comparison, concatenation, and inspection
 - bit-array construction, append, slicing, bit access, and matching
@@ -71,8 +71,7 @@ The backend is complete for the current typed IR surface, not for the whole
 Gleam language. These areas still need design or implementation before every
 accepted source program can execute with full Gleam semantics:
 
-- long-term heap growth, lifetime, and allocation failure behavior
-- allocation failure and checked heap growth on every allocation path
+- explicit arena reset points beyond instance reset
 - target-specific browser and WASI adapters
 - standard library and dependency-backed imports
 

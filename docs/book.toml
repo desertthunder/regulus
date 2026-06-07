@@ -7,3 +7,4 @@ language = "en"
 default-theme = "coal"
 preferred-dark-theme = "coal"
 additional-css = ["src/assets/css/custom.css"]
+git-repository-url = "https://github.com/desertthunder/regulus"

@@ -1372,12 +1372,14 @@ impl RuntimePrelude {
             config.heap_start
         )
         .expect("write WAT");
+        writeln!(self.wat, "  (global $__last_panic_payload (mut i32) (i32.const 0))").expect("write WAT");
     }
 
     fn alloc(&mut self, config: runtime::RuntimeConfig) {
         let helper = helpers::ALLOC_HELPER
             .replace("{alignment_mask}", &(config.layout.alignment - 1).to_string())
-            .replace("{alignment}", &config.layout.alignment.to_string());
+            .replace("{alignment}", &config.layout.alignment.to_string())
+            .replace("{allocation_failure_offset}", "64");
         self.lines(&helper);
     }
 
@@ -2679,6 +2681,47 @@ pub fn same() { "hi" == "hi" }
             .get_typed_func::<(), i32>(&mut store, "compare")
             .expect("get compare export");
         assert_eq!(compare.call(&mut store, ()).expect("call compare"), -1);
+    }
+
+    #[test]
+    fn runtime_allocation_grows_memory_without_moving_existing_objects() {
+        let instance = runtime_helper_instance(
+            r#"
+  (data (i32.const 2048) "ab")
+  (func $stable (export "stable") (result i32)
+    (local $ptr i32)
+    i32.const 2048
+    i32.const 2
+    call $__string_new
+    local.set $ptr
+    i32.const 2048
+    i32.const 70000
+    call $__string_new
+    drop
+    local.get $ptr)
+  (func $pages (export "pages") (result i32)
+    memory.size)
+"#,
+        );
+        let (engine, mut store, instance) = instance;
+        let _engine = engine;
+        let pages = instance
+            .get_typed_func::<(), i32>(&mut store, "pages")
+            .expect("get pages export");
+        assert_eq!(pages.call(&mut store, ()).expect("call pages"), 1);
+        let stable = instance
+            .get_typed_func::<(), i32>(&mut store, "stable")
+            .expect("get stable export");
+        let pointer = stable.call(&mut store, ()).expect("call stable") as usize;
+        assert_eq!(pointer, runtime::RuntimeConfig::DEFAULT.heap_start as usize);
+        assert!(pages.call(&mut store, ()).expect("call pages after growth") > 1);
+
+        let memory = instance.get_memory(&mut store, "memory").expect("memory export");
+        let mut bytes = [0; 16];
+        memory.read(&store, pointer, &mut bytes).expect("read stable object");
+        assert_eq!(u32::from_le_bytes(bytes[0..4].try_into().unwrap()), 1);
+        assert_eq!(u32::from_le_bytes(bytes[4..8].try_into().unwrap()), 2);
+        assert_eq!(&bytes[8..10], b"ab");
     }
 
     #[test]
