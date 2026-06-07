@@ -1,6 +1,6 @@
 ---
-source: crates/core/src/ir.rs
-assertion_line: 2252
+source: crates/core/src/ir/lowerer.rs
+assertion_line: 1234
 expression: module
 ---
 Module {
@@ -404,10 +404,7 @@ Module {
                         3,
                     ),
                     name: "value",
-                    type_: Custom {
-                        name: "Outcome",
-                        args: [],
-                    },
+                    type_: Int,
                     span: Span {
                         file_id: SourceFileId(
                             0,
@@ -421,10 +418,7 @@ Module {
                         4,
                     ),
                     name: "reason",
-                    type_: Custom {
-                        name: "Outcome",
-                        args: [],
-                    },
+                    type_: Int,
                     span: Span {
                         file_id: SourceFileId(
                             0,
@@ -626,10 +620,7 @@ Module {
                                         },
                                     ],
                                     body: Expression {
-                                        type_: Custom {
-                                            name: "Outcome",
-                                            args: [],
-                                        },
+                                        type_: Int,
                                         span: Span {
                                             file_id: SourceFileId(
                                                 0,
@@ -695,10 +686,7 @@ Module {
                                         },
                                     ],
                                     body: Expression {
-                                        type_: Custom {
-                                            name: "Outcome",
-                                            args: [],
-                                        },
+                                        type_: Int,
                                         span: Span {
                                             file_id: SourceFileId(
                                                 0,

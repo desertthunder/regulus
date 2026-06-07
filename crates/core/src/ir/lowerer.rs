@@ -7,7 +7,7 @@ use crate::{
     diagnostic::{Diagnostic, DiagnosticCode, Diagnostics, Label},
     labels::{FunctionLabelMap, call_argument_order, function_label_map, use_callback_placement},
     resolve::ReferenceTarget,
-    types::TypedModule,
+    types::{ConstructorInfo, TypedModule},
 };
 
 pub(super) fn lower(module: TypedModule) -> Result<Module, Diagnostics> {
@@ -18,6 +18,7 @@ pub(crate) struct Lowerer {
     module: TypedModule,
     function_types: HashMap<String, Type>,
     function_labels: FunctionLabelMap,
+    constructors: HashMap<String, ConstructorInfo>,
     expression_types: HashMap<Span, Type>,
     diagnostics: Diagnostics,
     pub(super) lifted_functions: Vec<Function>,
@@ -32,17 +33,22 @@ impl Lowerer {
             .map(|function| (function.name.text.clone(), function.type_.clone()))
             .collect::<HashMap<_, _>>();
         function_types.extend(module.interface.functions.clone());
+
         let mut function_labels = function_label_map(&module.resolved.ast);
         function_labels.extend(module.function_labels.clone());
+
+        let constructors = module.interface.constructors.clone();
         let expression_types = module
             .expressions
             .iter()
             .map(|expression| (expression.span, expression.type_.clone()))
             .collect();
+
         Self {
             module,
             function_types,
             function_labels,
+            constructors,
             expression_types,
             diagnostics: Vec::new(),
             lifted_functions: Vec::new(),
@@ -51,6 +57,11 @@ impl Lowerer {
     }
 
     fn lower(mut self) -> Result<Module, Diagnostics> {
+        self.validate_concrete_runtime_types();
+        if !self.diagnostics.is_empty() {
+            return Err(self.diagnostics);
+        }
+
         let ast = self.module.resolved.ast.clone();
         let imports = ast
             .imports
@@ -74,11 +85,13 @@ impl Lowerer {
                 span: import.span,
             })
             .collect();
+
         let declarations = ast.declarations.iter().map(DeclarationMetadata::from).collect();
         let references = self.lower_references();
         let mut exports = self.lower_exports();
         let mut constants = Vec::new();
         let mut init = ModuleInit::default();
+
         if ast
             .declarations
             .iter()
@@ -92,11 +105,7 @@ impl Lowerer {
                 let id = ConstantId(constants.len() as u32);
                 let constant = self.lower_constant(id, raw);
                 if constant.public {
-                    exports.push(Export {
-                        name: constant.name.clone(),
-                        kind: ExportKind::Constant,
-                        span: constant.span,
-                    });
+                    exports.push(Export::constant(constant.name.clone(), constant.span));
                 }
                 if matches!(
                     constant.value,
@@ -126,24 +135,52 @@ impl Lowerer {
         }
     }
 
+    fn validate_concrete_runtime_types(&mut self) {
+        for function in self.module.functions.clone() {
+            if type_has_generic(&function.type_) {
+                self.diagnostics.push(
+                    Diagnostic::new(
+                        DiagnosticCode::LoweringError,
+                        format!(
+                            "function `{}` has generic type `{}` that cannot be lowered without monomorphization",
+                            function.name.text,
+                            format!("{:?}", function.type_)
+                        ),
+                    )
+                    .with_label(Label::primary(function.name.span, "generic function type here")),
+                );
+            }
+        }
+        for expression in self.module.expressions.clone() {
+            if type_has_generic(&expression.type_) {
+                self.diagnostics.push(
+                    Diagnostic::new(
+                        DiagnosticCode::LoweringError,
+                        format!(
+                            "expression has generic type `{}` that cannot be lowered without monomorphization",
+                            format!("{:?}", expression.type_)
+                        ),
+                    )
+                    .with_label(Label::primary(expression.span, "generic expression type here")),
+                );
+            }
+        }
+    }
+
     fn lower_exports(&self) -> Vec<Export> {
         let mut exports = Vec::new();
         for function in &self.module.resolved.ast.functions {
             if function.public {
-                exports.push(Export {
-                    name: function.name.text.clone(),
-                    kind: ExportKind::Function,
-                    span: function.name.span,
-                });
+                exports.push(Export::function(function.name.text.clone(), function.name.span))
             }
         }
         for declaration in &self.module.resolved.ast.declarations {
             match declaration {
                 AstDeclaration::TypeDefinition(type_) if type_.public => {
-                    exports.push(Export { name: type_.name.text.clone(), kind: ExportKind::Type, span: type_.span });
+                    exports.push(Export::type_(type_.name.text.clone(), type_.span))
                 }
                 AstDeclaration::TypeAlias(alias) if alias.public => {
-                    exports.push(Export { name: alias.name.text.clone(), kind: ExportKind::Type, span: alias.span });
+                    exports.push(Export::type_(alias.name.text.clone(), alias.span))
                 }
                 _ => {}
             }
@@ -382,17 +419,12 @@ impl Lowerer {
             }),
             AstExpression::Record(record) => {
                 let type_ = self.typed_expression_type(record.span).unwrap_or(Type::Nil);
+                let name = constructor_name(&record.constructor);
+                let arguments = self.lower_constructor_arguments(context, &name, &record.arguments)?;
                 Some(Expression {
                     type_,
                     span: record.span,
-                    kind: ExpressionKind::Constructor(ConstructorValue {
-                        name: constructor_name(&record.constructor),
-                        arguments: record
-                            .arguments
-                            .iter()
-                            .map(|argument| self.lower_expression(context, &argument.value))
-                            .collect::<Option<Vec<_>>>()?,
-                    }),
+                    kind: ExpressionKind::Constructor(ConstructorValue { name, arguments }),
                 })
             }
             AstExpression::BitArray(bit_array) => Some(Expression {
@@ -734,23 +766,104 @@ impl Lowerer {
         name
     }
 
+    fn lower_constructor_arguments(
+        &mut self, context: &mut FunctionContext, constructor: &str, arguments: &[ast::Argument],
+    ) -> Option<Vec<Expression>> {
+        let Some(info) = self.constructors.get(constructor).cloned() else {
+            return arguments
+                .iter()
+                .map(|argument| self.lower_expression(context, &argument.value))
+                .collect();
+        };
+        let mut ordered = Vec::new();
+        for (index, field) in info.fields.iter().enumerate() {
+            let argument = arguments
+                .iter()
+                .find(|argument| argument.label.as_ref().is_some_and(|label| label.text == field.name))
+                .or_else(|| arguments.get(index));
+            let Some(argument) = argument else { continue };
+            ordered.push(self.lower_expression(context, &argument.value)?);
+        }
+        Some(ordered)
+    }
+
+    fn lower_constructor_pattern_arguments(
+        &mut self, context: &mut FunctionContext, constructor: &str, arguments: &[ast::RecordPatternArgument],
+        subject_type: &Type,
+    ) -> Option<Vec<ConstructorPatternArgument>> {
+        let Some(info) = self.constructors.get(constructor).cloned() else {
+            return arguments
+                .iter()
+                .map(|argument| self.lower_constructor_pattern_argument(context, argument, subject_type))
+                .collect();
+        };
+        let mut ordered = Vec::new();
+        for (index, field) in info.fields.iter().enumerate() {
+            let argument = arguments
+                .iter()
+                .find(|argument| argument.label.as_ref().is_some_and(|label| label.text == field.name))
+                .or_else(|| arguments.get(index));
+            let Some(argument) = argument else { continue };
+            ordered.push(self.lower_constructor_pattern_argument(context, argument, &field.type_)?);
+        }
+        Some(ordered)
+    }
+
+    fn lower_constructor_pattern_argument(
+        &mut self, context: &mut FunctionContext, argument: &ast::RecordPatternArgument, type_: &Type,
+    ) -> Option<ConstructorPatternArgument> {
+        let pattern = match &argument.pattern {
+            Some(pattern) => self.lower_pattern(context, pattern, type_)?,
+            None => match &argument.label {
+                Some(label) => {
+                    let local = context.allocate(label, type_.clone());
+                    context.bind(label.text.clone(), local.id);
+                    IrPattern::Binding(local.id)
+                }
+                None => IrPattern::Discard,
+            },
+        };
+        Some(ConstructorPatternArgument {
+            label: argument.label.as_ref().map(|label| label.text.clone()),
+            pattern,
+            span: argument.span,
+        })
+    }
+
+    fn lower_record_update_fields(
+        &mut self, context: &mut FunctionContext, constructor: &ConstructorInfo, updates: &[ast::Argument],
+    ) -> Option<Vec<RecordFieldUpdate>> {
+        constructor
+            .fields
+            .iter()
+            .map(|field| {
+                let value = match updates
+                    .iter()
+                    .find(|argument| argument.label.as_ref().is_some_and(|label| label.text == field.name))
+                {
+                    Some(argument) => Some(self.lower_expression(context, &argument.value)?),
+                    None => None,
+                };
+                Some(RecordFieldUpdate { name: field.name.clone(), type_: field.type_.clone(), value })
+            })
+            .collect()
+    }
+
     fn lower_record_update(&mut self, context: &mut FunctionContext, update: &ast::RecordUpdate) -> Option<Expression> {
         let record = self.lower_expression(context, &update.spread)?;
-        let updates = update
-            .updates
-            .iter()
-            .filter_map(|argument| {
-                let name = argument.label.as_ref()?.text.clone();
-                Some(RecordFieldValue { name, value: self.lower_expression(context, &argument.value)? })
-            })
-            .collect::<Vec<_>>();
+        let constructor = constructor_name(&update.constructor);
+        let constructor_info = self.constructors.get(&constructor).cloned();
+        let fields = match constructor_info.as_ref() {
+            Some(info) => self.lower_record_update_fields(context, info, &update.updates)?,
+            None => Vec::new(),
+        };
         let type_ = self
             .typed_expression_type(update.span)
             .unwrap_or_else(|| record.type_.clone());
         Some(Expression {
             type_,
             span: update.span,
-            kind: ExpressionKind::RecordUpdate { record: Box::new(record), updates },
+            kind: ExpressionKind::RecordUpdate { record: Box::new(record), constructor, fields },
         })
     }
 
@@ -917,29 +1030,10 @@ impl Lowerer {
                 Some(IrPattern::List { elements, tail })
             }
             Pattern::Constructor(constructor) => {
-                let arguments = constructor
-                    .arguments
-                    .iter()
-                    .map(|argument| {
-                        let pattern = match &argument.pattern {
-                            Some(pattern) => self.lower_pattern(context, pattern, subject_type)?,
-                            None => match &argument.label {
-                                Some(label) => {
-                                    let local = context.allocate(label, subject_type.clone());
-                                    context.bind(label.text.clone(), local.id);
-                                    IrPattern::Binding(local.id)
-                                }
-                                None => IrPattern::Discard,
-                            },
-                        };
-                        Some(ConstructorPatternArgument {
-                            label: argument.label.as_ref().map(|label| label.text.clone()),
-                            pattern,
-                            span: argument.span,
-                        })
-                    })
-                    .collect::<Option<Vec<_>>>()?;
-                Some(IrPattern::Constructor { name: constructor_name(&constructor.constructor), arguments })
+                let name = constructor_name(&constructor.constructor);
+                let arguments =
+                    self.lower_constructor_pattern_arguments(context, &name, &constructor.arguments, subject_type)?;
+                Some(IrPattern::Constructor { name, arguments })
             }
             Pattern::Alias(alias) => {
                 let inner = self.lower_pattern(context, &alias.pattern, subject_type)?;
@@ -1024,6 +1118,18 @@ impl Lowerer {
     }
 }
 
+fn type_has_generic(type_: &Type) -> bool {
+    match type_ {
+        Type::Generic(_) => true,
+        Type::Tuple(items) => items.iter().any(type_has_generic),
+        Type::List(item) => type_has_generic(item),
+        Type::Record { fields, .. } => fields.iter().any(|field| type_has_generic(&field.type_)),
+        Type::Custom { args, .. } | Type::Opaque { args, .. } => args.iter().any(type_has_generic),
+        Type::Function { params, return_type } => params.iter().any(type_has_generic) || type_has_generic(return_type),
+        Type::Int | Type::Float | Type::String | Type::BitArray | Type::Bool | Type::Nil => false,
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct FunctionContext {
     pub(super) locals: Vec<Local>,
@@ -1078,6 +1184,15 @@ mod tests {
         let resolved = resolve::resolve(ast).expect("resolve names");
         let typed = types::check(resolved).expect("type check source");
         lower(typed).expect("lower source")
+    }
+
+    fn lower_source_err(source: &str) -> Diagnostics {
+        let source = SourceFile::new(SourceFileId(0), source);
+        let cst = parse::parse(source).expect("parse source");
+        let ast = ast::build(&cst).expect("build ast");
+        let resolved = resolve::resolve(ast).expect("resolve names");
+        let typed = types::check(resolved).expect("type check source");
+        lower(typed).expect_err("lowering should fail")
     }
 
     #[test]
@@ -1179,7 +1294,18 @@ mod tests {
         let module = lower_source("type Box { Box }\nfn main() { Box }");
         let wat = wasm::emit_wat(&module).expect("emit managed constructor");
 
-        assert!(wat.contains("(data"));
+        assert!(wat.contains("call $__custom_new"));
+    }
+
+    #[test]
+    fn rejects_generic_runtime_types_before_ir_emission() {
+        let diagnostics = lower_source_err("pub fn id(x) { x }");
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic
+                .message
+                .contains("cannot be lowered without monomorphization")
+        }));
     }
 
     #[test]

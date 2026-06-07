@@ -1,13 +1,15 @@
+mod labels;
+
 pub mod ast;
 pub mod diagnostic;
 pub mod inference;
 pub mod ir;
-mod labels;
 pub mod parse;
 pub mod project;
 pub mod resolve;
 pub mod runtime;
 pub mod source;
+pub mod target;
 pub mod types;
 pub mod wasm;
 
@@ -37,6 +39,11 @@ pub struct CompileOutput {
     pub wasm: wasm::WasmModule,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct CompileOptions {
+    pub target: target::CompileTarget,
+}
+
 /// Compile a Gleam source string.
 pub fn compile(source: impl Into<String>) -> Result<CompileOutput, Diagnostics> {
     let source = SourceFile::new(SourceFileId(0), source);
@@ -45,12 +52,17 @@ pub fn compile(source: impl Into<String>) -> Result<CompileOutput, Diagnostics> 
 
 /// Compile an already-created source file.
 pub fn compile_source(source: SourceFile) -> Result<CompileOutput, Diagnostics> {
+    compile_source_with_options(source, CompileOptions::default())
+}
+
+pub fn compile_source_with_options(source: SourceFile, options: CompileOptions) -> Result<CompileOutput, Diagnostics> {
     let cst = parse::parse(source)?;
     let ast = ast::build(&cst)?;
+    let ast = target::select_module(ast, options.target)?;
     let resolved = resolve::resolve(ast)?;
     let typed = types::check(resolved)?;
     let ir = ir::lower(typed)?;
-    let wasm = wasm::emit(&ir)?;
+    let wasm = wasm::emit_with_options(&ir, options.target.into())?;
 
     Ok(CompileOutput { wasm })
 }

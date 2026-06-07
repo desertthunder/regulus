@@ -20,8 +20,8 @@ polished host/browser/WASI interop are still incomplete.
 - Load a Gleam project and print discovered modules.
 - Accept target selection for Wasmtime, browser, and WASI.
 
-Non-Wasmtime CLI targets currently use the generic Wasm backend with target
-metadata and validation.
+Target selection filters target-group declarations before resolution and uses
+backend target metadata for host import validation.
 
 ### Project model
 
@@ -115,9 +115,9 @@ adapter exports.
 
 ### Language semantics
 
-- Complete target-group semantics.
-- Full bit-string segment matching semantics.
-- Complete closure invocation with captured environments.
+No represented language-semantic group in the current task list remains a known
+placeholder. Future Gleam features may still need parser, checker, lowering, or
+backend work as the accepted source surface grows.
 
 ### Host interop and targets
 
@@ -135,8 +135,7 @@ adapter exports.
 
 Some IR forms are emitted but still have intentionally small semantics:
 
-- `Use` emits its call expression.
-- `RecordUpdate` currently emits the original record expression.
+- Residual raw `Use` IR is rejected before WAT assembly.
 - `BitStringDeconstruct` checks for a bit-array object, not full segment
   matches.
 - Managed equality is not yet full recursive Gleam equality.

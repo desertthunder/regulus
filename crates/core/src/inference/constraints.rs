@@ -606,11 +606,7 @@ impl ConstraintGenerator {
         let name = constructor_name_text(&record.constructor);
         let constructor = self.constructor_function(&name, record.span)?;
         let result = self.supply.fresh_type();
-        let args = record
-            .arguments
-            .iter()
-            .map(|argument| self.infer_expression(&argument.value))
-            .collect::<Result<Vec<_>>>()?;
+        let args = self.infer_constructor_arguments(&name, &record.arguments)?;
         self.constraints.push(
             TypeTerm::Function { params: args, return_type: Box::new(result.clone()) },
             constructor,
@@ -623,17 +619,41 @@ impl ConstraintGenerator {
         let spread = self.infer_expression(&update.spread)?;
         let name = constructor_name_text(&update.constructor);
         let constructor = self.constructor_function(&name, update.span)?;
-        let args = update
-            .updates
-            .iter()
-            .map(|argument| self.infer_expression(&argument.value))
-            .collect::<Result<Vec<_>>>()?;
-        self.constraints.push(
-            TypeTerm::Function { params: args, return_type: Box::new(spread.clone()) },
-            constructor,
-            update.span,
-        );
+        let TypeTerm::Function { params, return_type } = constructor else {
+            return Ok(spread);
+        };
+
+        self.constraints.push(*return_type, spread.clone(), update.span);
+
+        if let Some(info) = self.constructors.get(&name).cloned() {
+            for argument in &update.updates {
+                let Some(label) = &argument.label else { continue };
+                let Some(index) = info.fields.iter().position(|field| field.name == label.text) else { continue };
+                let Some(expected) = params.get(index).cloned() else { continue };
+                let actual = self.infer_expression(&argument.value)?;
+                self.constraints.push(expected, actual, argument.span);
+            }
+        }
         Ok(spread)
+    }
+
+    fn infer_constructor_arguments(&mut self, constructor: &str, arguments: &[ast::Argument]) -> Result<Vec<TypeTerm>> {
+        let Some(info) = self.constructors.get(constructor).cloned() else {
+            return arguments
+                .iter()
+                .map(|argument| self.infer_expression(&argument.value))
+                .collect();
+        };
+        let mut ordered = Vec::new();
+        for (index, field) in info.fields.iter().enumerate() {
+            let argument = arguments
+                .iter()
+                .find(|argument| argument.label.as_ref().is_some_and(|label| label.text == field.name))
+                .or_else(|| arguments.get(index));
+            let Some(argument) = argument else { continue };
+            ordered.push(self.infer_expression(&argument.value)?);
+        }
+        Ok(ordered)
     }
 
     fn infer_tuple_access(&mut self, access: &ast::TupleAccess) -> Result<TypeTerm> {

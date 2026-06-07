@@ -46,13 +46,6 @@ fn project(input: &Path) -> ExitCode {
 fn compile(
     input: &Path, output: Option<PathBuf>, wat: Option<Option<PathBuf>>, dump_dir: Option<PathBuf>, target: Target,
 ) -> ExitCode {
-    if !matches!(target, Target::Wasmtime) {
-        echo::status(
-            "target",
-            format!("{target:?} selected; using the current generic WASM backend"),
-        );
-    }
-
     let source = match fs::read_to_string(input) {
         Ok(source) => SourceFile::with_path(SourceFileId(0), input, source),
         Err(error) => {
@@ -61,7 +54,7 @@ fn compile(
         }
     };
 
-    let compiled = match compile_with_dumps(source) {
+    let compiled = match compile_with_dumps(source, target.into()) {
         Ok(compiled) => compiled,
         Err(diagnostics) => {
             echo::error(format!("could not compile {}", input.display()));
@@ -73,6 +66,7 @@ fn compile(
     if let Some(dump_dir) = dump_dir
         && let Err(error) = write_debug_dumps(&dump_dir, &compiled)
     {
+        // TODO: this pattern is used a lot and could become echo::fail
         echo::error(format!("could not write debug dumps: {error}"));
         return ExitCode::FAILURE;
     }
@@ -107,15 +101,27 @@ struct CompiledModule {
     wasm: compiler_core::wasm::WasmModule,
 }
 
-fn compile_with_dumps(source: SourceFile) -> Result<CompiledModule, compiler_core::diagnostic::Diagnostics> {
+fn compile_with_dumps(
+    source: SourceFile, target: compiler_core::target::CompileTarget,
+) -> Result<CompiledModule, compiler_core::diagnostic::Diagnostics> {
     let cst = compiler_core::parse::parse(source)?;
     let ast = compiler_core::ast::build(&cst)?;
+    let ast = compiler_core::target::select_module(ast, target)?;
     let resolved = compiler_core::resolve::resolve(ast.clone())?;
     let typed = compiler_core::types::check(resolved.clone())?;
     let ir = compiler_core::ir::lower(typed.clone())?;
-    let wasm = compiler_core::wasm::emit(&ir)?;
-
+    let wasm = compiler_core::wasm::emit_with_options(&ir, target.into())?;
     Ok(CompiledModule { ast, resolved, typed, ir, wasm })
+}
+
+impl From<Target> for compiler_core::target::CompileTarget {
+    fn from(target: Target) -> Self {
+        match target {
+            Target::Wasmtime => Self::Wasmtime,
+            Target::Browser => Self::Browser,
+            Target::Wasi => Self::Wasi,
+        }
+    }
 }
 
 fn write_debug_dumps(dump_dir: &Path, compiled: &CompiledModule) -> std::io::Result<()> {

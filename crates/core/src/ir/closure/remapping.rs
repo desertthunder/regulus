@@ -70,16 +70,28 @@ fn collect_block_locals(block: &Block, locals: &mut Vec<LocalId>) {
     for instruction in &block.instructions {
         match instruction {
             Instruction::Evaluate { expression, .. } => collect_expression_locals(expression, locals),
-            Instruction::LocalSet { value, .. } => collect_expression_locals(value, locals),
-            Instruction::AssertMatch { value, .. } => collect_expression_locals(value, locals),
+            Instruction::LocalSet { local, value, .. } => {
+                collect_local(*local, locals);
+                collect_expression_locals(value, locals);
+            }
+            Instruction::AssertMatch { value, pattern, .. } => {
+                collect_expression_locals(value, locals);
+                collect_pattern_locals(pattern, locals);
+            }
         }
     }
     collect_expression_locals(&block.result, locals);
 }
 
+fn collect_local(local: LocalId, locals: &mut Vec<LocalId>) {
+    if !locals.contains(&local) {
+        locals.push(local);
+    }
+}
+
 fn collect_expression_locals(expression: &Expression, locals: &mut Vec<LocalId>) {
     match &expression.kind {
-        ExpressionKind::LocalGet(id) if !locals.contains(id) => locals.push(*id),
+        ExpressionKind::LocalGet(id) => collect_local(*id, locals),
         ExpressionKind::DirectCall(call) => call
             .arguments
             .iter()
@@ -111,10 +123,22 @@ fn collect_expression_locals(expression: &Expression, locals: &mut Vec<LocalId>)
                 .subjects
                 .iter()
                 .for_each(|subject| collect_expression_locals(subject, locals));
-            branch
-                .clauses
-                .iter()
-                .for_each(|clause| collect_expression_locals(&clause.body, locals));
+
+            branch.clauses.iter().for_each(|clause| {
+                clause
+                    .patterns
+                    .iter()
+                    .for_each(|pattern| collect_pattern_locals(pattern, locals));
+                clause
+                    .bindings
+                    .iter()
+                    .for_each(|binding| collect_local(binding.local, locals));
+
+                if let Some(guard) = &clause.guard {
+                    collect_expression_locals(guard, locals);
+                }
+                collect_expression_locals(&clause.body, locals);
+            });
         }
         ExpressionKind::Tuple(items) | ExpressionKind::List(items) => {
             items.iter().for_each(|item| collect_expression_locals(item, locals))
@@ -135,11 +159,13 @@ fn collect_expression_locals(expression: &Expression, locals: &mut Vec<LocalId>)
             .iter()
             .for_each(|arg| collect_expression_locals(arg, locals)),
         ExpressionKind::FieldAccess { record, .. } => collect_expression_locals(record, locals),
-        ExpressionKind::RecordUpdate { record, updates } => {
+        ExpressionKind::RecordUpdate { record, fields, .. } => {
             collect_expression_locals(record, locals);
-            updates
-                .iter()
-                .for_each(|field| collect_expression_locals(&field.value, locals));
+            fields.iter().for_each(|field| {
+                if let Some(value) = &field.value {
+                    collect_expression_locals(value, locals);
+                }
+            });
         }
         ExpressionKind::ListCons { head, tail } => {
             collect_expression_locals(head, locals);
@@ -156,6 +182,36 @@ fn collect_expression_locals(expression: &Expression, locals: &mut Vec<LocalId>)
             }
         },
         _ => {}
+    }
+}
+
+fn collect_pattern_locals(pattern: &IrPattern, locals: &mut Vec<LocalId>) {
+    match pattern {
+        IrPattern::Binding(local) => collect_local(*local, locals),
+        IrPattern::Alias { pattern, local } => {
+            collect_pattern_locals(pattern, locals);
+            collect_local(*local, locals);
+        }
+        IrPattern::Tuple(elements) => elements
+            .iter()
+            .for_each(|element| collect_pattern_locals(element, locals)),
+        IrPattern::List { elements, tail } => {
+            elements
+                .iter()
+                .for_each(|element| collect_pattern_locals(element, locals));
+            if let Some(tail) = tail {
+                collect_local(*tail, locals);
+            }
+        }
+        IrPattern::Constructor { arguments, .. } => arguments
+            .iter()
+            .for_each(|argument| collect_pattern_locals(&argument.pattern, locals)),
+        IrPattern::BitString(segments) => segments.iter().for_each(|segment| {
+            if let Some(binding) = segment.binding {
+                collect_local(binding, locals);
+            }
+        }),
+        IrPattern::Discard | IrPattern::Literal(_) => {}
     }
 }
 
@@ -249,10 +305,21 @@ fn remap_expression_locals(expression: &mut Expression, remap: &HashMap<LocalId,
                 .subjects
                 .iter_mut()
                 .for_each(|subject| remap_expression_locals(subject, remap));
-            branch
-                .clauses
-                .iter_mut()
-                .for_each(|clause| remap_expression_locals(&mut clause.body, remap));
+            branch.clauses.iter_mut().for_each(|clause| {
+                clause
+                    .patterns
+                    .iter_mut()
+                    .for_each(|pattern| remap_pattern_locals(pattern, remap));
+                clause.bindings.iter_mut().for_each(|binding| {
+                    if let Some(id) = remap.get(&binding.local) {
+                        binding.local = *id;
+                    }
+                });
+                if let Some(guard) = &mut clause.guard {
+                    remap_expression_locals(guard, remap);
+                }
+                remap_expression_locals(&mut clause.body, remap);
+            });
         }
         ExpressionKind::Tuple(items) | ExpressionKind::List(items) => {
             items.iter_mut().for_each(|item| remap_expression_locals(item, remap))
@@ -281,11 +348,13 @@ fn remap_expression_locals(expression: &mut Expression, remap: &HashMap<LocalId,
             remap_expression_locals(&mut use_.callback, remap);
             remap_expression_locals(&mut use_.call, remap);
         }
-        ExpressionKind::RecordUpdate { record, updates } => {
+        ExpressionKind::RecordUpdate { record, fields, .. } => {
             remap_expression_locals(record, remap);
-            updates
-                .iter_mut()
-                .for_each(|field| remap_expression_locals(&mut field.value, remap));
+            fields.iter_mut().for_each(|field| {
+                if let Some(value) = &mut field.value {
+                    remap_expression_locals(value, remap);
+                }
+            });
         }
         ExpressionKind::ListCons { head, tail } => {
             remap_expression_locals(head, remap);

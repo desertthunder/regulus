@@ -4,7 +4,7 @@ use std::{collections::HashMap, fmt::Write};
 
 use crate::diagnostic::{Diagnostic, DiagnosticCode, Diagnostics, Label};
 use crate::ir::{self, ExpressionKind, Instruction};
-use crate::{ClosureConstants, ast::LiteralKind, runtime, types::Type};
+use crate::{ClosureConstants, ast::LiteralKind, runtime, target::CompileTarget, types::Type};
 
 /// WebAssembly output from the backend.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -13,22 +13,34 @@ pub struct WasmModule {
     pub bytes: Vec<u8>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct EmitOptions {
     pub target: WasmTarget,
 }
 
-impl Default for EmitOptions {
-    fn default() -> Self {
-        Self { target: WasmTarget::Wasmtime }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum WasmTarget {
+    #[default]
     Wasmtime,
     Browser,
     Wasi,
+}
+
+impl From<CompileTarget> for EmitOptions {
+    fn from(target: CompileTarget) -> Self {
+        Self { target: WasmTarget::from(target) }
+    }
+}
+
+impl From<CompileTarget> for WasmTarget {
+    fn from(target: CompileTarget) -> Self {
+        match target {
+            CompileTarget::Wasmtime => Self::Wasmtime,
+            CompileTarget::Browser => Self::Browser,
+            CompileTarget::Wasi => Self::Wasi,
+            CompileTarget::Wasm => Self::Wasmtime,
+        }
+    }
 }
 
 impl WasmTarget {
@@ -100,8 +112,7 @@ pub fn emit_wat_with_options(module: &ir::Module, options: EmitOptions) -> Resul
             .iter()
             .map(|function| (function.name.clone(), function.closure_captures.clone()))
             .collect(),
-        current_scratch: None,
-        current_capture_slots: None,
+        current: CurrentEmission::default(),
         options,
     };
 
@@ -126,8 +137,10 @@ pub fn emit_wat_with_options(module: &ir::Module, options: EmitOptions) -> Resul
     if emitter.uses_runtime {
         wat.push_str(&runtime_prelude(emitter.config));
     }
+
     wat.push_str(&emitter.imports);
     wat.push_str(&emitter.functions);
+
     for object in emitter.data {
         writeln!(
             wat,
@@ -139,6 +152,14 @@ pub fn emit_wat_with_options(module: &ir::Module, options: EmitOptions) -> Resul
     }
     wat.push_str(")\n");
     Ok(wat)
+}
+
+#[derive(Clone, Default)]
+struct CurrentEmission {
+    scratch: Option<String>,
+    capture_slots: Option<String>,
+    record_update_source: Option<String>,
+    record_update_slots: Option<String>,
 }
 
 struct Emitter {
@@ -153,8 +174,7 @@ struct Emitter {
     function_order: Vec<String>,
     function_signatures: HashMap<String, (Vec<Type>, Type)>,
     closure_captures: HashMap<String, Vec<Type>>,
-    current_scratch: Option<String>,
-    current_capture_slots: Option<String>,
+    current: CurrentEmission,
     options: EmitOptions,
 }
 
@@ -232,20 +252,26 @@ impl Emitter {
             }
         }
 
-        let previous_scratch = self.current_scratch.clone();
-        let previous_capture_slots = self.current_capture_slots.clone();
+        let previous_current = self.current.clone();
         if block_contains_indirect_call(&function.body) {
             writeln!(self.functions, "    (local $__callee i32)").expect("write WAT");
-            self.current_scratch = Some("__callee".into());
+            self.current.scratch = Some("__callee".into());
         }
         if block_contains_anonymous_function(&function.body) {
             writeln!(self.functions, "    (local $__capture_slots i32)").expect("write WAT");
-            self.current_capture_slots = Some("__capture_slots".into());
+            self.current.capture_slots = Some("__capture_slots".into());
+        }
+        if block_contains_record_update(&function.body) || block_contains_constructor(&function.body) {
+            writeln!(self.functions, "    (local $__record_update_slots i32)").expect("write WAT");
+            self.current.record_update_slots = Some("__record_update_slots".into());
+        }
+        if block_contains_record_update(&function.body) {
+            writeln!(self.functions, "    (local $__record_update_source i32)").expect("write WAT");
+            self.current.record_update_source = Some("__record_update_source".into());
         }
 
         self.block(&function.body);
-        self.current_scratch = previous_scratch;
-        self.current_capture_slots = previous_capture_slots;
+        self.current = previous_current;
         self.functions.push_str("  )\n");
         self.export_adapters(function);
     }
@@ -341,10 +367,7 @@ impl Emitter {
                 let pointer = self.static_record(record);
                 writeln!(self.functions, "    i32.const {pointer}").expect("write WAT");
             }
-            ExpressionKind::Constructor(constructor) => {
-                let pointer = self.static_custom(constructor);
-                writeln!(self.functions, "    i32.const {pointer}").expect("write WAT");
-            }
+            ExpressionKind::Constructor(constructor) => self.constructor_value(constructor, expression.span),
             ExpressionKind::FunctionValue(function) => {
                 let pointer = self.static_closure(self.function_id(&function.name), &[]);
                 writeln!(self.functions, "    i32.const {pointer}").expect("write WAT");
@@ -370,12 +393,14 @@ impl Emitter {
             ExpressionKind::IndirectCall(call) => self.indirect_call(call, expression.span),
             ExpressionKind::Compare { op, left, right } => self.compare(*op, left, right),
             ExpressionKind::Pipeline(pipeline) => self.pipeline(pipeline),
-            ExpressionKind::Use(use_) => self.expression(&use_.call),
+            ExpressionKind::Use(_) => self.unsupported_residual_use(expression.span),
             ExpressionKind::BitStringDeconstruct { bit_array, .. } => {
                 self.managed_tag_test(bit_array, runtime::ObjectTag::BitArray, None)
             }
             ExpressionKind::ListDeconstruct { list, head, tail } => self.list_deconstruct(list, *head, *tail),
-            ExpressionKind::RecordUpdate { record, .. } => self.expression(record),
+            ExpressionKind::RecordUpdate { record, constructor, fields } => {
+                self.record_update(record, constructor, fields, &expression.type_, expression.span)
+            }
         }
     }
 
@@ -533,7 +558,7 @@ impl Emitter {
     }
 
     fn closure_allocation(&mut self, function: &ir::AnonymousFunction, span: crate::source::Span) {
-        let Some(slots) = self.current_capture_slots.clone() else {
+        let Some(slots) = self.current.capture_slots.clone() else {
             self.diagnostics.push(
                 Diagnostic::new(
                     DiagnosticCode::WasmError,
@@ -572,7 +597,7 @@ impl Emitter {
     }
 
     fn indirect_call(&mut self, call: &ir::IndirectCall, span: crate::source::Span) {
-        let Some(scratch) = self.current_scratch.clone() else {
+        let Some(scratch) = self.current.scratch.clone() else {
             self.diagnostics.push(
                 Diagnostic::new(DiagnosticCode::WasmError, "indirect calls need a scratch local")
                     .with_label(Label::primary(span, "indirect call here")),
@@ -1007,6 +1032,125 @@ impl Emitter {
         }
     }
 
+    fn constructor_value(&mut self, constructor: &ir::ConstructorValue, span: crate::source::Span) {
+        let Some(slots) = self.current.record_update_slots.clone() else {
+            self.diagnostics.push(
+                Diagnostic::new(
+                    DiagnosticCode::WasmError,
+                    "constructor allocation needs a field-slot local",
+                )
+                .with_label(Label::primary(span, "constructor allocated here")),
+            );
+            return;
+        };
+        writeln!(self.functions, "    i32.const {}", constructor.arguments.len() * 8).expect("write WAT");
+        writeln!(self.functions, "    call $__alloc").expect("write WAT");
+        writeln!(self.functions, "    local.set ${slots}").expect("write WAT");
+        self.uses_runtime = true;
+        for (index, argument) in constructor.arguments.iter().enumerate() {
+            writeln!(self.functions, "    local.get ${slots}").expect("write WAT");
+            writeln!(self.functions, "    i32.const {}", index * 8).expect("write WAT");
+            writeln!(self.functions, "    i32.add").expect("write WAT");
+            self.expression_slot_value(argument, &argument.type_);
+            self.store_slot(&argument.type_);
+        }
+        writeln!(self.functions, "    i32.const {}", constructor_tag(&constructor.name)).expect("write WAT");
+        writeln!(self.functions, "    i32.const {}", constructor.arguments.len()).expect("write WAT");
+        writeln!(self.functions, "    local.get ${slots}").expect("write WAT");
+        writeln!(self.functions, "    call $__custom_new").expect("write WAT");
+    }
+
+    fn record_update(
+        &mut self, record: &ir::Expression, constructor: &str, fields: &[ir::RecordFieldUpdate], type_: &Type,
+        span: crate::source::Span,
+    ) {
+        let (Some(source), Some(slots)) = (
+            self.current.record_update_source.clone(),
+            self.current.record_update_slots.clone(),
+        ) else {
+            self.diagnostics.push(
+                Diagnostic::new(DiagnosticCode::WasmError, "record update needs scratch locals")
+                    .with_label(Label::primary(span, "record update here")),
+            );
+            return;
+        };
+        self.expression(record);
+        writeln!(self.functions, "    local.set ${source}").expect("write WAT");
+        writeln!(self.functions, "    i32.const {}", fields.len() * 8).expect("write WAT");
+        writeln!(self.functions, "    call $__alloc").expect("write WAT");
+        writeln!(self.functions, "    local.set ${slots}").expect("write WAT");
+        self.uses_runtime = true;
+
+        let source_offset = if matches!(type_, Type::Record { .. }) { 8 } else { 12 };
+        for (index, field) in fields.iter().enumerate() {
+            writeln!(self.functions, "    local.get ${slots}").expect("write WAT");
+            writeln!(self.functions, "    i32.const {}", index * 8).expect("write WAT");
+            writeln!(self.functions, "    i32.add").expect("write WAT");
+            match &field.value {
+                Some(value) => self.expression_slot_value(value, &field.type_),
+                None => self.source_slot_value(&source, source_offset + index * 8, &field.type_),
+            }
+            self.store_slot(&field.type_);
+        }
+
+        match type_ {
+            Type::Record { .. } => {
+                writeln!(self.functions, "    i32.const {}", fields.len()).expect("write WAT");
+                writeln!(self.functions, "    local.get ${slots}").expect("write WAT");
+                writeln!(self.functions, "    call $__record_new").expect("write WAT");
+            }
+            _ => {
+                writeln!(self.functions, "    i32.const {}", constructor_tag(constructor)).expect("write WAT");
+                writeln!(self.functions, "    i32.const {}", fields.len()).expect("write WAT");
+                writeln!(self.functions, "    local.get ${slots}").expect("write WAT");
+                writeln!(self.functions, "    call $__custom_new").expect("write WAT");
+            }
+        }
+    }
+
+    fn expression_slot_value(&mut self, expression: &ir::Expression, type_: &Type) {
+        match type_ {
+            Type::Nil => writeln!(self.functions, "    i64.const 0").expect("write WAT"),
+            Type::Int | Type::Float => self.expression(expression),
+            _ => {
+                self.expression(expression);
+                writeln!(self.functions, "    i64.extend_i32_u").expect("write WAT");
+            }
+        }
+    }
+
+    fn source_slot_value(&mut self, source: &str, offset: usize, type_: &Type) {
+        match type_ {
+            Type::Nil => writeln!(self.functions, "    i64.const 0").expect("write WAT"),
+            Type::Int => {
+                writeln!(self.functions, "    local.get ${source}").expect("write WAT");
+                writeln!(self.functions, "    i32.const {offset}").expect("write WAT");
+                writeln!(self.functions, "    i32.add").expect("write WAT");
+                writeln!(self.functions, "    i64.load").expect("write WAT");
+            }
+            Type::Float => {
+                writeln!(self.functions, "    local.get ${source}").expect("write WAT");
+                writeln!(self.functions, "    i32.const {offset}").expect("write WAT");
+                writeln!(self.functions, "    i32.add").expect("write WAT");
+                writeln!(self.functions, "    f64.load").expect("write WAT");
+            }
+            _ => {
+                writeln!(self.functions, "    local.get ${source}").expect("write WAT");
+                writeln!(self.functions, "    i32.const {offset}").expect("write WAT");
+                writeln!(self.functions, "    i32.add").expect("write WAT");
+                writeln!(self.functions, "    i32.load").expect("write WAT");
+                writeln!(self.functions, "    i64.extend_i32_u").expect("write WAT");
+            }
+        }
+    }
+
+    fn store_slot(&mut self, type_: &Type) {
+        match type_ {
+            Type::Float => writeln!(self.functions, "    f64.store").expect("write WAT"),
+            _ => writeln!(self.functions, "    i64.store").expect("write WAT"),
+        }
+    }
+
     fn memory_operation(&mut self, operation: &ir::MemoryOperation) {
         match operation {
             ir::MemoryOperation::Allocate { bytes } => {
@@ -1184,6 +1328,14 @@ impl Emitter {
         );
     }
 
+    fn unsupported_residual_use(&mut self, span: crate::source::Span) {
+        self.diagnostics.push(
+            Diagnostic::new(DiagnosticCode::WasmError, "raw `use` IR reached the Wasm backend")
+                .with_label(Label::primary(span, "lower `use` before backend emission"))
+                .with_note("`use` must lower to callback-passing call IR before WAT emission"),
+        );
+    }
+
     fn unsupported_type(&mut self, type_: &Type, span: crate::source::Span) {
         self.diagnostics.push(
             Diagnostic::new(
@@ -1289,6 +1441,142 @@ fn block_contains_anonymous_function(block: &ir::Block) -> bool {
     }) || expression_contains_anonymous_function(&block.result)
 }
 
+fn block_contains_constructor(block: &ir::Block) -> bool {
+    block.instructions.iter().any(|instruction| match instruction {
+        Instruction::Evaluate { expression, .. }
+        | Instruction::LocalSet { value: expression, .. }
+        | Instruction::AssertMatch { value: expression, .. } => expression_contains_constructor(expression),
+    }) || expression_contains_constructor(&block.result)
+}
+
+fn expression_contains_constructor(expression: &ir::Expression) -> bool {
+    match &expression.kind {
+        ExpressionKind::Constructor(_) => true,
+        ExpressionKind::DirectCall(call) => call
+            .arguments
+            .iter()
+            .any(|argument| expression_contains_constructor(&argument.value)),
+        ExpressionKind::IndirectCall(call) => {
+            expression_contains_constructor(&call.callee)
+                || call
+                    .arguments
+                    .iter()
+                    .any(|argument| expression_contains_constructor(&argument.value))
+        }
+        ExpressionKind::Branch(branch) => {
+            branch.subjects.iter().any(expression_contains_constructor)
+                || branch.clauses.iter().any(|clause| {
+                    clause.guard.as_ref().is_some_and(expression_contains_constructor)
+                        || expression_contains_constructor(&clause.body)
+                })
+        }
+        ExpressionKind::Tuple(items) | ExpressionKind::List(items) => items.iter().any(expression_contains_constructor),
+        ExpressionKind::BitArrayConcat { left, right }
+        | ExpressionKind::Compare { left, right, .. }
+        | ExpressionKind::RuntimeEquality { left, right } => {
+            expression_contains_constructor(left) || expression_contains_constructor(right)
+        }
+        ExpressionKind::BitStringDeconstruct { bit_array, .. }
+        | ExpressionKind::FieldAccess { record: bit_array, .. }
+        | ExpressionKind::TupleElement { tuple: bit_array, .. }
+        | ExpressionKind::ListDeconstruct { list: bit_array, .. } => expression_contains_constructor(bit_array),
+        ExpressionKind::Record(record) => record
+            .fields
+            .iter()
+            .any(|field| expression_contains_constructor(&field.value)),
+        ExpressionKind::RecordUpdate { record, fields, .. } => {
+            expression_contains_constructor(record)
+                || fields
+                    .iter()
+                    .filter_map(|field| field.value.as_ref())
+                    .any(expression_contains_constructor)
+        }
+        ExpressionKind::ListCons { head, tail } => {
+            expression_contains_constructor(head) || expression_contains_constructor(tail)
+        }
+        ExpressionKind::Memory(operation) => match operation {
+            ir::MemoryOperation::Allocate { bytes } => expression_contains_constructor(bytes),
+            ir::MemoryOperation::Load { address, .. } => expression_contains_constructor(address),
+            ir::MemoryOperation::Store { address, value } => {
+                expression_contains_constructor(address) || expression_contains_constructor(value)
+            }
+        },
+        ExpressionKind::Pipeline(pipeline) => {
+            expression_contains_constructor(&pipeline.input) || expression_contains_constructor(&pipeline.call)
+        }
+        ExpressionKind::Use(use_) => {
+            expression_contains_constructor(&use_.callback) || expression_contains_constructor(&use_.call)
+        }
+        _ => false,
+    }
+}
+
+fn block_contains_record_update(block: &ir::Block) -> bool {
+    block.instructions.iter().any(|instruction| match instruction {
+        Instruction::Evaluate { expression, .. }
+        | Instruction::LocalSet { value: expression, .. }
+        | Instruction::AssertMatch { value: expression, .. } => expression_contains_record_update(expression),
+    }) || expression_contains_record_update(&block.result)
+}
+
+fn expression_contains_record_update(expression: &ir::Expression) -> bool {
+    match &expression.kind {
+        ExpressionKind::RecordUpdate { .. } => true,
+        ExpressionKind::DirectCall(call) => call
+            .arguments
+            .iter()
+            .any(|argument| expression_contains_record_update(&argument.value)),
+        ExpressionKind::IndirectCall(call) => {
+            expression_contains_record_update(&call.callee)
+                || call
+                    .arguments
+                    .iter()
+                    .any(|argument| expression_contains_record_update(&argument.value))
+        }
+        ExpressionKind::Branch(branch) => {
+            branch.subjects.iter().any(expression_contains_record_update)
+                || branch.clauses.iter().any(|clause| {
+                    clause.guard.as_ref().is_some_and(expression_contains_record_update)
+                        || expression_contains_record_update(&clause.body)
+                })
+        }
+        ExpressionKind::Tuple(items) | ExpressionKind::List(items) => {
+            items.iter().any(expression_contains_record_update)
+        }
+        ExpressionKind::BitArrayConcat { left, right }
+        | ExpressionKind::Compare { left, right, .. }
+        | ExpressionKind::RuntimeEquality { left, right } => {
+            expression_contains_record_update(left) || expression_contains_record_update(right)
+        }
+        ExpressionKind::BitStringDeconstruct { bit_array, .. }
+        | ExpressionKind::FieldAccess { record: bit_array, .. }
+        | ExpressionKind::TupleElement { tuple: bit_array, .. }
+        | ExpressionKind::ListDeconstruct { list: bit_array, .. } => expression_contains_record_update(bit_array),
+        ExpressionKind::Record(record) => record
+            .fields
+            .iter()
+            .any(|field| expression_contains_record_update(&field.value)),
+        ExpressionKind::Constructor(constructor) => constructor.arguments.iter().any(expression_contains_record_update),
+        ExpressionKind::ListCons { head, tail } => {
+            expression_contains_record_update(head) || expression_contains_record_update(tail)
+        }
+        ExpressionKind::Memory(operation) => match operation {
+            ir::MemoryOperation::Allocate { bytes } => expression_contains_record_update(bytes),
+            ir::MemoryOperation::Load { address, .. } => expression_contains_record_update(address),
+            ir::MemoryOperation::Store { address, value } => {
+                expression_contains_record_update(address) || expression_contains_record_update(value)
+            }
+        },
+        ExpressionKind::Pipeline(pipeline) => {
+            expression_contains_record_update(&pipeline.input) || expression_contains_record_update(&pipeline.call)
+        }
+        ExpressionKind::Use(use_) => {
+            expression_contains_record_update(&use_.callback) || expression_contains_record_update(&use_.call)
+        }
+        _ => false,
+    }
+}
+
 fn expression_contains_anonymous_function(expression: &ir::Expression) -> bool {
     match &expression.kind {
         ExpressionKind::AnonymousFunction(_) => true,
@@ -1332,11 +1620,12 @@ fn expression_contains_anonymous_function(expression: &ir::Expression) -> bool {
         ExpressionKind::Constructor(constructor) => {
             constructor.arguments.iter().any(expression_contains_anonymous_function)
         }
-        ExpressionKind::RecordUpdate { record, updates } => {
+        ExpressionKind::RecordUpdate { record, fields, .. } => {
             expression_contains_anonymous_function(record)
-                || updates
+                || fields
                     .iter()
-                    .any(|field| expression_contains_anonymous_function(&field.value))
+                    .filter_map(|field| field.value.as_ref())
+                    .any(expression_contains_anonymous_function)
         }
         ExpressionKind::ListCons { head, tail } => {
             expression_contains_anonymous_function(head) || expression_contains_anonymous_function(tail)
@@ -1390,11 +1679,12 @@ fn expression_contains_indirect_call(expression: &ir::Expression) -> bool {
             .iter()
             .any(|field| expression_contains_indirect_call(&field.value)),
         ExpressionKind::Constructor(constructor) => constructor.arguments.iter().any(expression_contains_indirect_call),
-        ExpressionKind::RecordUpdate { record, updates } => {
+        ExpressionKind::RecordUpdate { record, fields, .. } => {
             expression_contains_indirect_call(record)
-                || updates
+                || fields
                     .iter()
-                    .any(|field| expression_contains_indirect_call(&field.value))
+                    .filter_map(|field| field.value.as_ref())
+                    .any(expression_contains_indirect_call)
         }
         ExpressionKind::ListCons { head, tail } => {
             expression_contains_indirect_call(head) || expression_contains_indirect_call(tail)
@@ -1735,6 +2025,113 @@ mod tests {
                 .iter()
                 .any(|diagnostic| diagnostic.message.contains("unsupported host ABI"))
         );
+    }
+
+    #[test]
+    fn rejects_residual_use_ir_before_wat_assembly() {
+        let span = Span::new(SourceFileId(0), 0, 0);
+        let function = ir::Function {
+            closure_captures: Vec::new(),
+            name: "main".into(),
+            public: true,
+            params: Vec::new(),
+            locals: Vec::new(),
+            return_type: Type::Int,
+            abi: ir::CallAbi {
+                params: Vec::new(),
+                return_: Some(ir::AbiValue::from(&Type::Int)),
+                boundary: ir::CallBoundary::ModuleExport,
+            },
+            body: ir::Block {
+                instructions: Vec::new(),
+                result: Box::new(ir::Expression {
+                    type_: Type::Int,
+                    span,
+                    kind: ExpressionKind::Use(ir::UseLowering {
+                        callback: Box::new(int_expr("1", span)),
+                        call: Box::new(int_expr("2", span)),
+                    }),
+                }),
+                span,
+            },
+            span,
+        };
+        let diagnostics = emit_wat(&ir_module(vec![function], span)).expect_err("residual use should fail");
+
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains("raw `use` IR reached the Wasm backend"))
+        );
+    }
+
+    #[test]
+    fn runs_record_updates_with_scalar_and_managed_fields() {
+        let wasm = compile_wasm(
+            r#"
+pub type User { User(name: String, age: Int) }
+
+pub fn updated_age(age: Int) -> Int {
+  let user = User(age: age, name: "Ada")
+  let older = User(..user, age: age + 1)
+  case older {
+    User(name: _, age: value) -> value
+  }
+}
+
+pub fn preserves_age_when_updating_name(age: Int) -> Int {
+  let user = User(name: "Ada", age: age)
+  let renamed = User(..user, name: "Grace")
+  case renamed {
+    User(name: _, age: value) -> value
+  }
+}
+"#,
+        );
+        let engine = Engine::default();
+        let module = Module::new(&engine, &wasm.bytes).expect("compile wasm module");
+        let mut store = Store::new(&engine, ());
+        let instance = Instance::new(&mut store, &module, &[]).expect("instantiate module");
+        let updated_age = instance
+            .get_typed_func::<i64, i64>(&mut store, "updated_age")
+            .expect("get updated_age export");
+        let preserves_age = instance
+            .get_typed_func::<i64, i64>(&mut store, "preserves_age_when_updating_name")
+            .expect("get preserves_age_when_updating_name export");
+
+        assert_eq!(updated_age.call(&mut store, 41).expect("call updated_age"), 42);
+        assert_eq!(preserves_age.call(&mut store, 36).expect("call preserves_age"), 36);
+    }
+
+    #[test]
+    fn runs_use_callback_that_updates_record() {
+        let wasm = compile_wasm(
+            r#"
+pub type User { User(name: String, age: Int) }
+
+fn with_user(user: User, callback: fn(User) -> Int) -> Int {
+  callback(user)
+}
+
+pub fn use_updated_age(age: Int) -> Int {
+  let user = User(name: "Ada", age: age)
+  use current <- with_user(user)
+  let older = User(..current, age: age + 2)
+  case older {
+    User(name: _, age: value) -> value
+  }
+}
+"#,
+        );
+        let engine = Engine::default();
+        let module = Module::new(&engine, &wasm.bytes).expect("compile wasm module");
+        let mut store = Store::new(&engine, ());
+        let instance = Instance::new(&mut store, &module, &[]).expect("instantiate module");
+        let use_updated_age = instance
+            .get_typed_func::<i64, i64>(&mut store, "use_updated_age")
+            .expect("get use_updated_age export");
+
+        assert_eq!(use_updated_age.call(&mut store, 40).expect("call use_updated_age"), 42);
     }
 
     #[test]

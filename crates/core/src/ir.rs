@@ -286,6 +286,24 @@ pub struct Export {
     pub span: Span,
 }
 
+impl Export {
+    pub fn function(name: String, span: Span) -> Self {
+        Self { name, kind: ExportKind::Function, span }
+    }
+
+    pub fn constant(name: String, span: Span) -> Self {
+        Self { name, kind: ExportKind::Constant, span }
+    }
+
+    pub fn type_(name: String, span: Span) -> Self {
+        Self { name, kind: ExportKind::Type, span }
+    }
+
+    pub fn constructor(name: String, span: Span) -> Self {
+        Self { name, kind: ExportKind::Constructor, span }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExportKind {
     Function,
@@ -420,7 +438,8 @@ pub enum ExpressionKind {
     },
     RecordUpdate {
         record: Box<Expression>,
-        updates: Vec<RecordFieldValue>,
+        constructor: String,
+        fields: Vec<RecordFieldUpdate>,
     },
     ListCons {
         head: Box<Expression>,
@@ -521,6 +540,13 @@ pub struct ConstructorValue {
 pub struct RecordFieldValue {
     pub name: String,
     pub value: Expression,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecordFieldUpdate {
+    pub name: String,
+    pub type_: Type,
+    pub value: Option<Expression>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

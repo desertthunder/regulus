@@ -23,8 +23,8 @@ project compilation is still future work.
 ## Targets
 
 `compile` accepts `--target wasmtime`, `--target browser`, and `--target wasi`.
-Wasmtime is the default. Browser and WASI selection currently records intent
-and uses the generic backend until target-specific adapters are implemented.
+Wasmtime is the default. Target selection filters target-group declarations
+before later compiler phases and configures backend host import validation.
 
 ## Debug dumps
 

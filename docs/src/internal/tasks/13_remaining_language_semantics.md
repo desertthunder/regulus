@@ -8,13 +8,13 @@ Replace placeholder semantics for represented language forms with full behavior.
 
 ### Target groups
 
-- [ ] Define target selection rules for Wasmtime, browser, WASI, and generic
+- [x] Define target selection rules for Wasmtime, browser, WASI, and generic
       Wasm output.
-- [ ] Exclude non-selected declarations from resolution, type checking,
+- [x] Exclude non-selected declarations from resolution, type checking,
       lowering, and backend emission.
-- [ ] Preserve selected target-group declarations in module interfaces.
-- [ ] Add diagnostics for unsupported target-specific declarations.
-- [ ] Add tests for target-group selection and conflicts.
+- [x] Preserve selected target-group declarations in module interfaces.
+- [x] Add diagnostics for unsupported target-specific declarations.
+- [x] Add tests for target-group selection and conflicts.
 
 ### Bit-string matching
 
@@ -36,25 +36,26 @@ Replace placeholder semantics for represented language forms with full behavior.
 - [x] Lower `use` to callback-passing IR with explicit evaluation order.
 - [x] Preserve callback parameters, captures, and failure paths.
 - [x] Emit Wasm for lowered `use` callbacks.
+- [x] Reject or eliminate residual raw `Use` IR before backend emission.
 - [x] Add execution tests for common `use` patterns.
 
 ### Record updates
 
-- [ ] Resolve and type-check updated fields against declaration order.
-- [ ] Infer field access and record-update field types from known record
+- [x] Resolve and type-check updated fields against declaration order.
+- [x] Infer field access and record-update field types from known record
       declarations.
-- [ ] Support open-record-style inference is with diagnostics.
-- [ ] Lower record updates into explicit field copy and replacement operations.
-- [ ] Emit Wasm allocation for updated records/custom values.
-- [ ] Add tests for scalar and managed field updates.
+- [x] Reject unsupported open-record-style inference with diagnostics.
+- [x] Lower record updates into explicit field copy and replacement operations.
+- [x] Emit Wasm allocation for updated records/custom values.
+- [x] Add tests for scalar and managed field updates.
 
 ### Type checker soundness
 
-- [ ] Replace approximate local generalization with outer-scope free-variable
+- [x] Replace approximate local generalization with outer-scope free-variable
       handling.
-- [ ] Prevent generic or ambiguous types from reaching IR and Wasm phases that
+- [x] Prevent generic or ambiguous types from reaching IR and Wasm phases that
       need concrete runtime representation.
-- [ ] Add type-checker tests for local generalization, field inference, and
+- [x] Add type-checker tests for local generalization, field inference, and
       generic leakage into lowering.
 
 ## Done when
