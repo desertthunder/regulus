@@ -142,9 +142,8 @@ impl Lowerer {
                     Diagnostic::new(
                         DiagnosticCode::LoweringError,
                         format!(
-                            "function `{}` has generic type `{}` that cannot be lowered without monomorphization",
-                            function.name.text,
-                            format!("{:?}", function.type_)
+                            "function `{}` has generic type `{:?}` that cannot be lowered without monomorphization",
+                            function.name.text, function.type_
                         ),
                     )
                     .with_label(Label::primary(function.name.span, "generic function type here")),
@@ -157,8 +156,8 @@ impl Lowerer {
                     Diagnostic::new(
                         DiagnosticCode::LoweringError,
                         format!(
-                            "expression has generic type `{}` that cannot be lowered without monomorphization",
-                            format!("{:?}", expression.type_)
+                            "expression has generic type `{:?}` that cannot be lowered without monomorphization",
+                            expression.type_
                         ),
                     )
                     .with_label(Label::primary(expression.span, "generic expression type here")),

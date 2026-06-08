@@ -92,8 +92,10 @@ slot 1 is the heap pointer before allocation.
 
 Internal calls pass scalars as raw WASM values and managed values as pointers.
 Host ABI support is target-specific. For Wasmtime, managed pointers are borrowed
-for the duration of the call unless an adapter documents transfer of ownership.
-No object is freed by the guest today, so borrowed pointers remain stable.
+by the host; ownership stays with the guest runtime unless an adapter documents
+transfer. A borrowed pointer may be read after the exporting call returns and
+remains stable until the Wasm instance is reset or a future explicit arena reset
+runs. Hosts must not retain pointers across those reset boundaries.
 
 ## Tests
 

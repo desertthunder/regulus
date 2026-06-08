@@ -2725,6 +2725,78 @@ pub fn same() { "hi" == "hi" }
     }
 
     #[test]
+    fn runtime_allocation_failure_writes_structured_panic_payload() {
+        let instance = runtime_helper_instance_with_memory(
+            r#"
+  (data (i32.const 2048) "ab")
+  (func $too_large (export "too_large") (result i32)
+    i32.const 2048
+    i32.const 70000
+    call $__string_new)
+"#,
+            "  (memory (export \"memory\") 1 1)",
+        );
+        let (engine, mut store, instance) = instance;
+        let _engine = engine;
+        let too_large = instance
+            .get_typed_func::<(), i32>(&mut store, "too_large")
+            .expect("get too_large export");
+        assert!(too_large.call(&mut store, ()).is_err());
+
+        let last_panic = instance
+            .get_typed_func::<(), i32>(&mut store, "__last_panic")
+            .expect("get __last_panic export");
+        let pointer = last_panic.call(&mut store, ()).expect("call __last_panic") as usize;
+        assert_eq!(pointer, 64);
+
+        let memory = instance.get_memory(&mut store, "memory").expect("memory export");
+        let mut bytes = [0; 28];
+        memory.read(&store, pointer, &mut bytes).expect("read allocation panic");
+        assert_eq!(u32::from_le_bytes(bytes[0..4].try_into().unwrap()), 10);
+        assert_eq!(u32::from_le_bytes(bytes[4..8].try_into().unwrap()), 2);
+        assert_eq!(u32::from_le_bytes(bytes[8..12].try_into().unwrap()), 1);
+        assert_eq!(u64::from_le_bytes(bytes[12..20].try_into().unwrap()), 70008);
+        assert_eq!(u64::from_le_bytes(bytes[20..28].try_into().unwrap()), 4096);
+    }
+
+    #[test]
+    fn runtime_host_borrowed_pointer_stays_stable_across_growth() {
+        let instance = runtime_helper_instance(
+            r#"
+  (data (i32.const 2048) "ab")
+  (func $borrow (export "borrow") (result i32)
+    i32.const 2048
+    i32.const 2
+    call $__string_new)
+  (func $grow (export "grow")
+    i32.const 2048
+    i32.const 70000
+    call $__string_new
+    drop)
+"#,
+        );
+        let (engine, mut store, instance) = instance;
+        let _engine = engine;
+        let borrow = instance
+            .get_typed_func::<(), i32>(&mut store, "borrow")
+            .expect("get borrow export");
+        let pointer = borrow.call(&mut store, ()).expect("call borrow") as usize;
+        assert_eq!(pointer, runtime::RuntimeConfig::DEFAULT.heap_start as usize);
+
+        let grow = instance
+            .get_typed_func::<(), ()>(&mut store, "grow")
+            .expect("get grow export");
+        grow.call(&mut store, ()).expect("call grow");
+
+        let memory = instance.get_memory(&mut store, "memory").expect("memory export");
+        let mut bytes = [0; 16];
+        memory.read(&store, pointer, &mut bytes).expect("read borrowed pointer");
+        assert_eq!(u32::from_le_bytes(bytes[0..4].try_into().unwrap()), 1);
+        assert_eq!(u32::from_le_bytes(bytes[4..8].try_into().unwrap()), 2);
+        assert_eq!(&bytes[8..10], b"ab");
+    }
+
+    #[test]
     fn runtime_helpers_compare_nested_managed_values_structurally() {
         let instance = runtime_helper_instance(
             r#"
@@ -2956,10 +3028,13 @@ pub fn same() { "hi" == "hi" }
     }
 
     fn runtime_helper_instance(extra_wat: &str) -> (Engine, Store<()>, Instance) {
-        let wat = format!(
-            "(module\n{}{extra_wat})\n",
-            runtime_prelude(runtime::RuntimeConfig::DEFAULT)
-        );
+        runtime_helper_instance_with_memory(extra_wat, "  (memory (export \"memory\") 1)")
+    }
+
+    fn runtime_helper_instance_with_memory(extra_wat: &str, memory_wat: &str) -> (Engine, Store<()>, Instance) {
+        let prelude =
+            runtime_prelude(runtime::RuntimeConfig::DEFAULT).replace("  (memory (export \"memory\") 1)", memory_wat);
+        let wat = format!("(module\n{prelude}{extra_wat})\n");
         let bytes = wat::parse_str(&wat).expect("parse runtime helper wat");
         let engine = Engine::default();
         let module = Module::new(&engine, bytes).expect("compile helper module");

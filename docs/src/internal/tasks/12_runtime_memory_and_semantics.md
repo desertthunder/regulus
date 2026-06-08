@@ -12,8 +12,8 @@ Complete runtime memory management and allocation failure behavior.
 - [x] Implement checked allocation and heap growth for every allocator path.
 - [x] Define allocation failure as a structured runtime panic payload.
 - [x] Keep managed objects non-moving until instance reset or arena reset.
-- [ ] Document host pointers as borrowed and stable until reset.
-- [ ] Add Wasmtime tests for growth, failed growth, and pointer stability.
+- [x] Document host pointers as borrowed and stable until reset.
+- [x] Add Wasmtime tests for growth, failed growth, and pointer stability.
 
 ## Done when
 
