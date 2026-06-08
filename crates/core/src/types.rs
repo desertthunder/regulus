@@ -1892,6 +1892,14 @@ impl Type {
         parse_type_source(source)
     }
 
+    pub fn custom(name: impl Into<String>, args: Vec<Type>) -> Self {
+        Self::Custom { name: name.into(), args }
+    }
+
+    pub fn generic(name: impl Into<String>) -> Self {
+        Self::Generic(name.into())
+    }
+
     fn substitute_from(&self, actual: &Type) -> Type {
         let substitutions = substitutions_for(self, actual);
         substitute_type(self, &substitutions)

@@ -9,6 +9,7 @@ pub mod project;
 pub mod resolve;
 pub mod runtime;
 pub mod source;
+pub mod stdlib;
 pub mod target;
 pub mod types;
 pub mod wasm;

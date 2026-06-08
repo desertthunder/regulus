@@ -8,9 +8,10 @@ Support useful standard library modules and host calls.
 
 ### Standard library strategy
 
-- [ ] Decide which stdlib modules are compiled from Gleam source, shimmed as
+- [x] Decide which stdlib modules are compiled from Gleam source, shimmed as
       host imports, or implemented as compiler/runtime intrinsics.
-- [ ] Define a small initial stdlib support set for examples and tests.
+- [x] Define a table-driven stdlib registry for module interfaces and lowering
+      strategies.
 - [ ] Load or model dependency package metadata needed for stdlib modules.
 - [ ] Resolve stdlib module interfaces consistently with project module
       interfaces.
@@ -21,6 +22,21 @@ Support useful standard library modules and host calls.
       module interface schemes.
 - [ ] Add diagnostics for unsupported stdlib modules, functions, types, or
       target combinations.
+
+### Group 1: initial useful stdlib
+
+- [ ] Model interfaces for `gleam/io`, `gleam/int`, `gleam/string`,
+      `gleam/list`, `gleam/result`, `gleam/option`, and `gleam/order`.
+- [ ] Implement `gleam/io.println` and `gleam/io.print` as host calls.
+- [ ] Implement `gleam/int.to_string` as an intrinsic or runtime helper.
+- [ ] Implement `gleam/string.append`, `concat`, `length`, and `is_empty`.
+- [ ] Implement `gleam/list.length` and `gleam/list.reverse`.
+- [ ] Support `gleam/result.Result`, `Ok`, and `Error` in interfaces and
+      lowering.
+- [ ] Support `gleam/option.Option`, `Some`, and `None` in interfaces and
+      lowering.
+- [ ] Support `gleam/order.Order`, `Lt`, `Eq`, and `Gt` in interfaces and
+      lowering.
 
 ### Host ABI
 
@@ -36,7 +52,6 @@ Support useful standard library modules and host calls.
 
 ### Intrinsics and host calls
 
-- [ ] Implement selected stdlib functions needed by examples.
 - [ ] Implement or import IO functions for Wasmtime tests and browser examples.
 - [ ] Implement equality, string, bit-array, list, result, option, and debug
       helpers where needed by compiled programs.
@@ -44,6 +59,24 @@ Support useful standard library modules and host calls.
       diagnostics on targets where they are unavailable.
 - [ ] Add Wasmtime tests for host imported functions.
 - [ ] Add fixtures using common Gleam stdlib modules.
+
+### Group 2: remaining stdlib
+
+- [ ] Support `gleam/bit_array`.
+- [ ] Support `gleam/bool`.
+- [ ] Support `gleam/bytes_tree`.
+- [ ] Support `gleam/dict`.
+- [ ] Support `gleam/dynamic`.
+- [ ] Support `gleam/dynamic/decode`.
+- [ ] Support `gleam/float`.
+- [ ] Support `gleam/function`.
+- [ ] Support `gleam/pair`.
+- [ ] Support `gleam/set`.
+- [ ] Support `gleam/string_tree`.
+- [ ] Support `gleam/uri`.
+- [ ] Prefer compiling stdlib Gleam source for Group 2 where possible.
+- [ ] Add target-specific intrinsics or host adapters only when source
+      compilation is not enough.
 
 ## Done when
 
