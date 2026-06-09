@@ -4,7 +4,8 @@ authors = ["Owais Jamil"]
 language = "en"
 
 [output.html]
-default-theme = "coal"
-preferred-dark-theme = "coal"
+theme = "theme"
+default-theme = "day"
+preferred-dark-theme = "night"
 additional-css = ["src/assets/css/custom.css"]
 git-repository-url = "https://github.com/desertthunder/regulus"

@@ -22,50 +22,10 @@
     font-display: swap;
 }
 
-:root,
-.coal,
-.navy,
-.ayu,
-.light,
-.rust {
-    --book-sidebar-bg: #151515;
-    --book-main-bg: #1e1e1e;
-    --book-accent: #ffaff3;
-    --book-text: #fefefc;
-
-    --bg: var(--book-main-bg);
-    --fg: var(--book-text);
-    --sidebar-bg: var(--book-sidebar-bg);
-    --sidebar-fg: var(--book-text);
-    --sidebar-non-existant: rgba(254, 254, 252, 0.45);
-    --sidebar-active: var(--book-accent);
-    --sidebar-spacer: rgba(254, 254, 252, 0.12);
-    --scrollbar: rgba(255, 175, 243, 0.45);
-    --icons: var(--book-text);
-    --icons-hover: var(--book-accent);
-    --links: var(--book-accent);
-    --inline-code-color: var(--book-accent);
-    --theme-popup-bg: var(--book-sidebar-bg);
-    --theme-popup-border: var(--book-accent);
-    --theme-hover: rgba(255, 175, 243, 0.16);
-    --quote-bg: rgba(255, 175, 243, 0.08);
-    --quote-border: var(--book-accent);
-    --table-border-color: rgba(254, 254, 252, 0.18);
-    --table-header-bg: var(--book-sidebar-bg);
-    --table-alternate-bg: rgba(21, 21, 21, 0.35);
-    --searchbar-border-color: rgba(255, 175, 243, 0.4);
-    --searchbar-bg: var(--book-sidebar-bg);
-    --searchbar-fg: var(--book-text);
-    --searchresults-header-fg: var(--book-text);
-    --searchresults-border-color: rgba(254, 254, 252, 0.16);
-    --searchresults-li-bg: var(--book-main-bg);
-    --search-mark-bg: rgba(255, 175, 243, 0.3);
-}
-
 html,
 body {
-    background: var(--book-main-bg);
-    color: var(--book-text);
+    background: var(--bg);
+    color: var(--fg);
     font-family: "Switzer", system-ui, sans-serif;
 }
 
@@ -74,7 +34,7 @@ body,
 #content,
 .page,
 .page-wrapper {
-    background: var(--book-main-bg);
+    background: var(--bg);
 }
 
 .sidebar,
@@ -84,12 +44,12 @@ body,
 #menu-bar,
 .menu-bar,
 .nav-chapters {
-    background: var(--book-sidebar-bg);
-    color: var(--book-text);
+    background: var(--sidebar-bg);
+    color: var(--sidebar-fg);
 }
 
 .content main {
-    color: var(--book-text);
+    color: var(--fg);
     font-family: "Switzer", system-ui, sans-serif;
     font-size: 16px;
 }
@@ -103,7 +63,7 @@ h6,
 .header,
 .chapter li.part-title,
 .menu-title {
-    color: var(--book-text);
+    color: var(--fg);
     font-family: "Outfit", "Switzer", system-ui, sans-serif;
     letter-spacing: -0.01em;
     font-weight: 500;
@@ -116,32 +76,32 @@ a:visited,
 .chapter li a:hover,
 .menu-title,
 .nav-chapters:hover {
-    color: var(--book-accent);
+    color: var(--links);
 }
 
 .icon-button:hover,
 .icon-button:focus,
 #sidebar-toggle:hover,
 #sidebar-toggle:focus {
-    color: var(--book-accent);
-    background: rgba(255, 175, 243, 0.12);
+    color: var(--icons-hover);
+    background: var(--theme-hover);
 }
 
 code,
 pre,
 .hljs {
-    background: var(--book-sidebar-bg);
-    color: var(--book-text);
+    background: var(--sidebar-bg);
+    color: var(--fg);
 }
 
 :not(pre) > code {
-    color: var(--book-accent);
-    background: rgba(21, 21, 21, 0.7);
+    color: var(--inline-code-color);
+    background: var(--theme-hover);
 }
 
 blockquote {
-    background: rgba(255, 175, 243, 0.08);
-    border-color: var(--book-accent);
+    background: var(--quote-bg);
+    border-color: var(--quote-border);
 }
 
 /*
@@ -168,7 +128,7 @@ blockquote {
     width: 16rem;
     margin-right: -18rem;
     margin-bottom: 0.7rem;
-    color: rgba(254, 254, 252, 0.78);
+    color: color-mix(in srgb, var(--fg) 78%, transparent);
     font-size: 12px;
     line-height: 1.35;
 }
@@ -185,7 +145,7 @@ blockquote {
 
 .sidenote::before,
 .sidenote-number::after {
-    color: var(--book-accent);
+    color: var(--links);
     content: counter(sidenote-counter);
     font-feature-settings: "sups";
     font-size: 0.75rem;
@@ -217,13 +177,7 @@ blockquote {
         width: auto;
         margin: 0.7rem 0;
         padding: 0.75rem 1rem;
-        background: rgba(255, 175, 243, 0.08);
-        border-left: 0.18rem solid var(--book-accent);
+        background: var(--quote-bg);
+        border-left: 0.18rem solid var(--quote-border);
     }
-}
-
-#theme-list,
-#mdbook-theme-list,
-#mdbook-theme-toggle {
-    display: none;
 }
