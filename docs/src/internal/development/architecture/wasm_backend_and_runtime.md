@@ -72,8 +72,8 @@ Gleam language. These areas still need design or implementation before every
 accepted source program can execute with full Gleam semantics:
 
 - explicit arena reset points beyond instance reset
-- target-specific browser and WASI adapters
-- standard library and dependency-backed imports
+- broader WASI adapters beyond current unsupported stdlib diagnostics
+- standard library and dependency-backed imports beyond Group 1
 
 ## ABI rules
 
@@ -82,13 +82,15 @@ Internal calls pass scalars as raw WebAssembly values and managed values as
 validated before emission. The backend supports explicit target selection for
 Wasmtime, browser, and WASI-oriented modules.
 
-Host imports must use the target's host module name:
+Host imports must use the target's host module name. Compiler-provided stdlib
+host shims use logical IR modules and are mapped to concrete target imports by
+the backend.
 
-| Target   | Host module              |
-| -------- | ------------------------ |
-| Wasmtime | `env`                    |
-| Browser  | `browser`                |
-| WASI     | `wasi_snapshot_preview1` |
+| Target   | General host module      | `gleam/io` imports                 |
+| -------- | ------------------------ | ---------------------------------- |
+| Wasmtime | `env`                    | `env.print`, `env.println`         |
+| Browser  | `browser`                | `browser.print`, `browser.println` |
+| WASI     | `wasi_snapshot_preview1` | unsupported diagnostic             |
 
 The current raw ABI supports:
 
@@ -102,9 +104,10 @@ The current raw ABI supports:
 
 Managed values can be exported directly for low-level Wasmtime tests. String
 exports with no parameters also get `__data` and `__len` adapter exports so host
-code can read the string payload without duplicating the call shape. Safer
-browser or user-facing APIs should use adapters that read or write memory using
-the documented object layout.
+code can read the string payload without duplicating the call shape. Runtime
+modules also export `__regulus_string_len`, `__regulus_string_data`,
+`__regulus_value_tag`, `__regulus_value_size`, and raw field readers for host
+adapters that need to inspect managed values.
 
 Unsupported target/import/type combinations produce `WasmError` diagnostics
 before WAT assembly.

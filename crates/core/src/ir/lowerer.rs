@@ -1,15 +1,13 @@
 use std::collections::HashMap;
 
-use super::bit_slices::{ast_bit_array_literal, bit_array_literal, bit_string_pattern_segments};
 use super::*;
-use crate::{
-    ast::{self, Declaration as AstDeclaration, Expression as AstExpression, Pattern, Statement},
-    diagnostic::{Diagnostic, DiagnosticCode, Diagnostics, Label},
-    labels::{FunctionLabelMap, call_argument_order, function_label_map, use_callback_placement},
-    resolve::ReferenceTarget,
-    stdlib::{MemberStrategy, StdlibRegistry},
-    types::{ConstructorInfo, TypedModule},
-};
+use crate::ast::{self, Declaration as AstDeclaration, Expression as AstExpression, Pattern, Statement};
+use crate::diagnostic::{Diagnostic, DiagnosticCode, Diagnostics, Label};
+use crate::labels::{FunctionLabelMap, call_argument_order, function_label_map, use_callback_placement};
+use crate::resolve::ReferenceTarget;
+use crate::stdlib::{MemberStrategy, STDLIB_IO_HOST_MODULE, StdlibRegistry};
+use crate::types::{ConstructorInfo, TypedModule};
+use bit_slices::{ast_bit_array_literal, bit_array_literal, bit_string_pattern_segments};
 
 pub(super) fn lower(module: TypedModule) -> Result<Module, Diagnostics> {
     Lowerer::new(module).lower()
@@ -1169,7 +1167,7 @@ impl Lowerer {
                     return_type: *return_type,
                     abi: call_abi(
                         &type_,
-                        CallBoundary::HostImport { module: "env".into(), name: member.name.into() },
+                        CallBoundary::HostImport { module: STDLIB_IO_HOST_MODULE.into(), name: member.name.into() },
                     ),
                     body: Block {
                         instructions: Vec::new(),
@@ -1248,7 +1246,9 @@ fn stdlib_lowered_name(module: &str, member: &str) -> String {
 
 fn stdlib_boundary(strategy: MemberStrategy, member: &str) -> CallBoundary {
     match strategy {
-        MemberStrategy::HostImport => CallBoundary::HostImport { module: "env".into(), name: member.into() },
+        MemberStrategy::HostImport => {
+            CallBoundary::HostImport { module: STDLIB_IO_HOST_MODULE.into(), name: member.into() }
+        }
         _ => CallBoundary::Internal,
     }
 }

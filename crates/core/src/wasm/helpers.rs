@@ -1323,6 +1323,37 @@ pub const DEBUG_HELPERS: &str = r#"
   )
 "#;
 
+pub const HOST_ADAPTER_HELPERS: &str = r#"
+  (func $__regulus_string_len (export "__regulus_string_len") (param $ptr i32) (result i32)
+    local.get $ptr
+    call $__string_len
+  )
+  (func $__regulus_string_data (export "__regulus_string_data") (param $ptr i32) (result i32)
+    local.get $ptr
+    call $__string_data
+  )
+  (func $__regulus_value_tag (export "__regulus_value_tag") (param $ptr i32) (result i32)
+    local.get $ptr
+    call $__debug_tag
+  )
+  (func $__regulus_value_size (export "__regulus_value_size") (param $ptr i32) (result i32)
+    local.get $ptr
+    call $__debug_size
+  )
+  (func $__regulus_value_field_i64 (export "__regulus_value_field_i64")
+    (param $ptr i32) (param $index i32) (result i64)
+    local.get $ptr
+    local.get $index
+    call $__debug_payload_i64
+  )
+  (func $__regulus_value_field_i32 (export "__regulus_value_field_i32")
+    (param $ptr i32) (param $index i32) (result i32)
+    local.get $ptr
+    local.get $index
+    call $__debug_payload_i32
+  )
+"#;
+
 pub const MANAGED_VALUE_HELPERS: &str = r#"
   (func $__list_cons (param $head i64) (param $tail i32) (result i32)
     (local $ptr i32)

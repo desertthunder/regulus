@@ -4,7 +4,9 @@ use std::{collections::HashMap, fmt::Write};
 
 use crate::diagnostic::{Diagnostic, DiagnosticCode, Diagnostics, Label};
 use crate::ir::{self, ExpressionKind, Instruction};
-use crate::{ClosureConstants, ast::LiteralKind, runtime, target::CompileTarget, types::Type};
+use crate::{
+    ClosureConstants, ast::LiteralKind, runtime, stdlib::STDLIB_IO_HOST_MODULE, target::CompileTarget, types::Type,
+};
 
 /// WebAssembly output from the backend.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,6 +46,14 @@ impl From<CompileTarget> for WasmTarget {
 }
 
 impl WasmTarget {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Wasmtime => "wasmtime",
+            Self::Browser => "browser",
+            Self::Wasi => "wasi",
+        }
+    }
+
     fn host_module(self) -> &'static str {
         match self {
             Self::Wasmtime => "env",
@@ -178,6 +188,12 @@ struct Emitter {
     options: EmitOptions,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ConcreteHostImport {
+    module: String,
+    name: String,
+}
+
 impl Emitter {
     fn constant(&mut self, constant: &ir::Constant) {
         if let ir::ConstantValue::Literal(ir::Literal { kind: LiteralKind::String, source }) = &constant.value {
@@ -185,11 +201,39 @@ impl Emitter {
         }
     }
 
+    fn concrete_import(&mut self, function: &ir::Function) -> Option<ConcreteHostImport> {
+        match &function.abi.boundary {
+            ir::CallBoundary::HostImport { module, name } if module == STDLIB_IO_HOST_MODULE => {
+                self.stdlib_io_import(name, function.span)
+            }
+            ir::CallBoundary::HostImport { module, name } if module == self.options.target.host_module() => {
+                Some(ConcreteHostImport { module: module.clone(), name: name.clone() })
+            }
+            ir::CallBoundary::HostImport { module, .. } => {
+                self.unsupported_target_import(module, function.span, &function.name);
+                None
+            }
+            ir::CallBoundary::ModuleImport { module } => {
+                Some(ConcreteHostImport { module: module.clone(), name: function.name.clone() })
+            }
+            ir::CallBoundary::Internal | ir::CallBoundary::ModuleExport => None,
+        }
+    }
+
+    fn stdlib_io_import(&mut self, name: &str, span: crate::source::Span) -> Option<ConcreteHostImport> {
+        match self.options.target {
+            WasmTarget::Wasmtime => Some(ConcreteHostImport { module: "env".into(), name: name.into() }),
+            WasmTarget::Browser => Some(ConcreteHostImport { module: "browser".into(), name: name.into() }),
+            WasmTarget::Wasi => {
+                self.unsupported_stdlib_host_call("gleam/io", name, span);
+                None
+            }
+        }
+    }
+
     fn import_function(&mut self, function: &ir::Function) {
-        let import = match &function.abi.boundary {
-            ir::CallBoundary::HostImport { module, name } => (module.as_str(), name.as_str()),
-            ir::CallBoundary::ModuleImport { module } => (module.as_str(), function.name.as_str()),
-            ir::CallBoundary::Internal | ir::CallBoundary::ModuleExport => return,
+        let Some(import) = self.concrete_import(function) else {
+            return;
         };
         if !self.validate_host_abi(function) {
             return;
@@ -198,7 +242,7 @@ impl Emitter {
         write!(
             self.imports,
             "  (import \"{}\" \"{}\" (func ${}",
-            import.0, import.1, function.name
+            import.module, import.name, function.name
         )
         .expect("write WAT");
         for param in &function.params {
@@ -1311,15 +1355,8 @@ impl Emitter {
     }
 
     fn validate_host_abi(&mut self, function: &ir::Function) -> bool {
-        match &function.abi.boundary {
-            ir::CallBoundary::Internal => return true,
-            ir::CallBoundary::HostImport { module, .. } if module != self.options.target.host_module() => {
-                self.unsupported_target_import(module, function.span, &function.name);
-                return false;
-            }
-            ir::CallBoundary::ModuleExport
-            | ir::CallBoundary::ModuleImport { .. }
-            | ir::CallBoundary::HostImport { .. } => {}
+        if matches!(function.abi.boundary, ir::CallBoundary::Internal) {
+            return true;
         }
 
         let mut supported = true;
@@ -1347,6 +1384,20 @@ impl Emitter {
                 ),
             )
             .with_label(Label::primary(span, "unsupported target import here")),
+        );
+    }
+
+    fn unsupported_stdlib_host_call(&mut self, module: &str, member: &str, span: crate::source::Span) {
+        self.diagnostics.push(
+            Diagnostic::new(
+                DiagnosticCode::WasmError,
+                format!(
+                    "stdlib host call `{module}.{member}` is not supported for target `{}`",
+                    self.options.target.name()
+                ),
+            )
+            .with_label(Label::primary(span, "unsupported host call for this target"))
+            .with_note("supported targets for `gleam/io` host calls are `wasmtime` and `browser`"),
         );
     }
 
@@ -1436,6 +1487,7 @@ impl RuntimePrelude {
         self.lines(&managed_value_helpers);
         self.lines(helpers::EQUALITY_AND_ORDERING_HELPERS);
         self.lines(helpers::DEBUG_HELPERS);
+        self.lines(helpers::HOST_ADAPTER_HELPERS);
     }
 
     fn lines(&mut self, block: &str) {
@@ -1861,6 +1913,14 @@ mod tests {
         emit(&ir).expect("emit wasm")
     }
 
+    fn compile_wasm_target(source: &str, target: CompileTarget) -> Result<WasmModule, Diagnostics> {
+        crate::compile_source_with_options(
+            SourceFile::new(SourceFileId(0), source),
+            crate::CompileOptions { target },
+        )
+        .map(|output| output.wasm)
+    }
+
     fn int_expr(source: &str, span: Span) -> ir::Expression {
         ir::Expression {
             type_: Type::Int,
@@ -1953,6 +2013,8 @@ mod tests {
 
         assert!(wasm.wat.contains("(memory (export \"memory\") 1)"));
         assert!(wasm.wat.contains("(func $__alloc"));
+        assert!(wasm.wat.contains("(export \"__regulus_string_len\")"));
+        assert!(wasm.wat.contains("(export \"__regulus_value_tag\")"));
         assert!(wasm.wat.contains("(func $greeting (export \"greeting\") (result i32)"));
         assert!(wasm.wat.contains(&format!(
             "i32.const {}",
@@ -2670,6 +2732,43 @@ pub fn main() {
             .get_typed_func::<(), ()>(&mut store, "main")
             .expect("get main export");
         main.call(&mut store, ()).expect("call main");
+    }
+
+    #[test]
+    fn selects_browser_stdlib_io_host_imports() {
+        let wasm = compile_wasm_target(
+            r#"import gleam/io
+
+pub fn main() { io.println("hi") }
+"#,
+            CompileTarget::Browser,
+        )
+        .expect("compile browser io");
+
+        assert!(
+            wasm.wat
+                .contains("(import \"browser\" \"println\" (func $__stdlib_gleam_io_println"),
+            "{}",
+            wasm.wat
+        );
+    }
+
+    #[test]
+    fn reports_unsupported_wasi_stdlib_io_host_imports() {
+        let errors = compile_wasm_target(
+            r#"import gleam/io
+
+pub fn main() { io.println("hi") }
+"#,
+            CompileTarget::Wasi,
+        )
+        .expect_err("wasi io should be unsupported");
+
+        assert!(errors.iter().any(|diagnostic| {
+            diagnostic
+                .message
+                .contains("stdlib host call `gleam/io.println` is not supported for target `wasi`")
+        }));
     }
 
     #[test]

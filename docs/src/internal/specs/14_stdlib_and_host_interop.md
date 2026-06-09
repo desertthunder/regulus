@@ -37,15 +37,15 @@ The group contains:
 
 Initial implementations should cover:
 
-| Module | Initial support |
-| --- | --- |
-| `gleam/io` | `println`, `print`, maybe `debug` |
-| `gleam/int` | `to_string`, later `parse` |
-| `gleam/string` | `append`, `concat`, `length`, `is_empty` |
-| `gleam/list` | `length`, `reverse`, later `map` and `fold` |
-| `gleam/result` | `Result`, `Ok`, `Error`, maybe `map` |
-| `gleam/option` | `Option`, `Some`, `None`, maybe `map` |
-| `gleam/order` | `Order`, `Lt`, `Eq`, `Gt` |
+| Module         | Initial support                             |
+| -------------- | ------------------------------------------- |
+| `gleam/io`     | `println`, `print`, maybe `debug`           |
+| `gleam/int`    | `to_string`, later `parse`                  |
+| `gleam/string` | `append`, `concat`, `length`, `is_empty`    |
+| `gleam/list`   | `length`, `reverse`, later `map` and `fold` |
+| `gleam/result` | `Result`, `Ok`, `Error`, maybe `map`        |
+| `gleam/option` | `Option`, `Some`, `None`, maybe `map`       |
+| `gleam/order`  | `Order`, `Lt`, `Eq`, `Gt`                   |
 
 Each implemented member should declare one lowering strategy: intrinsic, host
 import, compiled Gleam source, or adapter around a host import.
@@ -87,9 +87,48 @@ The host ABI should define how values cross the WASM boundary:
 - memory ownership
 - arbitrary managed-value import/export wrappers
 
-Browser and WASI adapters should be concrete, not just target names. Each target
-should document required imports, exports, memory access rules, and unsupported
-combinations.
+Concrete host ABI for Group 1 uses raw WASM values plus runtime adapters:
+
+| Gleam shape    | WASM shape | Host rule                          |
+| -------------- | ---------- | ---------------------------------- |
+| `Int`          | `i64`      | signed 64-bit integer              |
+| `Float`        | `f64`      | IEEE-754 double                    |
+| `Bool`         | `i32`      | `0` false, non-zero true           |
+| `Nil`          | no result  | unit value                         |
+| managed values | `i32`      | borrowed pointer into guest memory |
+
+Managed values include strings, bit arrays, lists, tuples, records, custom
+values, functions, errors, and panics. The guest runtime owns these values.
+Hosts may read them during and after a call while the instance is alive, but
+must not mutate object memory or retain pointers across instance reset or any
+future arena reset.
+
+The runtime exports adapter helpers for low-level hosts:
+
+| Export                                  | Purpose                              |
+| --------------------------------------- | ------------------------------------ |
+| `memory`                                | guest linear memory                  |
+| `__regulus_string_len(ptr)`             | byte length for a string pointer     |
+| `__regulus_string_data(ptr)`            | data address for a string pointer    |
+| `__regulus_value_tag(ptr)`              | runtime object tag, `0` for nil/null |
+| `__regulus_value_size(ptr)`             | runtime object size/arity/bit length |
+| `__regulus_value_field_i64(ptr, index)` | raw managed field slot               |
+| `__regulus_value_field_i32(ptr, index)` | raw field slot narrowed to `i32`     |
+
+Compiler code receives host-provided managed values as borrowed `i32` pointers.
+The host must only pass pointers to values allocated in the same guest memory
+or adapter functions that explicitly document another ownership rule.
+
+Current stdlib host imports are:
+
+| Gleam member       | Wasmtime import    | Browser import         | WASI        |
+| ------------------ | ------------------ | ---------------------- | ----------- |
+| `gleam/io.print`   | `env.print(ptr)`   | `browser.print(ptr)`   | unsupported |
+| `gleam/io.println` | `env.println(ptr)` | `browser.println(ptr)` | unsupported |
+
+WASI `gleam/io` is deliberately unsupported until a concrete `fd_write`
+adapter is added. Unsupported host calls, target combinations, and ABI shapes
+produce source-spanned diagnostics before WAT assembly.
 
 ## Diagnostics
 

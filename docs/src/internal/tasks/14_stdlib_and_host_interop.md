@@ -40,14 +40,14 @@ Support useful standard library modules and host calls.
 
 ### Host ABI
 
-- [ ] Define concrete host imports and adapters for Wasmtime, browser, and WASI
+- [x] Define concrete host imports and adapters for Wasmtime, browser, and WASI
       targets where supported.
-- [ ] Define ABI rules for scalar values, strings, bit arrays, lists, tuples,
+- [x] Define ABI rules for scalar values, strings, bit arrays, lists, tuples,
       records, custom types, functions, errors, and panics.
-- [ ] Define ownership rules for managed values crossing the host boundary.
-- [ ] Define how host code reads compiler memory and how compiler code receives
+- [x] Define ownership rules for managed values crossing the host boundary.
+- [x] Define how host code reads compiler memory and how compiler code receives
       host-provided managed values.
-- [ ] Add rich managed-value wrappers or adapter functions for ABI shapes that
+- [x] Add rich managed-value wrappers or adapter functions for ABI shapes that
       do not map directly to raw WASM parameters and results.
 
 ### Intrinsics and host calls

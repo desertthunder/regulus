@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
-use crate::{
-    source::{SourceFileId, Span},
-    types::{ConstructorInfo, FieldInfo, ModuleInterface, Type, TypeDeclaration},
-};
+use crate::source::{SourceFileId, Span};
+use crate::types::{ConstructorInfo, FieldInfo, ModuleInterface, Type, TypeDeclaration};
+
+pub const STDLIB_IO_HOST_MODULE: &str = "__regulus_stdlib_io";
 
 const STDLIB_SPAN: Span = Span { file_id: SourceFileId(u32::MAX), start: 0, end: 0 };
 
