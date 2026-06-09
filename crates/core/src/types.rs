@@ -22,6 +22,7 @@ use crate::{
     project::Project,
     resolve::{self, ResolvedModule},
     source::Span,
+    stdlib::StdlibRegistry,
 };
 
 /// A type known to the compiler.
@@ -152,15 +153,27 @@ pub fn check_project(project: &Project) -> Result<TypedProject, Diagnostics> {
     let mut interfaces = HashMap::new();
     let mut diagnostics = Vec::new();
 
+    let stdlib_interfaces = StdlibRegistry::new()
+        .modules()
+        .map(|module| (module.name.to_string(), module.interface.clone()))
+        .collect::<HashMap<_, _>>();
+    interfaces.extend(stdlib_interfaces.clone());
+
     let external_constructors = resolved
         .modules
         .iter()
         .flat_map(|module| constructors_from_ast(&module.ast))
+        .chain(stdlib_interfaces.values().flat_map(interface_constructors))
+        .collect::<HashMap<_, _>>();
+    let stdlib_values = stdlib_interfaces
+        .iter()
+        .flat_map(|(module, interface)| qualified_values_from_interface(module, interface))
         .collect::<HashMap<_, _>>();
     let mut external_values = resolved
         .modules
         .iter()
         .flat_map(|module| values_from_ast(&module.ast))
+        .chain(stdlib_values)
         .collect::<HashMap<_, _>>();
     let mut external_function_labels = resolved
         .modules
@@ -251,6 +264,7 @@ impl TypeChecker {
 
     fn check(mut self) -> Result<TypedModule, Diagnostics> {
         self.collect_type_declarations();
+        self.collect_imported_stdlib_interfaces();
         self.collect_annotated_function_types();
         self.collect_external_function_types();
         self.collect_constant_types();
@@ -311,6 +325,51 @@ impl TypeChecker {
                     );
                 }
                 _ => {}
+            }
+        }
+    }
+
+    fn collect_imported_stdlib_interfaces(&mut self) {
+        let registry = StdlibRegistry::new();
+        for import in &self.module.ast.imports {
+            let Some(interface) = registry.interface(&import.module.text) else {
+                continue;
+            };
+            self.interface.types.extend(interface.types.clone());
+            self.interface.constructors.extend(interface.constructors.clone());
+            self.constructors.extend(interface.constructors.clone());
+
+            let module_name = import
+                .alias
+                .as_ref()
+                .map(|alias| alias.text.clone())
+                .unwrap_or_else(|| {
+                    import
+                        .module
+                        .text
+                        .rsplit('/')
+                        .next()
+                        .unwrap_or(&import.module.text)
+                        .to_string()
+                });
+            for (name, type_) in &interface.functions {
+                self.external_values
+                    .insert(format!("{module_name}.{name}"), type_.clone());
+            }
+            for imported in &import.unqualified {
+                let local_name = imported.alias.as_ref().unwrap_or(&imported.name).text.clone();
+                match imported.kind {
+                    ast::UnqualifiedImportKind::Value => {
+                        if let Some(type_) = interface.functions.get(&imported.name.text) {
+                            self.external_values.insert(local_name, type_.clone());
+                        }
+                    }
+                    ast::UnqualifiedImportKind::TypeOrConstructor => {
+                        if let Some(constructor) = interface.constructors.get(&imported.name.text) {
+                            self.constructors.insert(local_name, constructor.clone());
+                        }
+                    }
+                }
             }
         }
     }
@@ -872,7 +931,7 @@ impl TypeChecker {
             }
         }
 
-        Some(*return_type)
+        Some(self.resolve_inference_type(&return_type))
     }
 
     fn check_field_access(&mut self, field_access: &ast::FieldAccess) -> Option<Type> {
@@ -2211,6 +2270,28 @@ fn module_name(module: &ast::Module) -> String {
         .unwrap_or_else(|| "module".into())
 }
 
+fn interface_constructors(interface: &ModuleInterface) -> Vec<(String, ConstructorInfo)> {
+    interface
+        .constructors
+        .iter()
+        .map(|(name, constructor)| (name.clone(), constructor.clone()))
+        .collect()
+}
+
+fn qualified_values_from_interface(module: &str, interface: &ModuleInterface) -> Vec<(String, Type)> {
+    let short = module.rsplit('/').next().unwrap_or(module);
+    interface
+        .functions
+        .iter()
+        .flat_map(|(name, type_)| {
+            [
+                (format!("{module}.{name}"), type_.clone()),
+                (format!("{short}.{name}"), type_.clone()),
+            ]
+        })
+        .collect()
+}
+
 fn constructors_from_ast(module: &ast::Module) -> Vec<(String, ConstructorInfo)> {
     module
         .declarations
@@ -2303,6 +2384,27 @@ mod tests {
         let typed = check_source("fn main() { let x: Int = 1 x }").expect("type check source");
 
         assert!(typed.expressions.iter().any(|expression| expression.type_ == Type::Int));
+    }
+
+    #[test]
+    fn checks_initial_stdlib_interfaces() {
+        let typed = check_source(
+            r#"import gleam/result.{Ok, Error}
+import gleam/option.{Some, None}
+import gleam/order.{Lt, Eq, Gt}
+
+fn ok() -> Result(Int, String) { Ok(1) }
+fn err() -> Result(Int, String) { Error("no") }
+fn some() -> Option(Int) { Some(1) }
+fn none() -> Option(Int) { None }
+fn order(x: Int) -> Order { case x { 0 -> Eq 1 -> Gt _ -> Lt } }
+"#,
+        )
+        .expect("type check stdlib interfaces");
+
+        assert!(typed.interface.types.contains_key("Result"));
+        assert!(typed.interface.types.contains_key("Option"));
+        assert!(typed.interface.types.contains_key("Order"));
     }
 
     #[test]

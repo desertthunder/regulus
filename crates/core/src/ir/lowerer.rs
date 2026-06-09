@@ -7,6 +7,7 @@ use crate::{
     diagnostic::{Diagnostic, DiagnosticCode, Diagnostics, Label},
     labels::{FunctionLabelMap, call_argument_order, function_label_map, use_callback_placement},
     resolve::ReferenceTarget,
+    stdlib::{MemberStrategy, StdlibRegistry},
     types::{ConstructorInfo, TypedModule},
 };
 
@@ -120,7 +121,7 @@ impl Lowerer {
             }
         }
 
-        let mut functions = Vec::new();
+        let mut functions = self.lower_stdlib_host_imports(&ast);
         for function in ast.functions {
             if let Some(function) = self.lower_function(&function) {
                 functions.push(function);
@@ -888,6 +889,42 @@ impl Lowerer {
     }
 
     fn lower_call(&mut self, context: &mut FunctionContext, call: &ast::Call) -> Option<Expression> {
+        if let Some(stdlib_call) = stdlib_call(&self.module.resolved.ast, &call.function) {
+            if !matches!(
+                stdlib_call.strategy,
+                MemberStrategy::Intrinsic | MemberStrategy::HostImport
+            ) {
+                self.diagnostics.push(
+                    Diagnostic::new(
+                        DiagnosticCode::LoweringError,
+                        format!(
+                            "stdlib member `{}` from `{}` cannot be lowered for this target yet",
+                            stdlib_call.member, stdlib_call.module
+                        ),
+                    )
+                    .with_label(Label::primary(call.span, "unsupported stdlib call")),
+                );
+                return None;
+            }
+            let function_type = stdlib_call.type_.clone();
+            let Type::Function { return_type, .. } = function_type.clone() else {
+                return None;
+            };
+            let type_ = self.typed_expression_type(call.span).unwrap_or(*return_type);
+            return Some(Expression {
+                type_,
+                span: call.span,
+                kind: ExpressionKind::DirectCall(DirectCall {
+                    function: stdlib_lowered_name(&stdlib_call.module, &stdlib_call.member),
+                    arguments: self.lower_ordered_call_arguments(context, call)?,
+                    abi: call_abi(
+                        &function_type,
+                        stdlib_boundary(stdlib_call.strategy, &stdlib_call.member),
+                    ),
+                }),
+            });
+        }
+
         if let AstExpression::Variable(function_name) = call.function.as_ref()
             && let Some(function_type) = self.function_types.get(&function_name.text).cloned()
         {
@@ -1097,6 +1134,55 @@ impl Lowerer {
         }
     }
 
+    fn lower_stdlib_host_imports(&self, ast: &ast::Module) -> Vec<Function> {
+        let mut imports = Vec::new();
+        for import in &ast.imports {
+            let Some(module) = StdlibRegistry::new().module(&import.module.text).cloned() else {
+                continue;
+            };
+            for member in module.members {
+                if member.strategy != MemberStrategy::HostImport {
+                    continue;
+                }
+                let Some(type_) = module.interface.functions.get(member.name).cloned() else {
+                    continue;
+                };
+                let Type::Function { params, return_type } = type_.clone() else {
+                    continue;
+                };
+                let locals = params
+                    .iter()
+                    .enumerate()
+                    .map(|(index, type_)| Local {
+                        id: LocalId(index as u32),
+                        name: format!("arg{index}"),
+                        type_: type_.clone(),
+                        span: import.span,
+                    })
+                    .collect::<Vec<_>>();
+                imports.push(Function {
+                    name: stdlib_lowered_name(module.name, member.name),
+                    public: false,
+                    closure_captures: Vec::new(),
+                    params: locals.clone(),
+                    locals,
+                    return_type: *return_type,
+                    abi: call_abi(
+                        &type_,
+                        CallBoundary::HostImport { module: "env".into(), name: member.name.into() },
+                    ),
+                    body: Block {
+                        instructions: Vec::new(),
+                        result: Box::new(self.nil_expression(import.span)),
+                        span: import.span,
+                    },
+                    span: import.span,
+                });
+            }
+        }
+        imports
+    }
+
     fn lower_constant(&self, id: ConstantId, constant: &ast::Constant) -> Constant {
         Constant {
             id,
@@ -1114,6 +1200,56 @@ impl Lowerer {
             }
             _ => ConstantValue::Raw(format!("{expression:?}")),
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct StdlibCall {
+    module: String,
+    member: String,
+    strategy: MemberStrategy,
+    type_: Type,
+}
+
+fn stdlib_call(module: &ast::Module, function: &AstExpression) -> Option<StdlibCall> {
+    let registry = StdlibRegistry::new();
+    let (module_name, member_name) = match function {
+        AstExpression::FieldAccess(access) => {
+            let AstExpression::Variable(module_alias) = access.record.as_ref() else {
+                return None;
+            };
+            let import = module.imports.iter().find(|import| {
+                let local = import
+                    .alias
+                    .as_ref()
+                    .map(|alias| alias.text.as_str())
+                    .unwrap_or_else(|| import.module.text.rsplit('/').next().unwrap_or(&import.module.text));
+                local == module_alias.text
+            })?;
+            (import.module.text.clone(), access.field.text.clone())
+        }
+        AstExpression::Variable(name) => module.imports.iter().find_map(|import| {
+            import.unqualified.iter().find_map(|unqualified| {
+                let local = unqualified.alias.as_ref().unwrap_or(&unqualified.name).text.as_str();
+                (local == name.text).then(|| (import.module.text.clone(), unqualified.name.text.clone()))
+            })
+        })?,
+        _ => return None,
+    };
+    let module = registry.module(&module_name)?;
+    let strategy = registry.member_strategy(&module_name, &member_name)?;
+    let type_ = module.interface.functions.get(&member_name)?.clone();
+    Some(StdlibCall { module: module_name, member: member_name, strategy, type_ })
+}
+
+fn stdlib_lowered_name(module: &str, member: &str) -> String {
+    format!("__stdlib_{}_{}", module.replace('/', "_"), member)
+}
+
+fn stdlib_boundary(strategy: MemberStrategy, member: &str) -> CallBoundary {
+    match strategy {
+        MemberStrategy::HostImport => CallBoundary::HostImport { module: "env".into(), name: member.into() },
+        _ => CallBoundary::Internal,
     }
 }
 

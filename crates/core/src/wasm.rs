@@ -134,11 +134,11 @@ pub fn emit_wat_with_options(module: &ir::Module, options: EmitOptions) -> Resul
     }
 
     let mut wat = String::from("(module\n");
+    wat.push_str(&emitter.imports);
     if emitter.uses_runtime {
         wat.push_str(&runtime_prelude(emitter.config));
     }
 
-    wat.push_str(&emitter.imports);
     wat.push_str(&emitter.functions);
 
     for object in emitter.data {
@@ -423,10 +423,42 @@ impl Emitter {
             }
             "__op_and" => self.short_circuit_bool(call, false),
             "__op_or" => self.short_circuit_bool(call, true),
-            "__op_string_concat" => {
+            "__op_string_concat" | "__stdlib_gleam_string_append" => {
                 self.expression(&call.arguments[0].value);
                 self.expression(&call.arguments[1].value);
                 writeln!(self.functions, "    call $__string_concat").expect("write WAT");
+                self.uses_runtime = true;
+            }
+            "__stdlib_gleam_string_concat" => {
+                self.expression(&call.arguments[0].value);
+                writeln!(self.functions, "    call $__string_concat_list").expect("write WAT");
+                self.uses_runtime = true;
+            }
+            "__stdlib_gleam_string_length" => {
+                self.expression(&call.arguments[0].value);
+                writeln!(self.functions, "    call $__string_len").expect("write WAT");
+                writeln!(self.functions, "    i64.extend_i32_u").expect("write WAT");
+                self.uses_runtime = true;
+            }
+            "__stdlib_gleam_string_is_empty" => {
+                self.expression(&call.arguments[0].value);
+                writeln!(self.functions, "    call $__string_len").expect("write WAT");
+                writeln!(self.functions, "    i32.eqz").expect("write WAT");
+                self.uses_runtime = true;
+            }
+            "__stdlib_gleam_int_to_string" => {
+                self.expression(&call.arguments[0].value);
+                writeln!(self.functions, "    call $__int_to_string").expect("write WAT");
+                self.uses_runtime = true;
+            }
+            "__stdlib_gleam_list_length" => {
+                self.expression(&call.arguments[0].value);
+                writeln!(self.functions, "    call $__list_length").expect("write WAT");
+                self.uses_runtime = true;
+            }
+            "__stdlib_gleam_list_reverse" => {
+                self.expression(&call.arguments[0].value);
+                writeln!(self.functions, "    call $__list_reverse").expect("write WAT");
                 self.uses_runtime = true;
             }
             _ => {
@@ -2612,6 +2644,92 @@ pub fn choose(left: Bool, right: Bool) -> Bool { left || right }
             .get_typed_func::<(i32, i32), i32>(&mut store, "choose")
             .expect("get choose export");
         assert_eq!(choose.call(&mut store, (0, 1)).expect("call choose"), 1);
+    }
+
+    #[test]
+    fn imports_initial_stdlib_io_host_calls() {
+        let wasm = compile_wasm(
+            r#"import gleam/io
+
+pub fn main() {
+  io.print("hi")
+  io.println("!")
+}
+"#,
+        );
+        let engine = Engine::default();
+        let module = Module::new(&engine, &wasm.bytes).expect("compile wasm module");
+        let mut linker = Linker::new(&engine);
+        linker.func_wrap("env", "print", |_ptr: i32| {}).expect("define print");
+        linker
+            .func_wrap("env", "println", |_ptr: i32| {})
+            .expect("define println");
+        let mut store = Store::new(&engine, ());
+        let instance = linker.instantiate(&mut store, &module).expect("instantiate module");
+        let main = instance
+            .get_typed_func::<(), ()>(&mut store, "main")
+            .expect("get main export");
+        main.call(&mut store, ()).expect("call main");
+    }
+
+    #[test]
+    fn runs_initial_stdlib_intrinsics() {
+        let wasm = compile_wasm(
+            r#"import gleam/int
+import gleam/string
+import gleam/list
+
+pub fn number() { int.to_string(-42) }
+pub fn text() { string.append("a", "b") }
+pub fn text_len() -> Int { string.length(string.concat(["a", "bc"])) }
+pub fn empty() -> Bool { string.is_empty("") }
+pub fn item_count() -> Int { list.length([1, 2, 3]) }
+pub fn reversed_head() -> Int {
+  case list.reverse([1, 2, 3]) {
+    [head, ..] -> head
+    _ -> 0
+  }
+}
+"#,
+        );
+        let engine = Engine::default();
+        let module = Module::new(&engine, &wasm.bytes).expect("compile wasm module");
+        let mut store = Store::new(&engine, ());
+        let instance = Instance::new(&mut store, &module, &[]).expect("instantiate module");
+
+        let memory = instance.get_memory(&mut store, "memory").expect("memory export");
+        let number = instance
+            .get_typed_func::<(), i32>(&mut store, "number")
+            .expect("get number export");
+        let pointer = number.call(&mut store, ()).expect("call number") as usize;
+        let mut bytes = [0; 16];
+        memory.read(&store, pointer, &mut bytes).expect("read number string");
+        assert_eq!(u32::from_le_bytes(bytes[4..8].try_into().unwrap()), 3);
+        assert_eq!(&bytes[8..11], b"-42");
+
+        let text = instance
+            .get_typed_func::<(), i32>(&mut store, "text")
+            .expect("get text export");
+        let pointer = text.call(&mut store, ()).expect("call text") as usize;
+        memory.read(&store, pointer, &mut bytes).expect("read text string");
+        assert_eq!(&bytes[8..10], b"ab");
+
+        let text_len = instance
+            .get_typed_func::<(), i64>(&mut store, "text_len")
+            .expect("get text_len export");
+        assert_eq!(text_len.call(&mut store, ()).expect("call text_len"), 3);
+        let empty = instance
+            .get_typed_func::<(), i32>(&mut store, "empty")
+            .expect("get empty export");
+        assert_eq!(empty.call(&mut store, ()).expect("call empty"), 1);
+        let item_count = instance
+            .get_typed_func::<(), i64>(&mut store, "item_count")
+            .expect("get item_count export");
+        assert_eq!(item_count.call(&mut store, ()).expect("call item_count"), 3);
+        let reversed_head = instance
+            .get_typed_func::<(), i64>(&mut store, "reversed_head")
+            .expect("get reversed_head export");
+        assert_eq!(reversed_head.call(&mut store, ()).expect("call reversed_head"), 3);
     }
 
     #[test]

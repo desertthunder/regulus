@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::ast::{self, Declaration, Expression, Pattern, Statement, UnqualifiedImportKind};
 use crate::diagnostic::{Diagnostic, DiagnosticCode, Diagnostics, Label};
-use crate::{parse, project::Project, source::Span};
+use crate::{parse, project::Project, source::Span, stdlib::StdlibRegistry};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SymbolId(pub u32);
@@ -105,7 +105,7 @@ struct ModuleMember {
 }
 
 pub fn resolve(module: ast::Module) -> Result<ResolvedModule, Diagnostics> {
-    Resolver::new(module).resolve()
+    Resolver::new(module).with_stdlib_interfaces().resolve()
 }
 
 pub fn resolve_project(project: &Project) -> Result<ResolvedProject, Diagnostics> {
@@ -123,10 +123,12 @@ pub fn resolve_project(project: &Project) -> Result<ResolvedProject, Diagnostics
         return Err(diagnostics);
     }
 
-    let interfaces = ast_modules
-        .iter()
-        .map(|(name, module)| (name.clone(), module_interface(module)))
-        .collect::<HashMap<_, _>>();
+    let mut interfaces = stdlib_resolve_interfaces();
+    interfaces.extend(
+        ast_modules
+            .iter()
+            .map(|(name, module)| (name.clone(), module_interface(module))),
+    );
 
     let mut modules = Vec::new();
     for (name, module) in ast_modules {
@@ -168,6 +170,11 @@ impl Resolver {
         Self { module_name: Some(module_name), project_modules, ..Self::new(module) }
     }
 
+    fn with_stdlib_interfaces(mut self) -> Self {
+        self.project_modules.extend(stdlib_resolve_interfaces());
+        self
+    }
+
     fn resolve(mut self) -> Result<ResolvedModule, Diagnostics> {
         let module_scope = self.new_scope(None);
         self.collect_prelude(module_scope);
@@ -190,7 +197,9 @@ impl Resolver {
     }
 
     fn collect_prelude(&mut self, scope: ScopeId) {
-        for name in ["Int", "Float", "String", "BitArray", "Bool", "Nil", "List", "Result"] {
+        for name in [
+            "Int", "Float", "String", "BitArray", "Bool", "Nil", "List", "Result", "Option", "Order",
+        ] {
             let name = ast::Name { span: self.module.span, text: name.into() };
             self.define(scope, &name, Namespace::Type, SymbolKind::Prelude);
         }
@@ -889,6 +898,38 @@ fn type_annotation_names(type_: &ast::TypeAnnotation) -> Vec<ast::Name> {
         .filter(|part| part.chars().next().is_some_and(char::is_uppercase))
         .map(|text| ast::Name { span: type_.span, text: text.to_string() })
         .collect()
+}
+
+fn stdlib_resolve_interfaces() -> HashMap<String, ModuleInterface> {
+    StdlibRegistry::new()
+        .modules()
+        .map(|module| {
+            let mut members = HashMap::new();
+            for name in module.interface.functions.keys() {
+                members.insert(
+                    (Namespace::Value, name.clone()),
+                    ModuleMember { public: true, span: module_span() },
+                );
+            }
+            for name in module.interface.types.keys() {
+                members.insert(
+                    (Namespace::Type, name.clone()),
+                    ModuleMember { public: true, span: module_span() },
+                );
+            }
+            for name in module.interface.constructors.keys() {
+                members.insert(
+                    (Namespace::Constructor, name.clone()),
+                    ModuleMember { public: true, span: module_span() },
+                );
+            }
+            (module.name.to_string(), ModuleInterface { members })
+        })
+        .collect()
+}
+
+fn module_span() -> Span {
+    Span { file_id: crate::source::SourceFileId(u32::MAX), start: 0, end: 0 }
 }
 
 fn module_interface(module: &ast::Module) -> ModuleInterface {

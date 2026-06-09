@@ -12,30 +12,30 @@ Support useful standard library modules and host calls.
       host imports, or implemented as compiler/runtime intrinsics.
 - [x] Define a table-driven stdlib registry for module interfaces and lowering
       strategies.
-- [ ] Load or model dependency package metadata needed for stdlib modules.
-- [ ] Resolve stdlib module interfaces consistently with project module
+- [x] Load or model dependency package metadata needed for stdlib modules.
+- [x] Resolve stdlib module interfaces consistently with project module
       interfaces.
-- [ ] Load external module interfaces from dependency metadata where available.
-- [ ] Type-check selected stdlib functions using the same interface data as user
+- [x] Load external module interfaces from dependency metadata where available.
+- [x] Type-check selected stdlib functions using the same interface data as user
       modules.
-- [ ] Type-check dependency functions, constructors, and types through imported
+- [x] Type-check dependency functions, constructors, and types through imported
       module interface schemes.
-- [ ] Add diagnostics for unsupported stdlib modules, functions, types, or
+- [x] Add diagnostics for unsupported stdlib modules, functions, types, or
       target combinations.
 
 ### Group 1: initial useful stdlib
 
-- [ ] Model interfaces for `gleam/io`, `gleam/int`, `gleam/string`,
+- [x] Model interfaces for `gleam/io`, `gleam/int`, `gleam/string`,
       `gleam/list`, `gleam/result`, `gleam/option`, and `gleam/order`.
-- [ ] Implement `gleam/io.println` and `gleam/io.print` as host calls.
-- [ ] Implement `gleam/int.to_string` as an intrinsic or runtime helper.
-- [ ] Implement `gleam/string.append`, `concat`, `length`, and `is_empty`.
-- [ ] Implement `gleam/list.length` and `gleam/list.reverse`.
-- [ ] Support `gleam/result.Result`, `Ok`, and `Error` in interfaces and
+- [x] Implement `gleam/io.println` and `gleam/io.print` as host calls.
+- [x] Implement `gleam/int.to_string` as an intrinsic or runtime helper.
+- [x] Implement `gleam/string.append`, `concat`, `length`, and `is_empty`.
+- [x] Implement `gleam/list.length` and `gleam/list.reverse`.
+- [x] Support `gleam/result.Result`, `Ok`, and `Error` in interfaces and
       lowering.
-- [ ] Support `gleam/option.Option`, `Some`, and `None` in interfaces and
+- [x] Support `gleam/option.Option`, `Some`, and `None` in interfaces and
       lowering.
-- [ ] Support `gleam/order.Order`, `Lt`, `Eq`, and `Gt` in interfaces and
+- [x] Support `gleam/order.Order`, `Lt`, `Eq`, and `Gt` in interfaces and
       lowering.
 
 ### Host ABI
