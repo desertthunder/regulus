@@ -46,7 +46,11 @@
   - [Project input and module graph](./chapter_9/project_to_modules.md)
   - [Artifacts and execution](./chapter_9/artifacts_execution.md)
 - [WebAssembly In-Depth (TODO)]()
-- [Runtime Memory Management (TODO)]()
+- [Runtime Memory Management](./chapter_10.md)
+  - [The arena allocator](./chapter_10/arena_allocator.md)
+  - [Growth and allocation failure](./chapter_10/growth_and_failure.md)
+  - [Host pointers and reset boundaries](./chapter_10/host_pointers.md)
+  - [Future collectors](./chapter_10/collector_families.md)
 
 <!--
 TODO:
@@ -69,6 +73,7 @@ TODO:
   - [Core IR](internal/development/architecture/core_ir.md)
     - [Runtime representation](internal/development/architecture/runtime_representation.md)
   - [WASM backend and runtime](internal/development/architecture/wasm_backend_and_runtime.md)
+  - [Runtime memory](internal/development/runtime_memory_management.md)
   - [Outputs](internal/development/cli_and_build_outputs.md)
 - [Contributing]()
   - [Tests & Documentation](internal/development/contributor/testing.md)
@@ -91,10 +96,8 @@ TODO:
 # Inflight Work
 
 - [Specs]()
-  - [Runtime memory](internal/specs/12_runtime_memory_and_semantics.md)
   - [Stdlib and host interop](internal/specs/14_stdlib_and_host_interop.md)
   - [CLI and build outputs](internal/specs/15_cli_and_build_outputs.md)
 - [Task Trackers]()
-  - [Runtime memory](internal/tasks/12_runtime_memory_and_semantics.md)
   - [Stdlib and host interop](internal/tasks/14_stdlib_and_host_interop.md)
   - [CLI and build outputs](internal/tasks/15_cli_and_build_outputs.md)
