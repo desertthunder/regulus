@@ -114,7 +114,7 @@ impl StdlibModule {
                     "debug",
                     vec![Type::generic("a")],
                     Type::generic("a"),
-                    MemberStrategy::InterfaceOnly,
+                    MemberStrategy::Intrinsic,
                 ),
             ],
             &[],

@@ -52,27 +52,27 @@ Support useful standard library modules and host calls.
 
 ### Intrinsics and host calls
 
-- [ ] Implement or import IO functions for Wasmtime tests and browser examples.
-- [ ] Implement equality, string, bit-array, list, result, option, and debug
+- [x] Implement or import IO functions for Wasmtime tests and browser examples.
+- [x] Implement equality, string, bit-array, list, result, option, and debug
       helpers where needed by compiled programs.
-- [ ] Ensure host imports and adapters are target-specific and produce
+- [x] Ensure host imports and adapters are target-specific and produce
       diagnostics on targets where they are unavailable.
-- [ ] Add Wasmtime tests for host imported functions.
-- [ ] Add fixtures using common Gleam stdlib modules.
+- [x] Add Wasmtime tests for host imported functions.
+- [x] Add fixtures using common Gleam stdlib modules.
 
 ### Group 2: remaining stdlib
 
-- [ ] Support `gleam/bit_array`.
 - [ ] Support `gleam/bool`.
-- [ ] Support `gleam/bytes_tree`.
 - [ ] Support `gleam/dict`.
-- [ ] Support `gleam/dynamic`.
-- [ ] Support `gleam/dynamic/decode`.
 - [ ] Support `gleam/float`.
 - [ ] Support `gleam/function`.
+- [ ] Support `gleam/bit_array`.
+- [ ] Support `gleam/bytes_tree`.
+- [ ] Support `gleam/string_tree`.
+- [ ] Support `gleam/dynamic`.
+- [ ] Support `gleam/dynamic/decode`.
 - [ ] Support `gleam/pair`.
 - [ ] Support `gleam/set`.
-- [ ] Support `gleam/string_tree`.
 - [ ] Support `gleam/uri`.
 - [ ] Prefer compiling stdlib Gleam source for Group 2 where possible.
 - [ ] Add target-specific intrinsics or host adapters only when source

@@ -1,6 +1,9 @@
 mod helpers;
 
-use std::{collections::HashMap, fmt::Write};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt::Write,
+};
 
 use crate::diagnostic::{Diagnostic, DiagnosticCode, Diagnostics, Label};
 use crate::ir::{self, ExpressionKind, Instruction};
@@ -123,6 +126,7 @@ pub fn emit_wat_with_options(module: &ir::Module, options: EmitOptions) -> Resul
             .map(|function| (function.name.clone(), function.closure_captures.clone()))
             .collect(),
         current: CurrentEmission::default(),
+        debug_imports: HashSet::new(),
         options,
     };
 
@@ -170,6 +174,9 @@ struct CurrentEmission {
     capture_slots: Option<String>,
     record_update_source: Option<String>,
     record_update_slots: Option<String>,
+    debug_i32: Option<String>,
+    debug_i64: Option<String>,
+    debug_f64: Option<String>,
 }
 
 struct Emitter {
@@ -185,6 +192,7 @@ struct Emitter {
     function_signatures: HashMap<String, (Vec<Type>, Type)>,
     closure_captures: HashMap<String, Vec<Type>>,
     current: CurrentEmission,
+    debug_imports: HashSet<DebugImport>,
     options: EmitOptions,
 }
 
@@ -192,6 +200,33 @@ struct Emitter {
 struct ConcreteHostImport {
     module: String,
     name: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum DebugImport {
+    Bool,
+    Value,
+    I64,
+    F64,
+}
+
+impl DebugImport {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Bool => "debug_bool",
+            Self::Value => "debug_value",
+            Self::I64 => "debug_i64",
+            Self::F64 => "debug_f64",
+        }
+    }
+
+    fn wasm_type(self) -> &'static str {
+        match self {
+            Self::Bool | Self::Value => "i32",
+            Self::I64 => "i64",
+            Self::F64 => "f64",
+        }
+    }
 }
 
 impl Emitter {
@@ -312,6 +347,19 @@ impl Emitter {
         if block_contains_record_update(&function.body) {
             writeln!(self.functions, "    (local $__record_update_source i32)").expect("write WAT");
             self.current.record_update_source = Some("__record_update_source".into());
+        }
+        let debug_locals = block_debug_local_types(&function.body);
+        if debug_locals.i32 {
+            writeln!(self.functions, "    (local $__debug_i32 i32)").expect("write WAT");
+            self.current.debug_i32 = Some("__debug_i32".into());
+        }
+        if debug_locals.i64 {
+            writeln!(self.functions, "    (local $__debug_i64 i64)").expect("write WAT");
+            self.current.debug_i64 = Some("__debug_i64".into());
+        }
+        if debug_locals.f64 {
+            writeln!(self.functions, "    (local $__debug_f64 f64)").expect("write WAT");
+            self.current.debug_f64 = Some("__debug_f64".into());
         }
 
         self.block(&function.body);
@@ -505,6 +553,7 @@ impl Emitter {
                 writeln!(self.functions, "    call $__list_reverse").expect("write WAT");
                 self.uses_runtime = true;
             }
+            "__stdlib_gleam_io_debug" => self.stdlib_io_debug(call),
             _ => {
                 for argument in &call.arguments {
                     self.expression(&argument.value);
@@ -512,6 +561,71 @@ impl Emitter {
                 writeln!(self.functions, "    call ${}", call.function).expect("write WAT");
             }
         }
+    }
+
+    fn stdlib_io_debug(&mut self, call: &ir::DirectCall) {
+        let value = &call.arguments[0].value;
+        match value.type_ {
+            Type::Int => self.debug_scalar(value, DebugImport::I64),
+            Type::Float => self.debug_scalar(value, DebugImport::F64),
+            Type::Bool => self.debug_scalar(value, DebugImport::Bool),
+            Type::String
+            | Type::BitArray
+            | Type::Tuple(_)
+            | Type::List(_)
+            | Type::Record { .. }
+            | Type::Custom { .. }
+            | Type::Opaque { .. }
+            | Type::Function { .. } => self.debug_scalar(value, DebugImport::Value),
+            Type::Nil => {}
+            Type::Generic(_) => self.unsupported_type(&value.type_, value.span),
+        }
+    }
+
+    fn debug_scalar(&mut self, value: &ir::Expression, import: DebugImport) {
+        let Some(local) = self.debug_local(import, value.span) else {
+            return;
+        };
+        self.ensure_debug_import(import, value.span);
+        self.expression(value);
+        writeln!(self.functions, "    local.tee ${local}").expect("write WAT");
+        writeln!(self.functions, "    call ${}", import.name()).expect("write WAT");
+        writeln!(self.functions, "    local.get ${local}").expect("write WAT");
+    }
+
+    fn debug_local(&mut self, import: DebugImport, span: crate::source::Span) -> Option<String> {
+        let local = match import {
+            DebugImport::Bool | DebugImport::Value => &self.current.debug_i32,
+            DebugImport::I64 => &self.current.debug_i64,
+            DebugImport::F64 => &self.current.debug_f64,
+        };
+        if let Some(local) = local {
+            return Some(local.clone());
+        }
+        self.diagnostics.push(
+            Diagnostic::new(DiagnosticCode::WasmError, "debug intrinsic needs a temporary local")
+                .with_label(Label::primary(span, "debug value here")),
+        );
+        None
+    }
+
+    fn ensure_debug_import(&mut self, import: DebugImport, span: crate::source::Span) {
+        if self.options.target == WasmTarget::Wasi {
+            self.unsupported_stdlib_host_call("gleam/io", "debug", span);
+            return;
+        }
+        if !self.debug_imports.insert(import) {
+            return;
+        }
+        let module = self.options.target.host_module();
+        writeln!(
+            self.imports,
+            "  (import \"{module}\" \"{}\" (func ${} (param {})))",
+            import.name(),
+            import.name(),
+            import.wasm_type(),
+        )
+        .expect("write WAT");
     }
 
     fn binary_scalar_op(&mut self, call: &ir::DirectCall, instruction: &'static str) {
@@ -1511,6 +1625,127 @@ fn closure_constant_usize(value: ClosureConstants) -> usize {
     u32::from(value) as usize
 }
 
+#[derive(Default)]
+struct DebugLocalTypes {
+    i32: bool,
+    i64: bool,
+    f64: bool,
+}
+
+fn block_debug_local_types(block: &ir::Block) -> DebugLocalTypes {
+    let mut locals = DebugLocalTypes::default();
+    for instruction in &block.instructions {
+        match instruction {
+            Instruction::Evaluate { expression, .. }
+            | Instruction::LocalSet { value: expression, .. }
+            | Instruction::AssertMatch { value: expression, .. } => {
+                expression_debug_local_types(expression, &mut locals)
+            }
+        }
+    }
+    expression_debug_local_types(&block.result, &mut locals);
+    locals
+}
+
+fn expression_debug_local_types(expression: &ir::Expression, locals: &mut DebugLocalTypes) {
+    if let ExpressionKind::DirectCall(call) = &expression.kind
+        && call.function == "__stdlib_gleam_io_debug"
+        && let Some(argument) = call.arguments.first()
+    {
+        match argument.value.type_ {
+            Type::Int => locals.i64 = true,
+            Type::Float => locals.f64 = true,
+            Type::Bool
+            | Type::String
+            | Type::BitArray
+            | Type::Tuple(_)
+            | Type::List(_)
+            | Type::Record { .. }
+            | Type::Custom { .. }
+            | Type::Opaque { .. }
+            | Type::Function { .. } => locals.i32 = true,
+            Type::Nil | Type::Generic(_) => {}
+        }
+    }
+
+    match &expression.kind {
+        ExpressionKind::DirectCall(call) => {
+            for argument in &call.arguments {
+                expression_debug_local_types(&argument.value, locals);
+            }
+        }
+        ExpressionKind::IndirectCall(call) => {
+            expression_debug_local_types(&call.callee, locals);
+            for argument in &call.arguments {
+                expression_debug_local_types(&argument.value, locals);
+            }
+        }
+        ExpressionKind::Branch(branch) => {
+            for subject in &branch.subjects {
+                expression_debug_local_types(subject, locals);
+            }
+            for clause in &branch.clauses {
+                if let Some(guard) = &clause.guard {
+                    expression_debug_local_types(guard, locals);
+                }
+                expression_debug_local_types(&clause.body, locals);
+            }
+        }
+        ExpressionKind::Tuple(items) | ExpressionKind::List(items) => {
+            for item in items {
+                expression_debug_local_types(item, locals);
+            }
+        }
+        ExpressionKind::BitArrayConcat { left, right }
+        | ExpressionKind::Compare { left, right, .. }
+        | ExpressionKind::RuntimeEquality { left, right }
+        | ExpressionKind::ListCons { head: left, tail: right } => {
+            expression_debug_local_types(left, locals);
+            expression_debug_local_types(right, locals);
+        }
+        ExpressionKind::BitStringDeconstruct { bit_array, .. }
+        | ExpressionKind::FieldAccess { record: bit_array, .. }
+        | ExpressionKind::TupleElement { tuple: bit_array, .. }
+        | ExpressionKind::ListDeconstruct { list: bit_array, .. } => expression_debug_local_types(bit_array, locals),
+        ExpressionKind::Record(record) => {
+            for field in &record.fields {
+                expression_debug_local_types(&field.value, locals);
+            }
+        }
+        ExpressionKind::RecordUpdate { record, fields, .. } => {
+            expression_debug_local_types(record, locals);
+            for field in fields {
+                if let Some(value) = &field.value {
+                    expression_debug_local_types(value, locals);
+                }
+            }
+        }
+        ExpressionKind::Memory(operation) => match operation {
+            ir::MemoryOperation::Allocate { bytes } => expression_debug_local_types(bytes, locals),
+            ir::MemoryOperation::Load { address, .. } => expression_debug_local_types(address, locals),
+            ir::MemoryOperation::Store { address, value } => {
+                expression_debug_local_types(address, locals);
+                expression_debug_local_types(value, locals);
+            }
+        },
+        ExpressionKind::Pipeline(pipeline) => {
+            expression_debug_local_types(&pipeline.input, locals);
+            expression_debug_local_types(&pipeline.call, locals);
+        }
+        ExpressionKind::Use(use_) => {
+            expression_debug_local_types(&use_.callback, locals);
+            expression_debug_local_types(&use_.call, locals);
+        }
+        ExpressionKind::Literal(_)
+        | ExpressionKind::LocalGet(_)
+        | ExpressionKind::BitArray(_)
+        | ExpressionKind::Constructor(_)
+        | ExpressionKind::FunctionValue(_)
+        | ExpressionKind::AnonymousFunction(_)
+        | ExpressionKind::Failure(_) => {}
+    }
+}
+
 fn block_contains_indirect_call(block: &ir::Block) -> bool {
     block.instructions.iter().any(|instruction| match instruction {
         Instruction::Evaluate { expression, .. }
@@ -1901,7 +2136,7 @@ mod tests {
     use crate::runtime::ObjectTag;
     use crate::source::{SourceFile, SourceFileId, Span};
     use crate::{ast, ir, parse, resolve, types};
-    use wasmtime::{Engine, Instance, Linker, Module, Store};
+    use wasmtime::{Caller, Engine, Instance, Linker, Module, Store};
 
     fn compile_wasm(source: &str) -> WasmModule {
         let source = SourceFile::new(SourceFileId(0), source);
@@ -2722,16 +2957,43 @@ pub fn main() {
         let engine = Engine::default();
         let module = Module::new(&engine, &wasm.bytes).expect("compile wasm module");
         let mut linker = Linker::new(&engine);
-        linker.func_wrap("env", "print", |_ptr: i32| {}).expect("define print");
         linker
-            .func_wrap("env", "println", |_ptr: i32| {})
+            .func_wrap("env", "print", |mut caller: Caller<'_, String>, ptr: i32| {
+                let text = read_host_string(&mut caller, ptr);
+                caller.data_mut().push_str(&text);
+            })
+            .expect("define print");
+        linker
+            .func_wrap("env", "println", |mut caller: Caller<'_, String>, ptr: i32| {
+                let text = read_host_string(&mut caller, ptr);
+                caller.data_mut().push_str(&text);
+                caller.data_mut().push('\n');
+            })
             .expect("define println");
-        let mut store = Store::new(&engine, ());
+        let mut store = Store::new(&engine, String::new());
         let instance = linker.instantiate(&mut store, &module).expect("instantiate module");
         let main = instance
             .get_typed_func::<(), ()>(&mut store, "main")
             .expect("get main export");
         main.call(&mut store, ()).expect("call main");
+        assert_eq!(store.data(), "hi!\n");
+    }
+
+    fn read_host_string(caller: &mut Caller<'_, String>, ptr: i32) -> String {
+        let memory = caller
+            .get_export("memory")
+            .and_then(|export| export.into_memory())
+            .expect("memory export");
+        let ptr = ptr as usize;
+        let mut header = [0; 8];
+        memory.read(&mut *caller, ptr, &mut header).expect("read string header");
+        assert_eq!(u32::from_le_bytes(header[0..4].try_into().unwrap()), 1);
+        let len = u32::from_le_bytes(header[4..8].try_into().unwrap()) as usize;
+        let mut bytes = vec![0; len];
+        memory
+            .read(&mut *caller, ptr + 8, &mut bytes)
+            .expect("read string data");
+        String::from_utf8(bytes).expect("utf-8 string")
     }
 
     #[test]
@@ -2751,6 +3013,7 @@ pub fn main() { io.println("hi") }
             "{}",
             wasm.wat
         );
+        assert!(!wasm.wat.contains("__stdlib_gleam_io_print "), "{}", wasm.wat);
     }
 
     #[test]
@@ -2775,6 +3038,7 @@ pub fn main() { io.println("hi") }
     fn runs_initial_stdlib_intrinsics() {
         let wasm = compile_wasm(
             r#"import gleam/int
+import gleam/io
 import gleam/string
 import gleam/list
 
@@ -2789,12 +3053,28 @@ pub fn reversed_head() -> Int {
     _ -> 0
   }
 }
+pub fn debugged() -> Int { io.debug(42) }
+pub fn debugged_text() -> String { io.debug("ok") }
 "#,
         );
         let engine = Engine::default();
         let module = Module::new(&engine, &wasm.bytes).expect("compile wasm module");
-        let mut store = Store::new(&engine, ());
-        let instance = Instance::new(&mut store, &module, &[]).expect("instantiate module");
+        let mut linker = Linker::new(&engine);
+        linker
+            .func_wrap("env", "debug_i64", |mut caller: Caller<'_, String>, value: i64| {
+                caller.data_mut().push_str(&value.to_string());
+                caller.data_mut().push('\n');
+            })
+            .expect("define debug_i64");
+        linker
+            .func_wrap("env", "debug_value", |mut caller: Caller<'_, String>, ptr: i32| {
+                let text = read_host_string(&mut caller, ptr);
+                caller.data_mut().push_str(&text);
+                caller.data_mut().push('\n');
+            })
+            .expect("define debug_value");
+        let mut store = Store::new(&engine, String::new());
+        let instance = linker.instantiate(&mut store, &module).expect("instantiate module");
 
         let memory = instance.get_memory(&mut store, "memory").expect("memory export");
         let number = instance
@@ -2829,6 +3109,26 @@ pub fn reversed_head() -> Int {
             .get_typed_func::<(), i64>(&mut store, "reversed_head")
             .expect("get reversed_head export");
         assert_eq!(reversed_head.call(&mut store, ()).expect("call reversed_head"), 3);
+        let debugged = instance
+            .get_typed_func::<(), i64>(&mut store, "debugged")
+            .expect("get debugged export");
+        assert_eq!(debugged.call(&mut store, ()).expect("call debugged"), 42);
+        let debugged_text = instance
+            .get_typed_func::<(), i32>(&mut store, "debugged_text")
+            .expect("get debugged_text export");
+        let pointer = debugged_text.call(&mut store, ()).expect("call debugged_text") as usize;
+        memory
+            .read(&store, pointer, &mut bytes)
+            .expect("read debugged text string");
+        assert_eq!(&bytes[8..10], b"ok");
+        assert_eq!(store.data(), "42\nok\n");
+    }
+
+    #[test]
+    fn compiles_common_stdlib_fixture() {
+        let wasm = compile_wasm(include_str!("../../../fixtures/wasm/common_stdlib.gleam"));
+
+        assert!(!wasm.wat.contains("(import \"env\" \"print\""), "{}", wasm.wat);
     }
 
     #[test]

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use super::*;
 use crate::ast::{self, Declaration as AstDeclaration, Expression as AstExpression, Pattern, Statement};
@@ -795,6 +795,7 @@ impl Lowerer {
                 .map(|argument| self.lower_constructor_pattern_argument(context, argument, subject_type))
                 .collect();
         };
+        let substitutions = constructor_type_substitutions(&info, subject_type);
         let mut ordered = Vec::new();
         for (index, field) in info.fields.iter().enumerate() {
             let argument = arguments
@@ -802,7 +803,8 @@ impl Lowerer {
                 .find(|argument| argument.label.as_ref().is_some_and(|label| label.text == field.name))
                 .or_else(|| arguments.get(index));
             let Some(argument) = argument else { continue };
-            ordered.push(self.lower_constructor_pattern_argument(context, argument, &field.type_)?);
+            let field_type = substitute_type_generics(&field.type_, &substitutions);
+            ordered.push(self.lower_constructor_pattern_argument(context, argument, &field_type)?);
         }
         Some(ordered)
     }
@@ -1133,13 +1135,16 @@ impl Lowerer {
     }
 
     fn lower_stdlib_host_imports(&self, ast: &ast::Module) -> Vec<Function> {
+        let used_host_calls = used_stdlib_host_calls(ast);
         let mut imports = Vec::new();
         for import in &ast.imports {
             let Some(module) = StdlibRegistry::new().module(&import.module.text).cloned() else {
                 continue;
             };
             for member in module.members {
-                if member.strategy != MemberStrategy::HostImport {
+                if member.strategy != MemberStrategy::HostImport
+                    || !used_host_calls.contains(&(module.name.into(), member.name.into()))
+                {
                     continue;
                 }
                 let Some(type_) = module.interface.functions.get(member.name).cloned() else {
@@ -1244,6 +1249,7 @@ fn stdlib_lowered_name(module: &str, member: &str) -> String {
     format!("__stdlib_{}_{}", module.replace('/', "_"), member)
 }
 
+// TODO: make this a "static" method/constructor
 fn stdlib_boundary(strategy: MemberStrategy, member: &str) -> CallBoundary {
     match strategy {
         MemberStrategy::HostImport => {
@@ -1253,6 +1259,211 @@ fn stdlib_boundary(strategy: MemberStrategy, member: &str) -> CallBoundary {
     }
 }
 
+/// TODO: This could be an instance method on [ast::Module]
+fn used_stdlib_host_calls(module: &ast::Module) -> HashSet<(String, String)> {
+    let mut calls = HashSet::new();
+    for declaration in &module.declarations {
+        collect_stdlib_host_calls_in_declaration(module, declaration, &mut calls);
+    }
+    calls
+}
+
+fn collect_stdlib_host_calls_in_declaration(
+    module: &ast::Module, declaration: &AstDeclaration, calls: &mut HashSet<(String, String)>,
+) {
+    match declaration {
+        AstDeclaration::Function(function) => collect_stdlib_host_calls_in_block(module, &function.body, calls),
+        AstDeclaration::Constant(constant) => collect_stdlib_host_calls_in_expression(module, &constant.value, calls),
+        AstDeclaration::TargetGroup(group) => {
+            for declaration in &group.declarations {
+                collect_stdlib_host_calls_in_declaration(module, declaration, calls);
+            }
+        }
+        AstDeclaration::Import(_)
+        | AstDeclaration::ExternalFunction(_)
+        | AstDeclaration::ExternalType(_)
+        | AstDeclaration::TypeAlias(_)
+        | AstDeclaration::TypeDefinition(_)
+        | AstDeclaration::Attribute(_)
+        | AstDeclaration::Comment(_)
+        | AstDeclaration::Statement(_) => {}
+    }
+}
+
+fn collect_stdlib_host_calls_in_block(module: &ast::Module, block: &ast::Block, calls: &mut HashSet<(String, String)>) {
+    for statement in &block.statements {
+        match statement {
+            Statement::Let(let_) => collect_stdlib_host_calls_in_expression(module, &let_.value, calls),
+            Statement::LetAssert(let_assert) => {
+                collect_stdlib_host_calls_in_expression(module, &let_assert.value, calls);
+                if let Some(message) = &let_assert.message {
+                    collect_stdlib_host_calls_in_expression(module, message, calls);
+                }
+            }
+            Statement::Expression(expression) => collect_stdlib_host_calls_in_expression(module, expression, calls),
+        }
+    }
+}
+
+fn collect_stdlib_host_calls_in_expression(
+    module: &ast::Module, expression: &AstExpression, calls: &mut HashSet<(String, String)>,
+) {
+    if let AstExpression::Call(call) = expression
+        && let Some(stdlib_call) = stdlib_call(module, &call.function)
+        && stdlib_call.strategy == MemberStrategy::HostImport
+    {
+        calls.insert((stdlib_call.module, stdlib_call.member));
+    }
+
+    match expression {
+        AstExpression::Call(call) => {
+            collect_stdlib_host_calls_in_expression(module, &call.function, calls);
+            for argument in &call.arguments {
+                collect_stdlib_host_calls_in_expression(module, &argument.value, calls);
+            }
+        }
+        AstExpression::FieldAccess(access) => collect_stdlib_host_calls_in_expression(module, &access.record, calls),
+        AstExpression::Block(block) => collect_stdlib_host_calls_in_block(module, block, calls),
+        AstExpression::Case(case) => {
+            for subject in &case.subjects {
+                collect_stdlib_host_calls_in_expression(module, subject, calls);
+            }
+            for clause in &case.clauses {
+                if let Some(guard) = &clause.guard {
+                    collect_stdlib_host_calls_in_expression(module, guard, calls);
+                }
+                collect_stdlib_host_calls_in_expression(module, &clause.value, calls);
+            }
+        }
+        AstExpression::BinaryOperation(operation) => {
+            collect_stdlib_host_calls_in_expression(module, &operation.left, calls);
+            collect_stdlib_host_calls_in_expression(module, &operation.right, calls);
+        }
+        AstExpression::Pipeline(pipeline) => {
+            collect_stdlib_host_calls_in_expression(module, &pipeline.value, calls);
+            collect_stdlib_host_calls_in_expression(module, &pipeline.into, calls);
+        }
+        AstExpression::UnaryOperation(operation) => {
+            collect_stdlib_host_calls_in_expression(module, &operation.value, calls);
+        }
+        AstExpression::Use(use_) => collect_stdlib_host_calls_in_expression(module, &use_.value, calls),
+        AstExpression::AnonymousFunction(function) => collect_stdlib_host_calls_in_block(module, &function.body, calls),
+        AstExpression::Capture(capture) => {
+            collect_stdlib_host_calls_in_expression(module, &capture.function, calls);
+            for argument in capture.arguments.iter().flatten() {
+                collect_stdlib_host_calls_in_expression(module, &argument.value, calls);
+            }
+        }
+        AstExpression::Record(record) => {
+            for argument in &record.arguments {
+                collect_stdlib_host_calls_in_expression(module, &argument.value, calls);
+            }
+        }
+        AstExpression::RecordUpdate(update) => {
+            collect_stdlib_host_calls_in_expression(module, &update.spread, calls);
+            for argument in &update.updates {
+                collect_stdlib_host_calls_in_expression(module, &argument.value, calls);
+            }
+        }
+        AstExpression::Tuple(tuple) => {
+            for element in &tuple.elements {
+                collect_stdlib_host_calls_in_expression(module, element, calls);
+            }
+        }
+        AstExpression::TupleAccess(access) => collect_stdlib_host_calls_in_expression(module, &access.tuple, calls),
+        AstExpression::List(list) => {
+            for element in &list.elements {
+                collect_stdlib_host_calls_in_expression(module, element, calls);
+            }
+            if let Some(spread) = &list.spread {
+                collect_stdlib_host_calls_in_expression(module, spread, calls);
+            }
+        }
+        AstExpression::Panic(failure) | AstExpression::Todo(failure) => {
+            if let Some(message) = &failure.message {
+                collect_stdlib_host_calls_in_expression(module, message, calls);
+            }
+        }
+        AstExpression::Assert(assert) => collect_stdlib_host_calls_in_expression(module, &assert.value, calls),
+        AstExpression::Echo(echo) => collect_stdlib_host_calls_in_expression(module, &echo.value, calls),
+        AstExpression::Literal(_) | AstExpression::Variable(_) | AstExpression::BitArray(_) | AstExpression::Raw(_) => {
+        }
+    }
+}
+
+fn constructor_type_substitutions(info: &ConstructorInfo, subject_type: &Type) -> HashMap<String, Type> {
+    let (Type::Custom { name: return_name, args: return_args } | Type::Opaque { name: return_name, args: return_args }) =
+        &info.return_type
+    else {
+        return HashMap::new();
+    };
+    let (Type::Custom { name: subject_name, args: subject_args }
+    | Type::Opaque { name: subject_name, args: subject_args }) = subject_type
+    else {
+        return HashMap::new();
+    };
+    if return_name != subject_name || return_args.len() != subject_args.len() {
+        return HashMap::new();
+    }
+    return_args
+        .iter()
+        .zip(subject_args.iter())
+        .filter_map(|(parameter, argument)| match parameter {
+            Type::Generic(name) => Some((name.clone(), argument.clone())),
+            _ => None,
+        })
+        .collect()
+}
+
+fn substitute_type_generics(type_: &Type, substitutions: &HashMap<String, Type>) -> Type {
+    match type_ {
+        Type::Generic(name) => substitutions
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| Type::Generic(name.clone())),
+        Type::Tuple(items) => Type::Tuple(
+            items
+                .iter()
+                .map(|item| substitute_type_generics(item, substitutions))
+                .collect(),
+        ),
+        Type::List(item) => Type::List(Box::new(substitute_type_generics(item, substitutions))),
+        Type::Record { name, fields } => Type::Record {
+            name: name.clone(),
+            fields: fields
+                .iter()
+                .map(|field| crate::types::FieldInfo {
+                    name: field.name.clone(),
+                    type_: substitute_type_generics(&field.type_, substitutions),
+                })
+                .collect(),
+        },
+        Type::Custom { name, args } => Type::Custom {
+            name: name.clone(),
+            args: args
+                .iter()
+                .map(|arg| substitute_type_generics(arg, substitutions))
+                .collect(),
+        },
+        Type::Opaque { name, args } => Type::Opaque {
+            name: name.clone(),
+            args: args
+                .iter()
+                .map(|arg| substitute_type_generics(arg, substitutions))
+                .collect(),
+        },
+        Type::Function { params, return_type } => Type::Function {
+            params: params
+                .iter()
+                .map(|param| substitute_type_generics(param, substitutions))
+                .collect(),
+            return_type: Box::new(substitute_type_generics(return_type, substitutions)),
+        },
+        Type::Int | Type::Float | Type::String | Type::BitArray | Type::Bool | Type::Nil => type_.clone(),
+    }
+}
+
+// TODO: instance method
 fn type_has_generic(type_: &Type) -> bool {
     match type_ {
         Type::Generic(_) => true,
