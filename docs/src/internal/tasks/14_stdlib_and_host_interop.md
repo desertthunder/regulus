@@ -60,6 +60,33 @@ Support useful standard library modules and host calls.
 - [x] Add Wasmtime tests for host imported functions.
 - [x] Add fixtures using common Gleam stdlib modules.
 
+### General external functions
+
+- [ ] Lower non-stdlib external functions to Wasm imports.
+- [ ] Preserve external module and function names in import metadata.
+- [ ] Validate external import modules against the selected target.
+- [ ] Reject unsupported external function ABI shapes before byte emission.
+- [ ] Add tests for browser and Worker-style external imports.
+
+### Browser and Worker adapters
+
+- [ ] Add stable host helpers for writing host strings into guest memory.
+- [ ] Add stable host helpers for reading guest strings from managed pointers.
+- [ ] Add adapter conventions for lists of strings and small records.
+- [ ] Add adapter conventions for `Result` and `Option` values crossing the
+      host boundary.
+- [ ] Define response-shape adapters for status, headers, and body data.
+- [ ] Decide whether Cloudflare Workers are a target or browser host profile.
+- [ ] Document import module names for browser and Worker host adapters.
+
+### JSON and structured data
+
+- [ ] Choose whether first examples decode JSON in Gleam or in host code.
+- [ ] Support the selected `gleam/dynamic` and `gleam/dynamic/decode` surface
+      so JSON decoding happens in Gleam.
+- [ ] Add diagnostics for unsupported decoders and structured response shapes.
+- [ ] Add fixtures for simple JSON input and JSON-like structured output.
+
 ### Group 2: remaining stdlib
 
 - [x] Support `gleam/bool`.

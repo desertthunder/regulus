@@ -23,6 +23,37 @@ Suggested outputs:
 - debug dumps under a configurable directory
 - test snapshots for compiler-owned representations
 
+## Project compilation milestone
+
+Project compilation should run the same explicit phases as single-file
+compilation, but across all modules in dependency order:
+
+```text
+load project -> parse -> target select -> resolve -> type check -> lower ->
+link IR -> emit Wasm
+```
+
+The project path should preserve source IDs and file paths for diagnostics.
+Same-project module calls should link without becoming host imports. Dependency
+calls should either link to loaded dependency code or fail as unsupported
+dependency interface calls before lowering.
+
+The first milestone can load dependency interfaces without compiling dependency
+source. That is enough for examples that keep dependency execution behind host
+adapters or compiler-supported intrinsics. Later milestones can compile selected
+dependency source when the supported language surface is broad enough.
+
+## Targets and host profiles
+
+The CLI already accepts Wasmtime, browser, and WASI-oriented targets. Example
+projects add a Cloudflare Workers use case. The build docs should either add a
+Worker target or define a Worker host profile under the browser target, with
+stable import module names and artifact paths for the JS Worker adapter.
+
+Target-specific project compilation should validate target groups, external
+imports, export ABI, and generated host adapter expectations before writing the
+final artifact.
+
 ## Structured Wasm construction milestone
 
 The backend currently emits WAT by appending text, then assembles it with

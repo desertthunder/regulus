@@ -9,13 +9,20 @@ Make the CLI compile projects and produce useful artifacts.
 ### Commands and inputs
 
 - [ ] Add project compile command using `gleam.toml` that emits linked Wasm.
+- [ ] Run parse, target selection, resolution, type checking, lowering, and
+      Wasm emission across all project modules.
 - [x] Keep single-file compilation available for tests and examples.
 - [x] Add output path configuration.
 - [x] Add target selection for supported runtimes: Wasmtime, browser, and WASI
       where implemented.
+- [ ] Decide whether Cloudflare Workers use a dedicated target or browser host
+      profile.
 - [ ] Add package/dependency discovery flags or configuration once dependency
       metadata is supported.
 - [ ] Load enough dependency metadata for project compile inputs.
+- [ ] Load dependency module interfaces for values, types, constructors, and
+      labels used by project compilation.
+- [ ] Report unsupported dependency calls before lowering or byte emission.
 - [x] Return useful exit codes for success, diagnostics, and command misuse.
 
 ### Artifacts
@@ -26,6 +33,9 @@ Make the CLI compile projects and produce useful artifacts.
 - [ ] Add optional runtime layout and ABI debug output where helpful.
 - [ ] Keep generated artifact names deterministic for multi-module projects.
 - [ ] Link multi-module project output in dependency order.
+- [ ] Link same-project module calls without treating them as host imports.
+- [ ] Keep dependency interface calls distinct from host imports in debug dumps.
+- [ ] Emit stable artifact paths for example host adapters.
 - [ ] Avoid writing partial final artifacts after a failed compile unless the
       user explicitly requested debug dumps.
 
@@ -78,6 +88,8 @@ Make the CLI compile projects and produce useful artifacts.
 - [ ] Add CLI integration tests for diagnostics across multiple files.
 - [ ] Add tests for output path handling and optional WAT/debug artifacts.
 - [ ] Add tests for target selection and unsupported target combinations.
+- [ ] Add tests for Worker target or browser Worker-profile output.
+- [ ] Add tests for dependency interface loading and unsupported dependencies.
 - [ ] Add tests that compile fixtures using records, custom types, pattern
       matching, managed values, stdlib calls, and host imports as those stages
       become available.

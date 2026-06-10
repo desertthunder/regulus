@@ -130,6 +130,45 @@ WASI `gleam/io` is deliberately unsupported until a concrete `fd_write`
 adapter is added. Unsupported host calls, target combinations, and ABI shapes
 produce source-spanned diagnostics before WAT assembly.
 
+## External functions
+
+General Gleam external functions should lower to Wasm imports, not only current
+stdlib shims. The compiler should preserve the declared external module and
+function name, validate that the selected target accepts that module, and reject
+unsupported ABI shapes before byte emission.
+
+Browser examples need imports for fetch, local storage, and browser state.
+Worker examples need imports or exported wrappers for request routing and
+response construction. These should be ordinary target-specific external
+functions with documented adapters, not special cases in user code.
+
+## Browser and Worker adapters
+
+The low-level managed-pointer ABI is useful for tests, but browser and Worker
+hosts need stable helpers for common shapes:
+
+- strings into and out of guest memory
+- lists of strings or records
+- result and option values
+- small response records with status, headers, and body
+- opaque handles only when string or record adapters are not enough
+
+Cloudflare Workers may use the browser target initially, but the compiler needs
+an explicit decision: either add a `workers` target or document Workers as a
+browser-host profile with a distinct adapter contract.
+
+## Decoding and structured data
+
+The weather example needs a small JSON decoding path for NWS responses. The
+Wisp reference API needs structured JSON output. This can come from selected
+`gleam/dynamic` and `gleam/dynamic/decode` support, a small compiler-provided
+JSON bridge, or a deliberate choice to keep JSON parsing in the host for the
+first example milestone.
+
+Whichever strategy is chosen must be explicit. Unsupported decoders,
+dependency modules, and structured response shapes should fail with
+source-spanned diagnostics.
+
 ## Diagnostics
 
 Unsupported stdlib modules, dependency modules, host calls, ABI shapes, or
