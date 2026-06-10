@@ -1,6 +1,9 @@
 # Introduction
 
-This book follows a small compiler from Gleam source code to WebAssembly.
+This book follows a small compiler called Regulus (aka Reggie) from Gleam
+source code to WebAssembly.
+
+![Reggie](./favicon.png)
 
 Gleam is a friendly functional language with static types. WebAssembly is a
 portable instruction format that can run in browsers and standalone runtimes
