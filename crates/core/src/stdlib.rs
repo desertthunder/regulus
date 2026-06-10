@@ -88,13 +88,13 @@ fn stdlib_modules() -> Vec<StdlibModule> {
         StdlibModule::gleam_option(),
         StdlibModule::gleam_order(),
         StdlibModule::remaining("gleam/bit_array"),
-        StdlibModule::remaining("gleam/bool"),
+        StdlibModule::gleam_bool(),
         StdlibModule::remaining("gleam/bytes_tree"),
-        StdlibModule::remaining("gleam/dict"),
+        StdlibModule::gleam_dict(),
         StdlibModule::remaining("gleam/dynamic"),
         StdlibModule::remaining("gleam/dynamic/decode"),
-        StdlibModule::remaining("gleam/float"),
-        StdlibModule::remaining("gleam/function"),
+        StdlibModule::gleam_float(),
+        StdlibModule::gleam_function(),
         StdlibModule::remaining("gleam/pair"),
         StdlibModule::remaining("gleam/set"),
         StdlibModule::remaining("gleam/string_tree"),
@@ -298,6 +298,106 @@ impl StdlibModule {
         )
     }
 
+    fn gleam_bool() -> Self {
+        Self::new(
+            "gleam/bool",
+            ModuleStrategy::Hybrid,
+            &[
+                function("to_string", vec![Type::Bool], Type::String, MemberStrategy::Intrinsic),
+                function("negate", vec![Type::Bool], Type::Bool, MemberStrategy::Intrinsic),
+                function(
+                    "compare",
+                    vec![Type::Bool, Type::Bool],
+                    Type::custom("Order", vec![]),
+                    MemberStrategy::Intrinsic,
+                ),
+            ],
+            &[],
+        )
+    }
+
+    fn gleam_dict() -> Self {
+        let dict_type = type_decl("Dict", vec!["k", "v"], true, vec![]);
+        let dict_kv = dict(Type::generic("k"), Type::generic("v"));
+        Self::new(
+            "gleam/dict",
+            ModuleStrategy::Hybrid,
+            &[
+                function("new", vec![], dict_kv.clone(), MemberStrategy::Intrinsic),
+                function("size", vec![dict_kv.clone()], Type::Int, MemberStrategy::Intrinsic),
+                function("is_empty", vec![dict_kv.clone()], Type::Bool, MemberStrategy::Intrinsic),
+                function(
+                    "insert",
+                    vec![dict_kv.clone(), Type::generic("k"), Type::generic("v")],
+                    dict_kv.clone(),
+                    MemberStrategy::Intrinsic,
+                ),
+                function(
+                    "get",
+                    vec![dict_kv.clone(), Type::generic("k")],
+                    option(Type::generic("v")),
+                    MemberStrategy::Intrinsic,
+                ),
+                function(
+                    "has_key",
+                    vec![dict_kv.clone(), Type::generic("k")],
+                    Type::Bool,
+                    MemberStrategy::Intrinsic,
+                ),
+                function(
+                    "delete",
+                    vec![dict_kv.clone(), Type::generic("k")],
+                    dict_kv,
+                    MemberStrategy::Intrinsic,
+                ),
+            ],
+            &[dict_type],
+        )
+    }
+
+    fn gleam_float() -> Self {
+        Self::new(
+            "gleam/float",
+            ModuleStrategy::Hybrid,
+            &[
+                function(
+                    "compare",
+                    vec![Type::Float, Type::Float],
+                    Type::custom("Order", vec![]),
+                    MemberStrategy::Intrinsic,
+                ),
+                function(
+                    "max",
+                    vec![Type::Float, Type::Float],
+                    Type::Float,
+                    MemberStrategy::Intrinsic,
+                ),
+                function(
+                    "min",
+                    vec![Type::Float, Type::Float],
+                    Type::Float,
+                    MemberStrategy::Intrinsic,
+                ),
+                function("negate", vec![Type::Float], Type::Float, MemberStrategy::Intrinsic),
+            ],
+            &[],
+        )
+    }
+
+    fn gleam_function() -> Self {
+        Self::new(
+            "gleam/function",
+            ModuleStrategy::Hybrid,
+            &[function(
+                "identity",
+                vec![Type::generic("a")],
+                Type::generic("a"),
+                MemberStrategy::Intrinsic,
+            )],
+            &[],
+        )
+    }
+
     fn remaining(name: &'static str) -> Self {
         Self::new(name, ModuleStrategy::PreferCompiledSource, &[], &[])
     }
@@ -377,6 +477,10 @@ fn option(item: Type) -> Type {
     Type::custom("Option", vec![item])
 }
 
+fn dict(key: Type, value: Type) -> Type {
+    Type::custom("Dict", vec![key, value])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -413,7 +517,7 @@ mod tests {
     #[test]
     fn records_remaining_stdlib_strategy() {
         let registry = StdlibRegistry::new();
-        let module = registry.module("gleam/dict").expect("dict module");
+        let module = registry.module("gleam/bytes_tree").expect("bytes_tree module");
 
         assert_eq!(module.strategy, ModuleStrategy::PreferCompiledSource);
     }

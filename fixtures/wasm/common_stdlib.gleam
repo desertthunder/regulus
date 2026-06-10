@@ -1,3 +1,7 @@
+import gleam/bool
+import gleam/dict
+import gleam/float
+import gleam/function
 import gleam/int
 import gleam/io
 import gleam/list
@@ -45,4 +49,24 @@ pub fn order_rank(order: Order) -> Int {
 
 pub fn debug_identity() -> Int {
   io.debug(42)
+}
+
+pub fn bool_text() -> String {
+  bool.to_string(True)
+}
+
+pub fn dict_value() -> Int {
+  let values = dict.insert(dict.new(), "a", 42)
+  case dict.get(values, "a") {
+    Some(value) -> value
+    None -> 0
+  }
+}
+
+pub fn float_larger() -> Float {
+  float.max(1.5, float.negate(-2.5))
+}
+
+pub fn same_value() -> Int {
+  function.identity(9)
 }

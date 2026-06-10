@@ -1670,4 +1670,157 @@ pub const MANAGED_VALUE_HELPERS: &str = r#"
     call $__copy_slots
     local.get $ptr
   )
+  (func $__option_some (param $value i64) (result i32)
+    (local $slots i32)
+    i32.const 8
+    call $__alloc
+    local.set $slots
+    local.get $slots
+    local.get $value
+    i64.store
+    i32.const 2407843793
+    i32.const 1
+    local.get $slots
+    call $__custom_new
+  )
+  (func $__option_none (result i32)
+    i32.const 2443824955
+    i32.const 0
+    i32.const 0
+    call $__custom_new
+  )
+  (func $__order_from_compare (param $compare i32) (result i32)
+    local.get $compare
+    i32.const 0
+    i32.lt_s
+    if (result i32)
+      i32.const 1165421021
+    else
+      local.get $compare
+      i32.const 0
+      i32.gt_s
+      if (result i32)
+        i32.const 1249309180
+      else
+        i32.const 1282864351
+      end
+    end
+    i32.const 0
+    i32.const 0
+    call $__custom_new
+  )
+  (func $__dict_insert (param $dict i32) (param $key i64) (param $value i64) (result i32)
+    (local $slots i32) (local $pair i32)
+    i32.const 16
+    call $__alloc
+    local.set $slots
+    local.get $slots
+    local.get $key
+    i64.store
+    local.get $slots
+    i32.const 8
+    i32.add
+    local.get $value
+    i64.store
+    i32.const 2
+    local.get $slots
+    call $__tuple_new
+    local.set $pair
+    local.get $pair
+    i64.extend_i32_u
+    local.get $dict
+    call $__list_cons
+  )
+  (func $__dict_has_key (param $dict i32) (param $key i64) (result i32)
+    (local $pair i32)
+    block $done
+      loop $loop
+        local.get $dict
+        i32.eqz
+        br_if $done
+        local.get $dict
+        call $__list_head
+        i32.wrap_i64
+        local.set $pair
+        local.get $pair
+        i32.const 0
+        call $__field_load_i64
+        local.get $key
+        call $__equal_slot
+        if
+          i32.const 1
+          return
+        end
+        local.get $dict
+        call $__list_tail
+        local.set $dict
+        br $loop
+      end
+    end
+    i32.const 0
+  )
+  (func $__dict_get (param $dict i32) (param $key i64) (result i32)
+    (local $pair i32)
+    block $done
+      loop $loop
+        local.get $dict
+        i32.eqz
+        br_if $done
+        local.get $dict
+        call $__list_head
+        i32.wrap_i64
+        local.set $pair
+        local.get $pair
+        i32.const 0
+        call $__field_load_i64
+        local.get $key
+        call $__equal_slot
+        if
+          local.get $pair
+          i32.const 1
+          call $__field_load_i64
+          call $__option_some
+          return
+        end
+        local.get $dict
+        call $__list_tail
+        local.set $dict
+        br $loop
+      end
+    end
+    call $__option_none
+  )
+  (func $__dict_delete (param $dict i32) (param $key i64) (result i32)
+    (local $result i32) (local $pair i32)
+    block $done
+      loop $loop
+        local.get $dict
+        i32.eqz
+        br_if $done
+        local.get $dict
+        call $__list_head
+        i32.wrap_i64
+        local.set $pair
+        local.get $pair
+        i32.const 0
+        call $__field_load_i64
+        local.get $key
+        call $__equal_slot
+        i32.eqz
+        if
+          local.get $pair
+          i64.extend_i32_u
+          local.get $result
+          call $__list_cons
+          local.set $result
+        end
+        local.get $dict
+        call $__list_tail
+        local.set $dict
+        br $loop
+      end
+    end
+    local.get $result
+    call $__list_reverse
+  )
 "#;

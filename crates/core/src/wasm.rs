@@ -553,6 +553,58 @@ impl Emitter {
                 writeln!(self.functions, "    call $__list_reverse").expect("write WAT");
                 self.uses_runtime = true;
             }
+            "__stdlib_gleam_bool_to_string" => self.stdlib_bool_to_string(call),
+            "__stdlib_gleam_bool_negate" => {
+                self.expression(&call.arguments[0].value);
+                writeln!(self.functions, "    i32.eqz").expect("write WAT");
+            }
+            "__stdlib_gleam_bool_compare" => {
+                self.expression(&call.arguments[0].value);
+                self.expression(&call.arguments[1].value);
+                writeln!(self.functions, "    i32.sub").expect("write WAT");
+                self.order_from_compare_result();
+            }
+            "__stdlib_gleam_dict_new" => {
+                writeln!(self.functions, "    i32.const 0").expect("write WAT");
+            }
+            "__stdlib_gleam_dict_size" => {
+                self.expression(&call.arguments[0].value);
+                writeln!(self.functions, "    call $__list_length").expect("write WAT");
+                self.uses_runtime = true;
+            }
+            "__stdlib_gleam_dict_is_empty" => {
+                self.expression(&call.arguments[0].value);
+                writeln!(self.functions, "    i32.eqz").expect("write WAT");
+            }
+            "__stdlib_gleam_dict_insert" => self.stdlib_dict_insert(call),
+            "__stdlib_gleam_dict_get" => self.stdlib_dict_get(call),
+            "__stdlib_gleam_dict_has_key" => self.stdlib_dict_has_key(call),
+            "__stdlib_gleam_dict_delete" => self.stdlib_dict_delete(call),
+            "__stdlib_gleam_float_compare" => {
+                self.expression(&call.arguments[0].value);
+                self.expression(&call.arguments[1].value);
+                writeln!(self.functions, "    call $__compare_f64").expect("write WAT");
+                self.order_from_compare_result();
+                self.uses_runtime = true;
+            }
+            "__stdlib_gleam_float_max" => {
+                self.expression(&call.arguments[0].value);
+                self.expression(&call.arguments[1].value);
+                writeln!(self.functions, "    f64.max").expect("write WAT");
+            }
+            "__stdlib_gleam_float_min" => {
+                self.expression(&call.arguments[0].value);
+                self.expression(&call.arguments[1].value);
+                writeln!(self.functions, "    f64.min").expect("write WAT");
+            }
+            "__stdlib_gleam_float_negate" => {
+                writeln!(self.functions, "    f64.const -0").expect("write WAT");
+                self.expression(&call.arguments[0].value);
+                writeln!(self.functions, "    f64.sub").expect("write WAT");
+            }
+            "__stdlib_gleam_function_identity" => {
+                self.expression(&call.arguments[0].value);
+            }
             "__stdlib_gleam_io_debug" => self.stdlib_io_debug(call),
             _ => {
                 for argument in &call.arguments {
@@ -561,6 +613,51 @@ impl Emitter {
                 writeln!(self.functions, "    call ${}", call.function).expect("write WAT");
             }
         }
+    }
+
+    fn stdlib_bool_to_string(&mut self, call: &ir::DirectCall) {
+        let true_ptr = self.static_string("True");
+        let false_ptr = self.static_string("False");
+        self.expression(&call.arguments[0].value);
+        writeln!(self.functions, "    if (result i32)").expect("write WAT");
+        writeln!(self.functions, "      i32.const {true_ptr}").expect("write WAT");
+        writeln!(self.functions, "    else").expect("write WAT");
+        writeln!(self.functions, "      i32.const {false_ptr}").expect("write WAT");
+        writeln!(self.functions, "    end").expect("write WAT");
+    }
+
+    fn order_from_compare_result(&mut self) {
+        writeln!(self.functions, "    call $__order_from_compare").expect("write WAT");
+        self.uses_runtime = true;
+    }
+
+    fn stdlib_dict_insert(&mut self, call: &ir::DirectCall) {
+        self.expression(&call.arguments[0].value);
+        self.expression_slot_value(&call.arguments[1].value, &call.arguments[1].value.type_);
+        self.expression_slot_value(&call.arguments[2].value, &call.arguments[2].value.type_);
+        writeln!(self.functions, "    call $__dict_insert").expect("write WAT");
+        self.uses_runtime = true;
+    }
+
+    fn stdlib_dict_get(&mut self, call: &ir::DirectCall) {
+        self.expression(&call.arguments[0].value);
+        self.expression_slot_value(&call.arguments[1].value, &call.arguments[1].value.type_);
+        writeln!(self.functions, "    call $__dict_get").expect("write WAT");
+        self.uses_runtime = true;
+    }
+
+    fn stdlib_dict_has_key(&mut self, call: &ir::DirectCall) {
+        self.expression(&call.arguments[0].value);
+        self.expression_slot_value(&call.arguments[1].value, &call.arguments[1].value.type_);
+        writeln!(self.functions, "    call $__dict_has_key").expect("write WAT");
+        self.uses_runtime = true;
+    }
+
+    fn stdlib_dict_delete(&mut self, call: &ir::DirectCall) {
+        self.expression(&call.arguments[0].value);
+        self.expression_slot_value(&call.arguments[1].value, &call.arguments[1].value.type_);
+        writeln!(self.functions, "    call $__dict_delete").expect("write WAT");
+        self.uses_runtime = true;
     }
 
     fn stdlib_io_debug(&mut self, call: &ir::DirectCall) {
@@ -3037,8 +3134,14 @@ pub fn main() { io.println("hi") }
     #[test]
     fn runs_initial_stdlib_intrinsics() {
         let wasm = compile_wasm(
-            r#"import gleam/int
+            r#"import gleam/bool
+import gleam/dict
+import gleam/float
+import gleam/function
+import gleam/int
 import gleam/io
+import gleam/option
+import gleam/order
 import gleam/string
 import gleam/list
 
@@ -3055,6 +3158,34 @@ pub fn reversed_head() -> Int {
 }
 pub fn debugged() -> Int { io.debug(42) }
 pub fn debugged_text() -> String { io.debug("ok") }
+pub fn bool_text() -> String { bool.to_string(True) }
+pub fn bool_rank() -> Int {
+  case bool.compare(False, True) {
+    order.Lt -> -1
+    order.Eq -> 0
+    order.Gt -> 1
+  }
+}
+pub fn dict_value() -> Int {
+  let values = dict.insert(dict.new(), "a", 42)
+  case dict.get(values, "a") {
+    option.Some(value) -> value
+    option.None -> 0
+  }
+}
+pub fn dict_missing() -> Bool {
+  let values = dict.insert(dict.new(), "a", 42)
+  dict.has_key(dict.delete(values, "a"), "a")
+}
+pub fn float_rank() -> Int {
+  case float.compare(1.0, 2.0) {
+    order.Lt -> -1
+    order.Eq -> 0
+    order.Gt -> 1
+  }
+}
+pub fn float_larger() -> Float { float.max(1.5, float.negate(-2.5)) }
+pub fn same_value() -> Int { function.identity(9) }
 "#,
         );
         let engine = Engine::default();
@@ -3122,6 +3253,37 @@ pub fn debugged_text() -> String { io.debug("ok") }
             .expect("read debugged text string");
         assert_eq!(&bytes[8..10], b"ok");
         assert_eq!(store.data(), "42\nok\n");
+
+        let bool_text = instance
+            .get_typed_func::<(), i32>(&mut store, "bool_text")
+            .expect("get bool_text export");
+        let pointer = bool_text.call(&mut store, ()).expect("call bool_text") as usize;
+        memory.read(&store, pointer, &mut bytes).expect("read bool text");
+        assert_eq!(&bytes[8..12], b"True");
+        let bool_rank = instance
+            .get_typed_func::<(), i64>(&mut store, "bool_rank")
+            .expect("get bool_rank export");
+        assert_eq!(bool_rank.call(&mut store, ()).expect("call bool_rank"), -1);
+        let dict_value = instance
+            .get_typed_func::<(), i64>(&mut store, "dict_value")
+            .expect("get dict_value export");
+        assert_eq!(dict_value.call(&mut store, ()).expect("call dict_value"), 42);
+        let dict_missing = instance
+            .get_typed_func::<(), i32>(&mut store, "dict_missing")
+            .expect("get dict_missing export");
+        assert_eq!(dict_missing.call(&mut store, ()).expect("call dict_missing"), 0);
+        let float_rank = instance
+            .get_typed_func::<(), i64>(&mut store, "float_rank")
+            .expect("get float_rank export");
+        assert_eq!(float_rank.call(&mut store, ()).expect("call float_rank"), -1);
+        let float_larger = instance
+            .get_typed_func::<(), f64>(&mut store, "float_larger")
+            .expect("get float_larger export");
+        assert_eq!(float_larger.call(&mut store, ()).expect("call float_larger"), 2.5);
+        let same_value = instance
+            .get_typed_func::<(), i64>(&mut store, "same_value")
+            .expect("get same_value export");
+        assert_eq!(same_value.call(&mut store, ()).expect("call same_value"), 9);
     }
 
     #[test]

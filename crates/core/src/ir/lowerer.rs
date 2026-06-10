@@ -417,7 +417,7 @@ impl Lowerer {
             }),
             AstExpression::Record(record) => {
                 let type_ = self.typed_expression_type(record.span).unwrap_or(Type::Nil);
-                let name = constructor_name(&record.constructor);
+                let name = self.resolved_constructor_name(&constructor_name(&record.constructor));
                 let arguments = self.lower_constructor_arguments(context, &name, &record.arguments)?;
                 Some(Expression {
                     type_,
@@ -764,6 +764,17 @@ impl Lowerer {
         name
     }
 
+    fn resolved_constructor_name(&self, name: &str) -> String {
+        if self.constructors.contains_key(name) {
+            return name.into();
+        }
+        let local = name.rsplit('.').next().unwrap_or(name);
+        if self.constructors.contains_key(local) {
+            return local.into();
+        }
+        name.into()
+    }
+
     fn lower_constructor_arguments(
         &mut self, context: &mut FunctionContext, constructor: &str, arguments: &[ast::Argument],
     ) -> Option<Vec<Expression>> {
@@ -1066,7 +1077,7 @@ impl Lowerer {
                 Some(IrPattern::List { elements, tail })
             }
             Pattern::Constructor(constructor) => {
-                let name = constructor_name(&constructor.constructor);
+                let name = self.resolved_constructor_name(&constructor_name(&constructor.constructor));
                 let arguments =
                     self.lower_constructor_pattern_arguments(context, &name, &constructor.arguments, subject_type)?;
                 Some(IrPattern::Constructor { name, arguments })

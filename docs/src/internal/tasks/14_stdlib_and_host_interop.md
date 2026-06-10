@@ -62,10 +62,10 @@ Support useful standard library modules and host calls.
 
 ### Group 2: remaining stdlib
 
-- [ ] Support `gleam/bool`.
-- [ ] Support `gleam/dict`.
-- [ ] Support `gleam/float`.
-- [ ] Support `gleam/function`.
+- [x] Support `gleam/bool`.
+- [x] Support `gleam/dict`.
+- [x] Support `gleam/float`.
+- [x] Support `gleam/function`.
 - [ ] Support `gleam/bit_array`.
 - [ ] Support `gleam/bytes_tree`.
 - [ ] Support `gleam/string_tree`.
