@@ -1,6 +1,6 @@
 //! Incremental IR-to-structured-Wasm code generation.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use super::builder::{
     BlockType, DataSegment, Export, ExportDesc, Function, FunctionId, FunctionType, Global, GlobalId, Import,
@@ -12,12 +12,25 @@ use crate::diagnostic::{Diagnostic, DiagnosticCode, Diagnostics, Label};
 use crate::ir::{self, ExpressionKind};
 use crate::{ClosureConstants, runtime, stdlib::STDLIB_IO_HOST_MODULE, types::Type};
 
-pub(super) fn emit(module: &ir::Module, options: EmitOptions) -> Result<Option<Module>, Diagnostics> {
+pub(super) fn emit(module: &ir::Module, options: EmitOptions) -> Result<Module, Diagnostics> {
     let emitter = StructuredEmitter::new(module, options);
     match emitter.module(module) {
-        Ok(module) => Ok(Some(module)),
-        Err(StructuredError::Unsupported) => Ok(None),
+        Ok(module) => Ok(module),
+        Err(StructuredError::Unsupported) => Err(unsupported_structured_diagnostics(module)),
         Err(StructuredError::Diagnostics(diagnostics)) => Err(diagnostics),
+    }
+}
+
+fn unsupported_structured_diagnostics(module: &ir::Module) -> Diagnostics {
+    let diagnostic = Diagnostic::new(
+        DiagnosticCode::WasmError,
+        "structured Wasm emitter does not support this IR yet",
+    )
+    .with_note("the fallback WAT emitter is disabled; port this IR form to structured codegen");
+    if let Some(function) = module.functions.first() {
+        vec![diagnostic.with_label(Label::primary(function.span, "module lowered to unsupported IR here"))]
+    } else {
+        vec![diagnostic]
     }
 }
 
@@ -79,6 +92,7 @@ struct StructuredEmitter<'a> {
     memory: Option<MemoryId>,
     heap_global: Option<GlobalId>,
     imported_functions: u32,
+    runtime_helper_roots: HashSet<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -155,6 +169,7 @@ impl<'a> StructuredEmitter<'a> {
             memory: None,
             heap_global: None,
             imported_functions: 0,
+            runtime_helper_roots: HashSet::new(),
         }
     }
 
@@ -217,6 +232,16 @@ impl<'a> StructuredEmitter<'a> {
                     .push(Export { name: function.name.clone(), desc: ExportDesc::Function(function_id) });
                 self.export_adapters(function)?;
             }
+        }
+
+        if !self.runtime_helper_roots.is_empty() {
+            self.ensure_memory();
+            self.ensure_heap_global();
+            self.name_heap_global();
+            self.ensure_last_panic_global();
+            self.module
+                .raw_wat_items
+                .push(super::runtime_helper_wat(self.config, &self.runtime_helper_roots));
         }
 
         if let Some(memory) = self.memory {
@@ -587,6 +612,11 @@ impl<'a> StructuredEmitter<'a> {
                     out,
                 )
             }
+            ExpressionKind::Use(_) => Err(StructuredError::Diagnostics(vec![
+                Diagnostic::new(DiagnosticCode::WasmError, "raw `use` IR reached the Wasm backend")
+                    .with_label(Label::primary(expression.span, "residual use expression here"))
+                    .with_note("`use` must lower to callback-passing call IR before Wasm emission"),
+            ])),
             _ => Err(StructuredError::Unsupported),
         }
     }
@@ -655,6 +685,26 @@ impl<'a> StructuredEmitter<'a> {
             "__op_and" => self.short_circuit_bool(call, false, out)?,
             "__op_or" => self.short_circuit_bool(call, true, out)?,
             "__op_string_concat" | "__stdlib_gleam_string_append" => self.string_concat(call, out)?,
+            "__stdlib_gleam_string_concat" => {
+                self.expression(&call.arguments[0].value, out)?;
+                self.call_runtime_helper("__string_concat_list", [ValueType::I32], [ValueType::I32], out);
+            }
+            "__stdlib_gleam_int_to_string" => {
+                self.expression(&call.arguments[0].value, out)?;
+                self.call_runtime_helper("__int_to_string", [ValueType::I64], [ValueType::I32], out);
+            }
+            "__stdlib_gleam_float_to_string" => {
+                self.expression(&call.arguments[0].value, out)?;
+                self.call_runtime_helper("__float_to_string", [ValueType::F64], [ValueType::I32], out);
+            }
+            "__stdlib_gleam_list_length" => {
+                self.expression(&call.arguments[0].value, out)?;
+                self.call_runtime_helper("__list_length", [ValueType::I32], [ValueType::I64], out);
+            }
+            "__stdlib_gleam_list_reverse" => {
+                self.expression(&call.arguments[0].value, out)?;
+                self.call_runtime_helper("__list_reverse", [ValueType::I32], [ValueType::I32], out);
+            }
             "__stdlib_gleam_float_negate" => {
                 out.push(Instruction::F64Const((-0.0f64).to_bits()));
                 self.expression(&call.arguments[0].value, out)?;
@@ -697,6 +747,30 @@ impl<'a> StructuredEmitter<'a> {
                 out.push(Instruction::I32Load(mem_arg(self.ensure_memory(), 4, 2)));
                 out.push(Instruction::I32Eqz);
             }
+            "__stdlib_gleam_bit_array_append" => {
+                self.binary_arguments(call, out)?;
+                self.call_runtime_helper(
+                    "__bit_array_append",
+                    [ValueType::I32, ValueType::I32],
+                    [ValueType::I32],
+                    out,
+                );
+            }
+            "__stdlib_gleam_bit_array_concat" => {
+                self.expression(&call.arguments[0].value, out)?;
+                self.call_runtime_helper("__bit_array_concat_list", [ValueType::I32], [ValueType::I32], out);
+            }
+            "__stdlib_gleam_bit_array_starts_with" => {
+                self.expression(&call.arguments[0].value, out)?;
+                out.push(Instruction::I32Const(0));
+                self.expression(&call.arguments[1].value, out)?;
+                self.call_runtime_helper(
+                    "__bit_array_match",
+                    [ValueType::I32, ValueType::I32, ValueType::I32],
+                    [ValueType::I32],
+                    out,
+                );
+            }
             "__stdlib_gleam_bool_to_string" => self.bool_to_string(call, out)?,
             "__stdlib_gleam_bool_compare" => {
                 let scratch = self.scratch_local.ok_or(StructuredError::Unsupported)?;
@@ -707,6 +781,21 @@ impl<'a> StructuredEmitter<'a> {
                 self.order_from_compare_local(scratch, out);
             }
             "__stdlib_gleam_float_compare" => self.float_compare(call, out)?,
+            "__stdlib_gleam_dict_new" => {
+                self.call_runtime_helper("__dict_new", [], [ValueType::I32], out);
+            }
+            "__stdlib_gleam_dict_size" => {
+                self.expression(&call.arguments[0].value, out)?;
+                self.call_runtime_helper("__dict_size", [ValueType::I32], [ValueType::I64], out);
+            }
+            "__stdlib_gleam_dict_is_empty" => {
+                self.expression(&call.arguments[0].value, out)?;
+                self.call_runtime_helper("__dict_is_empty", [ValueType::I32], [ValueType::I32], out);
+            }
+            "__stdlib_gleam_dict_insert" => self.dict_insert(call, out)?,
+            "__stdlib_gleam_dict_get" => self.dict_get(call, out)?,
+            "__stdlib_gleam_dict_has_key" => self.dict_has_key(call, out)?,
+            "__stdlib_gleam_dict_delete" => self.dict_delete(call, out)?,
             "__stdlib_gleam_function_identity" | "__stdlib_gleam_function_constant" => {
                 self.expression(&call.arguments[0].value, out)?;
             }
@@ -902,6 +991,14 @@ impl<'a> StructuredEmitter<'a> {
         Ok(())
     }
 
+    fn call_runtime_helper(
+        &mut self, name: &str, params: impl Into<Vec<ValueType>>, results: impl Into<Vec<ValueType>>,
+        out: &mut Vec<Instruction>,
+    ) {
+        self.runtime_helper_roots.insert(name.into());
+        out.push(Instruction::CallName { name: name.into(), type_: FunctionType::new(params, results) });
+    }
+
     fn bool_to_string(&mut self, call: &ir::DirectCall, out: &mut Vec<Instruction>) -> StructuredResult<()> {
         let true_ptr = self.push_static(runtime::string_object(self.config, self.next_static_offset, "True"));
         let false_ptr = self.push_static(runtime::string_object(self.config, self.next_static_offset, "False"));
@@ -975,6 +1072,45 @@ impl<'a> StructuredEmitter<'a> {
         });
         out.push(Instruction::LocalSet { local: scratch, type_: ValueType::I32 });
         self.order_from_compare_local(scratch, out);
+        Ok(())
+    }
+
+    fn dict_insert(&mut self, call: &ir::DirectCall, out: &mut Vec<Instruction>) -> StructuredResult<()> {
+        self.expression(&call.arguments[0].value, out)?;
+        self.expression_slot_value(&call.arguments[1].value, out)?;
+        self.expression_slot_value(&call.arguments[2].value, out)?;
+        self.call_runtime_helper(
+            "__dict_insert",
+            [ValueType::I32, ValueType::I64, ValueType::I64],
+            [ValueType::I32],
+            out,
+        );
+        Ok(())
+    }
+
+    fn dict_get(&mut self, call: &ir::DirectCall, out: &mut Vec<Instruction>) -> StructuredResult<()> {
+        self.expression(&call.arguments[0].value, out)?;
+        self.expression_slot_value(&call.arguments[1].value, out)?;
+        self.call_runtime_helper("__dict_get", [ValueType::I32, ValueType::I64], [ValueType::I32], out);
+        Ok(())
+    }
+
+    fn dict_has_key(&mut self, call: &ir::DirectCall, out: &mut Vec<Instruction>) -> StructuredResult<()> {
+        self.expression(&call.arguments[0].value, out)?;
+        self.expression_slot_value(&call.arguments[1].value, out)?;
+        self.call_runtime_helper(
+            "__dict_has_key",
+            [ValueType::I32, ValueType::I64],
+            [ValueType::I32],
+            out,
+        );
+        Ok(())
+    }
+
+    fn dict_delete(&mut self, call: &ir::DirectCall, out: &mut Vec<Instruction>) -> StructuredResult<()> {
+        self.expression(&call.arguments[0].value, out)?;
+        self.expression_slot_value(&call.arguments[1].value, out)?;
+        self.call_runtime_helper("__dict_delete", [ValueType::I32, ValueType::I64], [ValueType::I32], out);
         Ok(())
     }
 
@@ -1533,13 +1669,23 @@ impl<'a> StructuredEmitter<'a> {
     ) -> StructuredResult<()> {
         self.expression(left, out)?;
         self.expression(right, out)?;
-        out.push(match left.type_ {
-            Type::Int => Instruction::I64Eq,
-            Type::Float => Instruction::F64Eq,
-            Type::Bool => Instruction::I32Eq,
-            Type::Nil => Instruction::I32Const(1),
-            _ => return Err(StructuredError::Unsupported),
-        });
+        match left.type_ {
+            Type::Int => out.push(Instruction::I64Eq),
+            Type::Float => out.push(Instruction::F64Eq),
+            Type::Bool => out.push(Instruction::I32Eq),
+            Type::Nil => out.push(Instruction::I32Const(1)),
+            Type::String
+            | Type::BitArray
+            | Type::Tuple(_)
+            | Type::List(_)
+            | Type::Record { .. }
+            | Type::Custom { .. }
+            | Type::Opaque { .. }
+            | Type::Function { .. } => {
+                self.call_runtime_helper("__equal_value", [ValueType::I32, ValueType::I32], [ValueType::I32], out);
+            }
+            Type::Generic(_) => return Err(StructuredError::Unsupported),
+        }
         Ok(())
     }
 
@@ -2146,6 +2292,15 @@ impl<'a> StructuredEmitter<'a> {
                 self.function_id(&function.name),
                 &[],
             )) as u64),
+            ExpressionKind::BitArray(bit_array) => {
+                let bytes = bit_array.bytes();
+                Ok(self.push_static(runtime::bit_array_object(
+                    self.config,
+                    self.next_static_offset,
+                    &bytes,
+                    bit_array.bit_len,
+                )) as u64)
+            }
             _ => Err(StructuredError::Unsupported),
         }
     }
@@ -2206,12 +2361,36 @@ impl<'a> StructuredEmitter<'a> {
             return global;
         }
         let global = self.module.push_global(Global {
+            name: None,
             type_: ValueType::I32,
             mutable: true,
             init: vec![Instruction::I32Const(self.config.heap_start as i32)],
         });
         self.heap_global = Some(global);
         global
+    }
+
+    fn name_heap_global(&mut self) {
+        if let Some(global) = self.heap_global {
+            self.module.globals[global.0 as usize].name = Some("__heap".into());
+        }
+    }
+
+    fn ensure_last_panic_global(&mut self) {
+        if self
+            .module
+            .globals
+            .iter()
+            .any(|global| global.name.as_deref() == Some("__last_panic_payload"))
+        {
+            return;
+        }
+        self.module.push_global(Global {
+            name: Some("__last_panic_payload".into()),
+            type_: ValueType::I32,
+            mutable: true,
+            init: vec![Instruction::I32Const(0)],
+        });
     }
 
     fn function_id(&self, name: &str) -> u32 {
@@ -2253,8 +2432,14 @@ fn result_types(type_: &Type, span: crate::source::Span) -> StructuredResult<Vec
     if matches!(type_, Type::Nil) { Ok(Vec::new()) } else { Ok(vec![value_type(type_, span)?]) }
 }
 
-fn value_type(type_: &Type, _span: crate::source::Span) -> StructuredResult<ValueType> {
-    maybe_value_type(type_).ok_or(StructuredError::Unsupported)
+fn value_type(type_: &Type, span: crate::source::Span) -> StructuredResult<ValueType> {
+    maybe_value_type(type_).ok_or_else(|| {
+        StructuredError::Diagnostics(vec![
+            Diagnostic::new(DiagnosticCode::WasmError, "unsupported host ABI")
+                .with_label(Label::primary(span, "unsupported ABI value here"))
+                .with_note("Wasm boundaries require concrete scalar or managed runtime types"),
+        ])
+    })
 }
 
 fn maybe_value_type(type_: &Type) -> Option<ValueType> {

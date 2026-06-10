@@ -23,6 +23,7 @@ pub(crate) struct Module {
     pub(crate) tables: Vec<Table>,
     pub(crate) memories: Vec<Memory>,
     pub(crate) globals: Vec<Global>,
+    pub(crate) raw_wat_items: Vec<String>,
     pub(crate) exports: Vec<Export>,
     pub(crate) data_segments: Vec<DataSegment>,
     pub(crate) custom_sections: Vec<CustomSection>,
@@ -193,6 +194,7 @@ pub(crate) struct Memory {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Global {
+    pub(crate) name: Option<String>,
     pub(crate) type_: ValueType,
     pub(crate) mutable: bool,
     pub(crate) init: Vec<Instruction>,
@@ -281,6 +283,10 @@ pub(crate) enum Instruction {
     CallIndirect {
         table: TableId,
         type_id: TypeId,
+        type_: FunctionType,
+    },
+    CallName {
+        name: String,
         type_: FunctionType,
     },
     Drop(ValueType),
@@ -386,7 +392,9 @@ impl Instruction {
                 consumes.push(I32);
                 StackEffect::new(consumes, results.clone())
             }
-            I::Call { type_, .. } => StackEffect::new(type_.params.clone(), type_.results.clone()),
+            I::Call { type_, .. } | I::CallName { type_, .. } => {
+                StackEffect::new(type_.params.clone(), type_.results.clone())
+            }
             I::CallIndirect { type_, .. } => {
                 let mut consumes = type_.params.clone();
                 consumes.push(I32);
@@ -541,6 +549,11 @@ impl<'a> WatRenderer<'a> {
         for function in &self.module.functions {
             self.render_function(function);
         }
+        for item in &self.module.raw_wat_items {
+            for line in item.lines() {
+                self.line(line);
+            }
+        }
         for export in &self.module.exports {
             self.render_export(export);
         }
@@ -584,6 +597,12 @@ impl<'a> WatRenderer<'a> {
     }
 
     fn render_global(&mut self, global: &Global) {
+        let name = global
+            .name
+            .as_deref()
+            .map(wat_id)
+            .map(|name| format!(" {name}"))
+            .unwrap_or_default();
         let mutability = if global.mutable { "mut " } else { "" };
         let init = global
             .init
@@ -591,7 +610,7 @@ impl<'a> WatRenderer<'a> {
             .map(instruction_inline_wat)
             .collect::<Vec<_>>()
             .join(" ");
-        self.line(&format!("(global ({mutability}{}) {init})", global.type_));
+        self.line(&format!("(global{name} ({mutability}{}) {init})", global.type_));
     }
 
     fn render_function(&mut self, function: &Function) {
@@ -636,9 +655,9 @@ impl<'a> WatRenderer<'a> {
             .collect::<Vec<_>>()
             .join(" ");
         self.line(&format!(
-            "(data (memory {}) (offset {offset}) {:?})",
+            "(data (memory {}) (offset {offset}) \"{}\")",
             segment.memory.0,
-            String::from_utf8_lossy(&segment.bytes)
+            wat_bytes(&segment.bytes)
         ));
     }
 
@@ -715,6 +734,7 @@ fn instruction_inline_wat(instruction: &Instruction) -> String {
         Instruction::CallIndirect { table, type_id, .. } => {
             format!("call_indirect (type {}) (table {})", type_id.0, table.0)
         }
+        Instruction::CallName { name, .. } => format!("call ${}", wat_id_part(name)),
         Instruction::Drop(_) => "drop".into(),
         Instruction::Select(_) => "select".into(),
         Instruction::LocalGet { local, .. } => format!("local.get {}", local.0),
@@ -805,13 +825,18 @@ fn max_suffix(maximum: Option<u32>) -> String {
     maximum.map(|maximum| format!(" {maximum}")).unwrap_or_default()
 }
 
+fn wat_bytes(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("\\{byte:02x}")).collect()
+}
+
 fn wat_id(name: &str) -> String {
-    let mut out = String::from("$");
-    out.extend(
-        name.chars()
-            .map(|char| if char.is_ascii_alphanumeric() || char == '_' { char } else { '_' }),
-    );
-    out
+    format!("${}", wat_id_part(name))
+}
+
+fn wat_id_part(name: &str) -> String {
+    name.chars()
+        .map(|char| if char.is_ascii_alphanumeric() || char == '_' { char } else { '_' })
+        .collect()
 }
 
 #[cfg(test)]

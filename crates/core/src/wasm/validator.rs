@@ -289,6 +289,7 @@ impl<'a> Validator<'a> {
                     valid = false;
                 }
             },
+            Instruction::CallName { .. } => {}
             Instruction::CallIndirect { table, type_id, type_ } => {
                 if self.table_type(*table).is_none() {
                     self.error(format!("call_indirect references unknown table index {}", table.0));

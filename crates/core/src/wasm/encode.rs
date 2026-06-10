@@ -57,6 +57,7 @@ pub(super) fn encode_instruction(instruction: &Instruction, out: &mut Vec<u8>, m
             encode_u32(type_id.0, out);
             encode_u32(table.0, out);
         }
+        Instruction::CallName { name, .. } => panic!("cannot encode raw WAT helper call `{name}` directly"),
         Instruction::Drop(_) => out.push(0x1a),
         Instruction::Select(_) => out.push(0x1b),
         Instruction::LocalGet { local, .. } => {

@@ -84,20 +84,9 @@ impl ir::Module {
     }
 
     pub fn emit_wasm_with_options(&self, options: EmitOptions) -> Result<WasmModule, Diagnostics> {
-        if let Some(module) = codegen::emit(self, options)? {
-            let wat = module.structured_wat()?;
-            let bytes = module.structured_bytes()?;
-            return Ok(WasmModule { wat, bytes });
-        }
-
-        let wat = self.emit_wat_with_options(options)?;
-        let bytes = wat::parse_str(&wat).map_err(|error| {
-            vec![Diagnostic::new(
-                DiagnosticCode::WasmError,
-                format!("could not assemble WAT: {error}"),
-            )]
-        })?;
-
+        let module = codegen::emit(self, options)?;
+        let wat = module.structured_wat()?;
+        let bytes = module.structured_bytes()?;
         Ok(WasmModule { wat, bytes })
     }
 
@@ -106,10 +95,12 @@ impl ir::Module {
     }
 
     pub fn emit_wat_with_options(&self, options: EmitOptions) -> Result<String, Diagnostics> {
-        if let Some(module) = codegen::emit(self, options)? {
-            return module.structured_wat();
-        }
+        let module = codegen::emit(self, options)?;
+        module.structured_wat()
+    }
 
+    #[allow(dead_code)]
+    fn emit_fallback_wat_with_options(&self, options: EmitOptions) -> Result<String, Diagnostics> {
         let mut emitter = Emitter::new(
             self.functions
                 .iter()
@@ -188,6 +179,15 @@ impl builder::Module {
     }
 
     fn structured_bytes(&self) -> Result<Vec<u8>, Diagnostics> {
+        if !self.raw_wat_items.is_empty() {
+            let wat = self.structured_wat()?;
+            return wat::parse_str(&wat).map_err(|error| {
+                vec![Diagnostic::new(
+                    DiagnosticCode::WasmError,
+                    format!("could not assemble structured WAT with runtime helpers: {error}"),
+                )]
+            });
+        }
         self.to_wasm_bytes()
             .map_err(|errors| self.structured_validation_diagnostics(errors))
     }
@@ -2148,6 +2148,12 @@ fn runtime_helper_roots(wat: &str) -> HashSet<String> {
         .collect()
 }
 
+fn runtime_helper_wat(config: runtime::RuntimeConfig, helper_roots: &HashSet<String>) -> String {
+    let mut prelude = RuntimePrelude { wat: String::new(), fragments: config.runtime_helper_fragments() };
+    prelude.helpers(helper_roots);
+    prelude.wat
+}
+
 impl runtime::RuntimeConfig {
     fn runtime_helper_fragments(self) -> Vec<RuntimeHelperFragment> {
         let alloc_helper = fragments::allocation::ALLOC_HELPER
@@ -2484,14 +2490,17 @@ mod tests {
     use crate::{ast, ir, parse, resolve, types};
     use wasmtime::{Caller, Engine, Instance, Linker, Module, Store};
 
-    fn compile_wasm(source: &str) -> WasmModule {
+    fn lower_ir(source: &str) -> ir::Module {
         let source = SourceFile::new(SourceFileId(0), source);
         let cst = parse::parse(source).expect("parse source");
         let ast = ast::build(&cst).expect("build ast");
         let resolved = resolve::resolve(ast).expect("resolve names");
         let typed = types::check(resolved).expect("type check source");
-        let ir = ir::lower(typed).expect("lower source");
-        ir.emit_wasm().expect("emit wasm")
+        ir::lower(typed).expect("lower source")
+    }
+
+    fn compile_wasm(source: &str) -> WasmModule {
+        lower_ir(source).emit_wasm().expect("emit wasm")
     }
 
     fn compile_wasm_target(source: &str, target: CompileTarget) -> Result<WasmModule, Diagnostics> {
@@ -2641,7 +2650,7 @@ mod tests {
   )
   (export "pair" (func 0))
   (export "memory" (memory 0))
-  (data (memory 0) (offset i32.const 1024) "\u{3}\0\0\0\u{2}\0\0\0\u{1}\0\0\0\0\0\0\0\u{2}\0\0\0\0\0\0\0")
+  (data (memory 0) (offset i32.const 1024) "\03\00\00\00\02\00\00\00\01\00\00\00\00\00\00\00\02\00\00\00\00\00\00\00")
 )
 "#);
     }
@@ -2670,6 +2679,84 @@ pub fn text_empty() -> Bool { string.is_empty("") }
             .get_typed_func::<(), i32>(&mut store, "text_empty")
             .expect("get text_empty");
         assert_eq!(text_empty.call(&mut store, ()).expect("call text_empty"), 1);
+    }
+
+    #[test]
+    fn structured_codegen_ports_helper_backed_stdlib_intrinsics() {
+        let cases = [
+            ("int", "import gleam/int\npub fn number() { int.to_string(-42) }"),
+            (
+                "float",
+                "import gleam/float\npub fn float_text() { float.to_string(1.5) }",
+            ),
+            (
+                "string_concat",
+                "import gleam/string\npub fn text_len() -> Int { string.length(string.concat([\"a\", \"bc\"])) }",
+            ),
+            (
+                "list_length",
+                "import gleam/list\npub fn item_count() -> Int { list.length([1, 2, 3]) }",
+            ),
+            (
+                "list_reverse",
+                "import gleam/list\npub fn reversed() { list.reverse([1, 2, 3]) }",
+            ),
+            (
+                "bit_array_starts_with",
+                "import gleam/bit_array\npub fn bits_start() -> Bool { bit_array.starts_with(<<1, 2, 3>>, <<1, 2>>) }",
+            ),
+            (
+                "bit_array_concat",
+                "import gleam/bit_array\npub fn bits_joined() -> BitArray { bit_array.concat([<<1>>, <<2>>, <<3>>]) }",
+            ),
+            (
+                "bit_array_append",
+                "import gleam/bit_array\npub fn bits_append_size() -> Int { bit_array.bit_size(bit_array.append(<<1>>, <<2>>)) }",
+            ),
+            (
+                "dict",
+                r#"import gleam/dict
+pub fn dict_value() {
+  let values = dict.insert(dict.new(), "a", 42)
+  dict.get(values, "a")
+}
+pub fn dict_missing() -> Bool {
+  let values = dict.insert(dict.new(), "a", 42)
+  dict.has_key(dict.delete(values, "a"), "a")
+}
+pub fn dict_persistent_size() -> Int {
+  let original = dict.new()
+  let updated = dict.insert(original, "a", 42)
+  dict.size(original) + dict.size(updated)
+}
+"#,
+            ),
+        ];
+        let mut helper_wat = String::new();
+        for (name, source) in cases {
+            let ir = lower_ir(source);
+            let module = codegen::emit(&ir, EmitOptions::default())
+                .unwrap_or_else(|_| panic!("{name} failed structured codegen"));
+            helper_wat.push_str(&module.raw_wat_items.join("\n"));
+        }
+        for helper in [
+            "$__int_to_string",
+            "$__float_to_string",
+            "$__string_concat_list",
+            "$__list_length",
+            "$__list_reverse",
+            "$__bit_array_append",
+            "$__bit_array_concat_list",
+            "$__bit_array_match",
+            "$__dict_new",
+            "$__dict_insert",
+            "$__dict_get",
+            "$__dict_has_key",
+            "$__dict_delete",
+            "$__dict_size",
+        ] {
+            assert!(helper_wat.contains(helper), "missing {helper}\n{helper_wat}");
+        }
     }
 
     #[test]
