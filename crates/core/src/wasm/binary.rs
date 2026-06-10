@@ -6,16 +6,16 @@
 
 use super::{builder::*, encode::*};
 
-pub(super) struct BinaryEmitter<'a> {
+pub struct BinaryEmitter<'a> {
     module: &'a Module,
 }
 
 impl<'a> BinaryEmitter<'a> {
-    pub(super) fn new(module: &'a Module) -> Self {
+    pub fn new(module: &'a Module) -> Self {
         Self { module }
     }
 
-    pub(super) fn emit(&self) -> Vec<u8> {
+    pub fn emit(&self) -> Vec<u8> {
         let mut out = b"\0asm\x01\0\0\0".to_vec();
         for section in self.module.custom_sections.iter().map(Self::custom_section) {
             out.extend(section);
@@ -27,6 +27,7 @@ impl<'a> BinaryEmitter<'a> {
         self.section(&mut out, 5, self.memory_section());
         self.section(&mut out, 6, self.global_section());
         self.section(&mut out, 7, self.export_section());
+        self.section(&mut out, 9, self.element_section());
         self.section(&mut out, 10, self.code_section());
         self.section(&mut out, 11, self.data_section());
         out
@@ -186,6 +187,31 @@ impl<'a> BinaryEmitter<'a> {
             body.push(0x0b);
             encode_u32(body.len() as u32, &mut out);
             out.extend(body);
+        }
+        out
+    }
+
+    fn element_section(&self) -> Vec<u8> {
+        if self.module.element_segments.is_empty() {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        encode_u32(self.module.element_segments.len() as u32, &mut out);
+        for segment in &self.module.element_segments {
+            if segment.table.0 == 0 {
+                out.push(0x00);
+            } else {
+                out.push(0x02);
+                encode_u32(segment.table.0, &mut out);
+            }
+            out.push(0x41);
+            encode_i32(segment.offset as i32, &mut out);
+
+            out.push(0x0b);
+            encode_u32(segment.functions.len() as u32, &mut out);
+            for func in &segment.functions {
+                encode_u32(func.0, &mut out);
+            }
         }
         out
     }

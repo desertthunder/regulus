@@ -1,6 +1,6 @@
 //! Checked WAT fragments for equality ordering runtime helpers.
 
-pub(crate) const EQUALITY_AND_ORDERING_HELPERS: &str = r#"
+pub const EQUALITY_AND_ORDERING_HELPERS: &str = r#"
   (func $__equal_bytes (param $left i32) (param $right i32) (param $len i32) (result i32)
     (local $i i32)
     i32.const 0

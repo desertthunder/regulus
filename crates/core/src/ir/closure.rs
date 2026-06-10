@@ -6,7 +6,7 @@ use super::{
 };
 use remapping::{LiftedLocalPolicy, captured_locals, lift_closure_body};
 
-pub(super) fn lower_anonymous_function(
+pub fn lower_anonymous_function(
     lowerer: &mut Lowerer, context: &mut FunctionContext, function: &ast::AnonymousFunction,
 ) -> Option<Expression> {
     let name = lowerer.next_anonymous_name();
@@ -88,7 +88,7 @@ pub(super) fn lower_anonymous_function(
     })
 }
 
-pub(super) fn lower_capture(
+pub fn lower_capture(
     lowerer: &mut Lowerer, context: &mut FunctionContext, capture: &ast::Capture,
 ) -> Option<Expression> {
     let function = lowerer.lower_expression(context, &capture.function)?;
@@ -190,7 +190,7 @@ pub(super) fn lower_capture(
     })
 }
 
-pub(super) fn lower_synthetic_anonymous_function(
+pub fn lower_synthetic_anonymous_function(
     lowerer: &mut Lowerer, context: &mut FunctionContext, span: super::Span, outer_local_count: usize,
     original_params: Vec<Local>, mut body: Block, type_: &Type,
 ) -> Expression {

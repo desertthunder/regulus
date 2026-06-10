@@ -7,8 +7,8 @@
 use super::builder::*;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ValidationError {
-    pub(crate) message: String,
+pub struct ValidationError {
+    pub message: String,
 }
 
 impl ValidationError {
@@ -17,19 +17,19 @@ impl ValidationError {
     }
 }
 
-pub(crate) type ValidationResult<T> = Result<T, Vec<ValidationError>>;
+pub type ValidationResult<T> = Result<T, Vec<ValidationError>>;
 
-pub(super) struct Validator<'a> {
+pub struct Validator<'a> {
     module: &'a Module,
     errors: Vec<ValidationError>,
 }
 
 impl<'a> Validator<'a> {
-    pub(super) fn new(module: &'a Module) -> Self {
+    pub fn new(module: &'a Module) -> Self {
         Self { module, errors: Vec::new() }
     }
 
-    pub(super) fn validate(mut self) -> ValidationResult<()> {
+    pub fn validate(mut self) -> ValidationResult<()> {
         self.validate_module();
         if self.errors.is_empty() { Ok(()) } else { Err(self.errors) }
     }
@@ -55,6 +55,22 @@ impl<'a> Validator<'a> {
             if self.validate_sequence(&segment.offset, &mut context, vec![ValueType::I32]) != Some(vec![ValueType::I32])
             {
                 self.error("data segment offset must leave one i32 on the stack");
+            }
+        }
+        for (idx, segment) in self.module.element_segments.iter().enumerate() {
+            if self.table_type(segment.table).is_none() {
+                self.error(format!(
+                    "element segment {idx} references unknown table index {}",
+                    segment.table.0
+                ));
+            }
+            for func_id in &segment.functions {
+                if self.function_type(*func_id).is_none() {
+                    self.error(format!(
+                        "element segment {idx} references unknown function index {}",
+                        func_id.0
+                    ));
+                }
             }
         }
         for (defined_index, function) in self.module.functions.iter().enumerate() {

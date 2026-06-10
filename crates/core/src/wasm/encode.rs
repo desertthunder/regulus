@@ -5,7 +5,7 @@
 
 use super::builder::*;
 
-pub(super) fn encode_instruction(instruction: &Instruction, out: &mut Vec<u8>, module: &Module) {
+pub fn encode_instruction(instruction: &Instruction, out: &mut Vec<u8>, module: &Module) {
     match instruction {
         Instruction::Unreachable => out.push(0x00),
         Instruction::Block { type_, body } => {
@@ -153,13 +153,13 @@ pub(super) fn encode_instruction(instruction: &Instruction, out: &mut Vec<u8>, m
     }
 }
 
-pub(super) fn encode_memory_instruction(opcode: u8, arg: &MemoryArg, out: &mut Vec<u8>) {
+pub fn encode_memory_instruction(opcode: u8, arg: &MemoryArg, out: &mut Vec<u8>) {
     out.push(opcode);
     encode_u32(arg.align, out);
     encode_u32(arg.offset, out);
 }
 
-pub(super) fn encode_locals(locals: &[Local], out: &mut Vec<u8>) {
+pub fn encode_locals(locals: &[Local], out: &mut Vec<u8>) {
     let mut groups: Vec<(u32, ValueType)> = Vec::new();
     for local in locals {
         match groups.last_mut() {
@@ -174,7 +174,7 @@ pub(super) fn encode_locals(locals: &[Local], out: &mut Vec<u8>) {
     }
 }
 
-pub(super) fn encode_block_type(type_: &BlockType, out: &mut Vec<u8>, module: &Module) {
+pub fn encode_block_type(type_: &BlockType, out: &mut Vec<u8>, module: &Module) {
     match (type_.params.as_slice(), type_.results.as_slice()) {
         ([], []) => out.push(0x40),
         ([], [result]) => out.push(u8::from(*result)),
@@ -189,12 +189,12 @@ pub(super) fn encode_block_type(type_: &BlockType, out: &mut Vec<u8>, module: &M
     }
 }
 
-pub(super) fn encode_table(table: &Table, out: &mut Vec<u8>) {
+pub fn encode_table(table: &Table, out: &mut Vec<u8>) {
     out.push(u8::from(table.element_type));
     encode_limits(table.minimum, table.maximum, out);
 }
 
-pub(super) fn encode_limits(minimum: u32, maximum: Option<u32>, out: &mut Vec<u8>) {
+pub fn encode_limits(minimum: u32, maximum: Option<u32>, out: &mut Vec<u8>) {
     match maximum {
         Some(maximum) => {
             out.push(0x01);
@@ -208,7 +208,7 @@ pub(super) fn encode_limits(minimum: u32, maximum: Option<u32>, out: &mut Vec<u8
     }
 }
 
-pub(super) fn encode_vec_types(types: &[ValueType], out: &mut Vec<u8>) {
+pub fn encode_vec_types(types: &[ValueType], out: &mut Vec<u8>) {
     encode_u32(types.len() as u32, out);
     for type_ in types {
         out.push(u8::from(*type_));
@@ -237,12 +237,12 @@ impl From<ReferenceType> for u8 {
     }
 }
 
-pub(super) fn encode_name(name: &str, out: &mut Vec<u8>) {
+pub fn encode_name(name: &str, out: &mut Vec<u8>) {
     encode_u32(name.len() as u32, out);
     out.extend(name.as_bytes());
 }
 
-pub(super) fn encode_u32(mut value: u32, out: &mut Vec<u8>) {
+pub fn encode_u32(mut value: u32, out: &mut Vec<u8>) {
     loop {
         let mut byte = (value & 0x7f) as u8;
         value >>= 7;
@@ -256,11 +256,11 @@ pub(super) fn encode_u32(mut value: u32, out: &mut Vec<u8>) {
     }
 }
 
-pub(super) fn encode_i32(value: i32, out: &mut Vec<u8>) {
+pub fn encode_i32(value: i32, out: &mut Vec<u8>) {
     encode_i64(value as i64, out);
 }
 
-pub(super) fn encode_i64(mut value: i64, out: &mut Vec<u8>) {
+pub fn encode_i64(mut value: i64, out: &mut Vec<u8>) {
     loop {
         let byte = (value as u8) & 0x7f;
         value >>= 7;

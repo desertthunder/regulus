@@ -1,6 +1,6 @@
 //! Checked WAT fragments for lists runtime helpers.
 
-pub(crate) const LIST_HELPERS: &str = r#"
+pub const LIST_HELPERS: &str = r#"
   (func $__list_cons (param $head i64) (param $tail i32) (result i32)
     (local $ptr i32)
     i32.const 24

@@ -5,19 +5,19 @@ use crate::ir::{
     MemoryOperation,
 };
 
-pub(super) struct LiftedLocals {
-    pub(super) params: Vec<Local>,
-    pub(super) locals: Vec<Local>,
-    pub(super) original_params: Vec<Local>,
+pub struct LiftedLocals {
+    pub params: Vec<Local>,
+    pub locals: Vec<Local>,
+    pub original_params: Vec<Local>,
 }
 
 #[derive(Clone, Copy)]
-pub(super) enum LiftedLocalPolicy {
+pub enum LiftedLocalPolicy {
     IncludeBodyLocals,
     ParamsOnly,
 }
 
-pub(super) fn lift_closure_body(
+pub fn lift_closure_body(
     context: &FunctionContext, body: &mut Block, outer_local_count: usize, original_params: &[Local],
     captures: &[Capture], policy: LiftedLocalPolicy,
 ) -> LiftedLocals {
@@ -53,7 +53,7 @@ pub(super) fn lift_closure_body(
     LiftedLocals { params, locals, original_params: lifted_params }
 }
 
-pub(super) fn captured_locals(context: &FunctionContext, body: &Block, outer_local_count: usize) -> Vec<Capture> {
+pub fn captured_locals(context: &FunctionContext, body: &Block, outer_local_count: usize) -> Vec<Capture> {
     let mut used = Vec::new();
     collect_block_locals(body, &mut used);
     let mut captures = Vec::new();

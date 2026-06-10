@@ -1,6 +1,6 @@
 //! Checked WAT fragments for allocation runtime helpers.
 
-pub(crate) const ALLOC_HELPER: &str = r#"
+pub const ALLOC_HELPER: &str = r#"
   (func $__last_panic (export "__last_panic") (result i32)
     global.get $__last_panic_payload
   )

@@ -7,17 +7,17 @@ use crate::{
     source::Span,
 };
 
-pub(crate) type ParameterLabels = Vec<Option<String>>;
-pub(crate) type FunctionLabelMap = HashMap<String, ParameterLabels>;
+pub type ParameterLabels = Vec<Option<String>>;
+pub type FunctionLabelMap = HashMap<String, ParameterLabels>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct CallArgumentOrder {
+pub struct CallArgumentOrder {
     pub indices: Vec<usize>,
     pub has_labels: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct UseCallbackPlacement {
+pub struct UseCallbackPlacement {
     pub argument_indices: Vec<usize>,
     pub callback_index: usize,
     pub has_labels: bool,
@@ -30,7 +30,7 @@ pub enum ArgumentLabelError {
     TooManyArguments { span: Span },
 }
 
-pub(crate) fn function_label_map(module: &ast::Module) -> FunctionLabelMap {
+pub fn function_label_map(module: &ast::Module) -> FunctionLabelMap {
     let mut labels = FunctionLabelMap::new();
     collect_function_labels(&module.declarations, &mut labels);
     labels
@@ -58,7 +58,7 @@ fn parameter_labels(parameters: &[ast::Parameter]) -> ParameterLabels {
         .collect()
 }
 
-pub(crate) fn call_argument_order(
+pub fn call_argument_order(
     labels: Option<&[Option<String>]>, arguments: &[ast::Argument], param_count: usize,
 ) -> Result<CallArgumentOrder, ArgumentLabelError> {
     let Some(labels) = labels else {
@@ -85,7 +85,7 @@ pub(crate) fn call_argument_order(
     Ok(CallArgumentOrder { indices, has_labels: true })
 }
 
-pub(crate) fn use_callback_placement(
+pub fn use_callback_placement(
     labels: Option<&[Option<String>]>, arguments: &[ast::Argument], param_count: usize,
 ) -> Result<UseCallbackPlacement, ArgumentLabelError> {
     let order = call_argument_order(labels, arguments, param_count)?;

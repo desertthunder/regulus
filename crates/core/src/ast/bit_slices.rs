@@ -25,7 +25,7 @@ pub struct BitArraySegmentOption {
 }
 
 impl AstBuilder<'_> {
-    pub(super) fn bit_array(&self, node: Node<'_>) -> Result<BitArray, Diagnostics> {
+    pub fn bit_array(&self, node: Node<'_>) -> Result<BitArray, Diagnostics> {
         Ok(BitArray {
             span: self.span(node),
             segments: self

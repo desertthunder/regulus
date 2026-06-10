@@ -10,122 +10,139 @@ use super::validator::{ValidationResult, Validator};
 use crate::source::Span;
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub(crate) struct Module {
-    pub(crate) source_span: Option<Span>,
-    pub(crate) types: Vec<FunctionType>,
-    pub(crate) imports: Vec<Import>,
-    pub(crate) functions: Vec<Function>,
-    pub(crate) tables: Vec<Table>,
-    pub(crate) memories: Vec<Memory>,
-    pub(crate) globals: Vec<Global>,
-    pub(crate) raw_wat_items: Vec<String>,
-    pub(crate) exports: Vec<Export>,
-    pub(crate) data_segments: Vec<DataSegment>,
-    pub(crate) custom_sections: Vec<CustomSection>,
+pub struct Module {
+    pub source_span: Option<Span>,
+    pub types: Vec<FunctionType>,
+    pub imports: Vec<Import>,
+    pub functions: Vec<Function>,
+    pub tables: Vec<Table>,
+    pub memories: Vec<Memory>,
+    pub globals: Vec<Global>,
+    pub raw_wat_items: Vec<String>,
+    pub exports: Vec<Export>,
+    pub element_segments: Vec<ElementSegment>,
+    pub data_segments: Vec<DataSegment>,
+    pub custom_sections: Vec<CustomSection>,
 }
 
 impl Module {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self::default()
     }
 
-    pub(crate) fn push_type(&mut self, type_: FunctionType) -> TypeId {
+    pub fn push_type(&mut self, type_: FunctionType) -> TypeId {
         let id = TypeId(self.types.len() as u32);
         self.types.push(type_);
         id
     }
 
-    pub(crate) fn push_import(&mut self, import: Import) -> ImportId {
+    pub fn push_import(&mut self, import: Import) -> ImportId {
         let id = ImportId(self.imports.len() as u32);
         self.imports.push(import);
         id
     }
 
-    pub(crate) fn push_function(&mut self, function: Function) -> FunctionId {
+    pub fn push_function(&mut self, function: Function) -> FunctionId {
         let id = FunctionId((self.imported_function_count() + self.functions.len()) as u32);
         self.functions.push(function);
         id
     }
 
-    pub(crate) fn push_memory(&mut self, memory: Memory) -> MemoryId {
+    pub fn push_memory(&mut self, memory: Memory) -> MemoryId {
         let id = MemoryId((self.imported_memory_count() + self.memories.len()) as u32);
         self.memories.push(memory);
         id
     }
 
-    pub(crate) fn push_global(&mut self, global: Global) -> GlobalId {
+    pub fn push_global(&mut self, global: Global) -> GlobalId {
         let id = GlobalId(self.globals.len() as u32);
         self.globals.push(global);
         id
     }
 
-    /// TODO: add ABI/backend support for compiler-emitted Wasm tables.
-    #[allow(dead_code)]
-    pub(crate) fn push_table(&mut self, table: Table) -> TableId {
+    /// Intern a function type, reusing an existing entry if one matches.
+    pub fn intern_type(&mut self, type_: FunctionType) -> TypeId {
+        if let Some(pos) = self.types.iter().position(|t| t == &type_) {
+            TypeId(pos as u32)
+        } else {
+            self.push_type(type_)
+        }
+    }
+
+    pub fn push_table(&mut self, table: Table) -> TableId {
         let id = TableId((self.imported_table_count() + self.tables.len()) as u32);
         self.tables.push(table);
         id
     }
 
-    pub(super) fn imported_function_count(&self) -> usize {
+    pub fn imported_function_count(&self) -> usize {
         self.imports
             .iter()
             .filter(|import| matches!(import.desc, ImportDesc::Function(_)))
             .count()
     }
 
-    pub(super) fn imported_memory_count(&self) -> usize {
+    pub fn imported_memory_count(&self) -> usize {
         self.imports
             .iter()
             .filter(|import| matches!(import.desc, ImportDesc::Memory(_)))
             .count()
     }
 
-    pub(super) fn imported_table_count(&self) -> usize {
+    pub fn imported_table_count(&self) -> usize {
         self.imports
             .iter()
             .filter(|import| matches!(import.desc, ImportDesc::Table(_)))
             .count()
     }
+
+    pub fn push_element(&mut self, segment: ElementSegment) {
+        self.element_segments.push(segment);
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ElementSegment {
+    pub table: TableId,
+    pub offset: u32,
+    pub functions: Vec<FunctionId>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct TypeId(pub(crate) u32);
+pub struct TypeId(pub u32);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct ImportId(pub(crate) u32);
+pub struct ImportId(pub u32);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct FunctionId(pub(crate) u32);
+pub struct FunctionId(pub u32);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct LocalId(pub(crate) u32);
+pub struct LocalId(pub u32);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct MemoryId(pub(crate) u32);
+pub struct MemoryId(pub u32);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct GlobalId(pub(crate) u32);
+pub struct GlobalId(pub u32);
 
-/// TODO: add ABI/backend support for compiler-emitted Wasm tables.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct TableId(pub(crate) u32);
+pub struct TableId(pub u32);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct FunctionType {
-    pub(crate) params: Vec<ValueType>,
-    pub(crate) results: Vec<ValueType>,
+pub struct FunctionType {
+    pub params: Vec<ValueType>,
+    pub results: Vec<ValueType>,
 }
 
 impl FunctionType {
-    pub(crate) fn new(params: impl Into<Vec<ValueType>>, results: impl Into<Vec<ValueType>>) -> Self {
+    pub fn new(params: impl Into<Vec<ValueType>>, results: impl Into<Vec<ValueType>>) -> Self {
         Self { params: params.into(), results: results.into() }
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum ValueType {
+pub enum ValueType {
     I32,
     I64,
     /// TODO: add ABI/backend support for compiler-emitted 32-bit floats.
@@ -154,14 +171,14 @@ impl fmt::Display for ValueType {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Import {
-    pub(crate) module: String,
-    pub(crate) name: String,
-    pub(crate) desc: ImportDesc,
+pub struct Import {
+    pub module: String,
+    pub name: String,
+    pub desc: ImportDesc,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum ImportDesc {
+pub enum ImportDesc {
     Function(TypeId),
     /// TODO: add ABI/backend support for imported Wasm memories.
     #[allow(dead_code)]
@@ -172,54 +189,52 @@ pub(crate) enum ImportDesc {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Function {
-    pub(crate) name: Option<String>,
-    pub(crate) type_id: TypeId,
-    pub(crate) params: Vec<Local>,
-    pub(crate) locals: Vec<Local>,
-    pub(crate) body: Vec<Instruction>,
+pub struct Function {
+    pub name: Option<String>,
+    pub type_id: TypeId,
+    pub params: Vec<Local>,
+    pub locals: Vec<Local>,
+    pub body: Vec<Instruction>,
 }
 
 impl Function {
-    pub(crate) fn new(type_id: TypeId) -> Self {
+    pub fn new(type_id: TypeId) -> Self {
         Self { name: None, type_id, params: Vec::new(), locals: Vec::new(), body: Vec::new() }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Local {
-    pub(crate) name: Option<String>,
-    pub(crate) type_: ValueType,
+pub struct Local {
+    pub name: Option<String>,
+    pub type_: ValueType,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Memory {
-    pub(crate) minimum_pages: u32,
-    pub(crate) maximum_pages: Option<u32>,
+pub struct Memory {
+    pub minimum_pages: u32,
+    pub maximum_pages: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Global {
-    pub(crate) name: Option<String>,
-    pub(crate) type_: ValueType,
-    pub(crate) mutable: bool,
-    pub(crate) init: Vec<Instruction>,
+pub struct Global {
+    pub name: Option<String>,
+    pub type_: ValueType,
+    pub mutable: bool,
+    pub init: Vec<Instruction>,
 }
 
-/// TODO: add ABI/backend support for compiler-emitted Wasm tables.
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Table {
-    pub(crate) element_type: ReferenceType,
-    pub(crate) minimum: u32,
-    pub(crate) maximum: Option<u32>,
+pub struct Table {
+    pub element_type: ReferenceType,
+    pub minimum: u32,
+    pub maximum: Option<u32>,
 }
 
-/// TODO: add ABI/backend support for compiler-emitted Wasm tables.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum ReferenceType {
+pub enum ReferenceType {
     FuncRef,
+    /// TODO: add ABI/backend support for externref tables.
+    #[allow(dead_code)]
     ExternRef,
 }
 
@@ -233,13 +248,13 @@ impl fmt::Display for ReferenceType {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Export {
-    pub(crate) name: String,
-    pub(crate) desc: ExportDesc,
+pub struct Export {
+    pub name: String,
+    pub desc: ExportDesc,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum ExportDesc {
+pub enum ExportDesc {
     Function(FunctionId),
     Memory(MemoryId),
     /// TODO: add ABI/backend support for exported Wasm tables.
@@ -248,20 +263,20 @@ pub(crate) enum ExportDesc {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct DataSegment {
-    pub(crate) memory: MemoryId,
-    pub(crate) offset: Vec<Instruction>,
-    pub(crate) bytes: Vec<u8>,
+pub struct DataSegment {
+    pub memory: MemoryId,
+    pub offset: Vec<Instruction>,
+    pub bytes: Vec<u8>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct CustomSection {
-    pub(crate) name: String,
-    pub(crate) bytes: Vec<u8>,
+pub struct CustomSection {
+    pub name: String,
+    pub bytes: Vec<u8>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Instruction {
+pub enum Instruction {
     Unreachable,
     Block {
         type_: BlockType,
@@ -293,8 +308,6 @@ pub(crate) enum Instruction {
         function: FunctionId,
         type_: FunctionType,
     },
-    /// TODO: add ABI/backend support for table-backed indirect calls.
-    #[allow(dead_code)]
     CallIndirect {
         table: TableId,
         type_id: TypeId,
@@ -386,7 +399,7 @@ pub(crate) enum Instruction {
 }
 
 impl Instruction {
-    pub(crate) fn stack_effect(&self) -> StackEffect {
+    pub fn stack_effect(&self) -> StackEffect {
         use Instruction as I;
         use ValueType::{F32, F64, I32, I64};
 
@@ -453,67 +466,67 @@ impl Instruction {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct BlockType {
-    pub(crate) params: Vec<ValueType>,
-    pub(crate) results: Vec<ValueType>,
+pub struct BlockType {
+    pub params: Vec<ValueType>,
+    pub results: Vec<ValueType>,
 }
 
 impl BlockType {
-    pub(crate) fn empty() -> Self {
+    pub fn empty() -> Self {
         Self { params: Vec::new(), results: Vec::new() }
     }
 
-    pub(crate) fn new(params: impl Into<Vec<ValueType>>, results: impl Into<Vec<ValueType>>) -> Self {
+    pub fn new(params: impl Into<Vec<ValueType>>, results: impl Into<Vec<ValueType>>) -> Self {
         Self { params: params.into(), results: results.into() }
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct MemoryArg {
-    pub(crate) memory: MemoryId,
-    pub(crate) align: u32,
-    pub(crate) offset: u32,
+pub struct MemoryArg {
+    pub memory: MemoryId,
+    pub align: u32,
+    pub offset: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct StackEffect {
-    pub(crate) consumes: Vec<ValueType>,
-    pub(crate) produces: Vec<ValueType>,
-    pub(crate) control: ControlEffect,
+pub struct StackEffect {
+    pub consumes: Vec<ValueType>,
+    pub produces: Vec<ValueType>,
+    pub control: ControlEffect,
 }
 
 impl StackEffect {
-    pub(crate) fn new(consumes: impl Into<Vec<ValueType>>, produces: impl Into<Vec<ValueType>>) -> Self {
+    pub fn new(consumes: impl Into<Vec<ValueType>>, produces: impl Into<Vec<ValueType>>) -> Self {
         Self { consumes: consumes.into(), produces: produces.into(), control: ControlEffect::Continues }
     }
 
-    pub(crate) fn terminating(consumes: impl Into<Vec<ValueType>>, produces: impl Into<Vec<ValueType>>) -> Self {
+    pub fn terminating(consumes: impl Into<Vec<ValueType>>, produces: impl Into<Vec<ValueType>>) -> Self {
         Self { consumes: consumes.into(), produces: produces.into(), control: ControlEffect::Terminates }
     }
 
-    pub(crate) fn unreachable() -> Self {
+    pub fn unreachable() -> Self {
         Self { consumes: Vec::new(), produces: Vec::new(), control: ControlEffect::Unreachable }
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ControlEffect {
+pub enum ControlEffect {
     Continues,
     Terminates,
     Unreachable,
 }
 
 impl Module {
-    pub(crate) fn validate(&self) -> ValidationResult<()> {
+    pub fn validate(&self) -> ValidationResult<()> {
         Validator::new(self).validate()
     }
 
-    pub(crate) fn to_wasm_bytes(&self) -> ValidationResult<Vec<u8>> {
+    pub fn to_wasm_bytes(&self) -> ValidationResult<Vec<u8>> {
         self.validate()?;
         Ok(BinaryEmitter::new(self).emit())
     }
 
-    pub(crate) fn to_wat(&self) -> ValidationResult<String> {
+    pub fn to_wat(&self) -> ValidationResult<String> {
         self.validate()?;
         Ok(WatRenderer::new(self).render())
     }
@@ -571,6 +584,18 @@ impl<'a> WatRenderer<'a> {
         }
         for export in &self.module.exports {
             self.render_export(export);
+        }
+        for segment in &self.module.element_segments {
+            let funcs = segment
+                .functions
+                .iter()
+                .map(|f| f.0.to_string())
+                .collect::<Vec<_>>()
+                .join(" ");
+            self.line(&format!(
+                "(elem (table {}) (i32.const {}) func {})",
+                segment.table.0, segment.offset, funcs
+            ));
         }
         for segment in &self.module.data_segments {
             self.render_data_segment(segment);
@@ -746,7 +771,11 @@ fn instruction_inline_wat(instruction: &Instruction) -> String {
         Instruction::Return { .. } => "return".into(),
         Instruction::Call { function, .. } => format!("call {}", function.0),
         Instruction::CallIndirect { table, type_id, .. } => {
-            format!("call_indirect (type {}) (table {})", type_id.0, table.0)
+            if table.0 == 0 {
+                format!("call_indirect (type {})", type_id.0)
+            } else {
+                format!("call_indirect {} (type {})", table.0, type_id.0)
+            }
         }
         Instruction::CallName { name, .. } => format!("call ${}", wat_id_part(name)),
         Instruction::Drop(_) => "drop".into(),

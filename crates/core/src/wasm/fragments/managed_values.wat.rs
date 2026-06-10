@@ -1,6 +1,6 @@
 //! Checked WAT fragments for managed values runtime helpers.
 
-pub(crate) const MANAGED_VALUE_HELPERS: &str = r#"
+pub const MANAGED_VALUE_HELPERS: &str = r#"
   (func $__tuple_new (param $arity i32) (param $fields i32) (result i32)
     (local $ptr i32)
     local.get $arity

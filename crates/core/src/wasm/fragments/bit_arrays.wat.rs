@@ -1,6 +1,6 @@
 //! Checked WAT fragments for bit arrays runtime helpers.
 
-pub(crate) const BIT_ARRAY_HELPERS: &str = r#"
+pub const BIT_ARRAY_HELPERS: &str = r#"
   (func $__bit_array_payload_len (param $bit_len i32) (result i32)
     local.get $bit_len
     i32.const 7

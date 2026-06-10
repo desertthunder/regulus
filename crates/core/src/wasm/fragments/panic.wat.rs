@@ -1,6 +1,6 @@
 //! Checked WAT fragments for panic runtime helpers.
 
-pub(crate) const PANIC_HELPERS: &str = r#"
+pub const PANIC_HELPERS: &str = r#"
   (func $__panic
     unreachable
   )

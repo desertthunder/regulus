@@ -1,6 +1,6 @@
 //! Checked WAT fragments for strings runtime helpers.
 
-pub(crate) const STRING_HELPERS: &str = r#"
+pub const STRING_HELPERS: &str = r#"
   (func $__string_new (param $data i32) (param $len i32) (result i32)
     (local $ptr i32)
     local.get $len

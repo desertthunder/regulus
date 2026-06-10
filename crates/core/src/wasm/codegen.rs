@@ -3,8 +3,9 @@
 use std::collections::{HashMap, HashSet};
 
 use super::builder::{
-    BlockType, DataSegment, Export, ExportDesc, Function, FunctionId, FunctionType, Global, GlobalId, Import,
-    ImportDesc, Instruction, Local, LocalId, Memory, MemoryArg, MemoryId, Module, TypeId, ValueType,
+    BlockType, DataSegment, ElementSegment, Export, ExportDesc, Function, FunctionId, FunctionType, Global, GlobalId,
+    Import, ImportDesc, Instruction, Local, LocalId, Memory, MemoryArg, MemoryId, Module, ReferenceType, Table,
+    TableId, TypeId, ValueType,
 };
 use super::{EmitOptions, WasmTarget};
 use crate::ast::LiteralKind;
@@ -12,7 +13,7 @@ use crate::diagnostic::{Diagnostic, DiagnosticCode, Diagnostics, Label};
 use crate::ir::{self, ExpressionKind};
 use crate::{ClosureConstants, runtime, stdlib::STDLIB_IO_HOST_MODULE, types::Type};
 
-pub(super) fn emit(module: &ir::Module, options: EmitOptions) -> Result<Module, Diagnostics> {
+pub fn emit(module: &ir::Module, options: EmitOptions) -> Result<Module, Diagnostics> {
     let emitter = StructuredEmitter::new(module, options);
     match emitter.module(module) {
         Ok(module) => Ok(module),
@@ -71,45 +72,20 @@ impl<'a> PatternSubject<'a> {
     }
 }
 
-struct StructuredEmitter<'a> {
-    source: &'a ir::Module,
-    module: Module,
-    signatures: HashMap<String, FunctionSignature>,
-    function_ids: HashMap<String, FunctionId>,
-    local_indices: HashMap<ir::LocalId, LocalId>,
-    local_types: HashMap<ir::LocalId, Type>,
-    debug_imports: HashMap<DebugImport, FunctionId>,
-    debug_locals: HashMap<DebugImport, LocalId>,
-    scratch_local: Option<LocalId>,
-    alloc_local: Option<LocalId>,
-    alloc_end_local: Option<LocalId>,
-    alloc_pages_local: Option<LocalId>,
-    string_ptr_local: Option<LocalId>,
-    string_left_len_local: Option<LocalId>,
-    string_right_len_local: Option<LocalId>,
-    string_i_local: Option<LocalId>,
-    bit_i_local: Option<LocalId>,
-    bit_value_local: Option<LocalId>,
-    dynamic_data_local: Option<LocalId>,
-    dynamic_decoder_local: Option<LocalId>,
-    dynamic_kind_local: Option<LocalId>,
-    dynamic_tag_local: Option<LocalId>,
-    dynamic_field_local: Option<LocalId>,
-    dynamic_result_local: Option<LocalId>,
-    options: EmitOptions,
-    config: runtime::RuntimeConfig,
-    next_static_offset: u32,
-    memory: Option<MemoryId>,
-    heap_global: Option<GlobalId>,
-    imported_functions: u32,
-    runtime_helper_roots: HashSet<String>,
-}
-
 #[derive(Debug, Clone)]
 struct FunctionSignature {
     type_id: TypeId,
     type_: FunctionType,
 }
+
+#[derive(Debug)]
+enum StructuredError {
+    Unsupported,
+    Invariant(String),
+    Diagnostics(Diagnostics),
+}
+
+type StructuredResult<T> = Result<T, StructuredError>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum DebugImport {
@@ -138,14 +114,42 @@ impl DebugImport {
     }
 }
 
-#[derive(Debug)]
-enum StructuredError {
-    Unsupported,
-    Invariant(String),
-    Diagnostics(Diagnostics),
+struct StructuredEmitter<'a> {
+    source: &'a ir::Module,
+    module: Module,
+    signatures: HashMap<String, FunctionSignature>,
+    function_ids: HashMap<String, FunctionId>,
+    local_indices: HashMap<ir::LocalId, LocalId>,
+    local_types: HashMap<ir::LocalId, Type>,
+    debug_imports: HashMap<DebugImport, FunctionId>,
+    debug_locals: HashMap<DebugImport, LocalId>,
+    scratch_local: Option<LocalId>,
+    alloc_local: Option<LocalId>,
+    alloc_end_local: Option<LocalId>,
+    alloc_pages_local: Option<LocalId>,
+    string_ptr_local: Option<LocalId>,
+    string_left_len_local: Option<LocalId>,
+    string_right_len_local: Option<LocalId>,
+    string_i_local: Option<LocalId>,
+    bit_i_local: Option<LocalId>,
+    bit_value_local: Option<LocalId>,
+    dynamic_data_local: Option<LocalId>,
+    dynamic_decoder_local: Option<LocalId>,
+    dynamic_kind_local: Option<LocalId>,
+    dynamic_tag_local: Option<LocalId>,
+    dynamic_field_local: Option<LocalId>,
+    dynamic_result_local: Option<LocalId>,
+    funcid_locals: Vec<LocalId>,
+    indirect_call_depth: usize,
+    options: EmitOptions,
+    config: runtime::RuntimeConfig,
+    next_static_offset: u32,
+    memory: Option<MemoryId>,
+    heap_global: Option<GlobalId>,
+    imported_functions: u32,
+    func_table: Option<TableId>,
+    runtime_helper_roots: HashSet<String>,
 }
-
-type StructuredResult<T> = Result<T, StructuredError>;
 
 impl<'a> StructuredEmitter<'a> {
     fn new(source: &'a ir::Module, options: EmitOptions) -> Self {
@@ -174,12 +178,15 @@ impl<'a> StructuredEmitter<'a> {
             dynamic_tag_local: None,
             dynamic_field_local: None,
             dynamic_result_local: None,
+            funcid_locals: Vec::new(),
+            indirect_call_depth: 0,
             options,
             config: runtime::RuntimeConfig::DEFAULT,
             next_static_offset: runtime::RuntimeConfig::DEFAULT.static_data_start,
             memory: None,
             heap_global: None,
             imported_functions: 0,
+            func_table: None,
             runtime_helper_roots: HashSet::new(),
         }
     }
@@ -189,6 +196,22 @@ impl<'a> StructuredEmitter<'a> {
         for function in &source.functions {
             let signature = self.function_signature(function)?;
             self.signatures.insert(function.name.clone(), signature);
+        }
+
+        let needs_table = source.functions.iter().any(|f| {
+            f.body.instructions.iter().any(|instr| match instr {
+                ir::Instruction::Evaluate { expression, .. } | ir::Instruction::LocalSet { value: expression, .. } => {
+                    expression.contains_indirect_call()
+                }
+                ir::Instruction::AssertMatch { value, .. } => value.contains_indirect_call(),
+            }) || f.body.result.contains_indirect_call()
+        });
+        if needs_table {
+            let n = source.functions.len().max(1) as u32;
+            let table =
+                self.module
+                    .push_table(Table { element_type: ReferenceType::FuncRef, minimum: n, maximum: Some(n) });
+            self.func_table = Some(table);
         }
 
         for function in &source.functions {
@@ -202,20 +225,24 @@ impl<'a> StructuredEmitter<'a> {
 
         for function in &source.functions {
             for import in needed_debug_imports(function) {
-                if self.options.target == WasmTarget::Wasi {
-                    return Err(StructuredError::Diagnostics(vec![
-                        Diagnostic::new(
-                            DiagnosticCode::WasmError,
-                            format!(
-                                "stdlib host call `gleam/io.debug` is not supported for target `{}`",
-                                self.options.target.name()
-                            ),
-                        )
-                        .with_label(Label::primary(function.span, "unsupported host call for this target"))
-                        .with_note("supported targets for `gleam/io` host calls are `wasmtime` and `browser`"),
-                    ]));
+                match self.options.target {
+                    WasmTarget::Wasi => {
+                        return Err(StructuredError::Diagnostics(vec![
+                            Diagnostic::new(
+                                DiagnosticCode::WasmError,
+                                format!(
+                                    "stdlib host call `gleam/io.debug` is not supported for target `{}`",
+                                    self.options.target.name()
+                                ),
+                            )
+                            .with_label(Label::primary(function.span, "unsupported host call for this target"))
+                            .with_note("supported targets for `gleam/io` host calls are `wasmtime` and `browser`"),
+                        ]));
+                    }
+                    _ => {
+                        self.ensure_debug_import(import);
+                    }
                 }
-                self.ensure_debug_import(import);
             }
         }
 
@@ -259,6 +286,10 @@ impl<'a> StructuredEmitter<'a> {
             self.module
                 .exports
                 .push(Export { name: "memory".into(), desc: ExportDesc::Memory(memory) });
+        }
+
+        if self.func_table.is_some() {
+            self.emit_function_table(source)?;
         }
 
         Ok(self.module)
@@ -401,6 +432,8 @@ impl<'a> StructuredEmitter<'a> {
         self.dynamic_tag_local = None;
         self.dynamic_field_local = None;
         self.dynamic_result_local = None;
+        self.funcid_locals.clear();
+        self.indirect_call_depth = 0;
 
         let mut structured = Function::new(signature.type_id);
         structured.name = Some(function.name.clone());
@@ -424,6 +457,17 @@ impl<'a> StructuredEmitter<'a> {
                 .locals
                 .push(Local { name: Some("__scratch".into()), type_: ValueType::I32 });
             self.scratch_local = Some(id);
+
+            let depth = indirect_call_max_arg_depth(&function.body);
+            self.funcid_locals.clear();
+
+            for d in 0..depth {
+                let fid = LocalId((structured.params.len() + structured.locals.len()) as u32);
+                structured
+                    .locals
+                    .push(Local { name: Some(format!("__funcid_{d}")), type_: ValueType::I32 });
+                self.funcid_locals.push(fid);
+            }
         }
         if needs_allocation(function) {
             let id = LocalId((structured.params.len() + structured.locals.len()) as u32);
@@ -2191,7 +2235,9 @@ impl<'a> StructuredEmitter<'a> {
         out.push(Instruction::I32Const(3));
         out.push(Instruction::I32ShrU);
         out.push(Instruction::I32Add);
+
         self.allocate_dynamic(out)?;
+
         out.push(Instruction::LocalTee { local: ptr, type_: ValueType::I32 });
         out.push(Instruction::I32Const(u32::from(runtime::ObjectTag::BitArray) as i32));
         out.push(Instruction::I32Store(mem_arg(self.ensure_memory(), 0, 2)));
@@ -2200,6 +2246,7 @@ impl<'a> StructuredEmitter<'a> {
         out.push(Instruction::I32Store(mem_arg(self.ensure_memory(), 4, 2)));
         out.push(Instruction::I32Const(0));
         out.push(Instruction::LocalSet { local: i, type_: ValueType::I32 });
+
         let mut copy_body = vec![
             Instruction::LocalGet { local: i, type_: ValueType::I32 },
             Instruction::LocalGet { local: bit_len, type_: ValueType::I32 },
@@ -2213,7 +2260,9 @@ impl<'a> StructuredEmitter<'a> {
             Instruction::LocalGet { local: i, type_: ValueType::I32 },
             Instruction::I32Add,
         ];
+
         self.subject_pointer(subject, &mut copy_body)?;
+
         copy_body.push(Instruction::I32Const((8 + offset / 8) as i32));
         copy_body.push(Instruction::I32Add);
         copy_body.push(Instruction::LocalGet { local: i, type_: ValueType::I32 });
@@ -2356,71 +2405,168 @@ impl<'a> StructuredEmitter<'a> {
 
     fn indirect_call(&mut self, call: &ir::IndirectCall, out: &mut Vec<Instruction>) -> StructuredResult<()> {
         let scratch = self.required_local(self.scratch_local, "scratch")?;
+        let depth = self.indirect_call_depth;
+        let funcid = self.funcid_locals.get(depth).copied().ok_or_else(|| {
+            StructuredError::Invariant(format!(
+                "indirect call at depth {depth} but only {} funcid locals were allocated",
+                self.funcid_locals.len()
+            ))
+        })?;
+        let table = self.func_table.ok_or_else(|| {
+            StructuredError::Invariant("indirect call reached codegen before function table was created".into())
+        })?;
+
         self.expression(&call.callee, out)?;
         out.push(Instruction::LocalSet { local: scratch, type_: ValueType::I32 });
-        let results = call
+
+        out.push(Instruction::LocalGet { local: scratch, type_: ValueType::I32 });
+        out.push(Instruction::I32Load(mem_arg(
+            self.ensure_memory(),
+            u32::from(ClosureConstants::FunctionIdOffset),
+            2,
+        )));
+        out.push(Instruction::LocalSet { local: funcid, type_: ValueType::I32 });
+
+        let mut param_types = vec![ValueType::I32];
+        for argument in &call.arguments {
+            param_types.push(value_type(&argument.value.type_, argument.span)?);
+        }
+        let dispatch_results = call
             .abi
             .return_
             .as_ref()
             .map(|value| result_types(&value.type_, call.callee.span))
             .transpose()?
             .unwrap_or_default();
-        let body = self.indirect_call_branch(call, 0, scratch, results)?;
-        out.extend(body);
+        let dispatch_type = FunctionType::new(param_types, dispatch_results);
+        let type_id = self.module.intern_type(dispatch_type.clone());
+
+        out.push(Instruction::LocalGet { local: scratch, type_: ValueType::I32 });
+        self.indirect_call_depth += 1;
+        for argument in &call.arguments {
+            self.expression(&argument.value, out)?;
+        }
+        self.indirect_call_depth -= 1;
+        out.push(Instruction::LocalGet { local: funcid, type_: ValueType::I32 });
+        out.push(Instruction::CallIndirect { table, type_id, type_: dispatch_type });
         Ok(())
     }
 
-    fn indirect_call_branch(
-        &mut self, call: &ir::IndirectCall, index: usize, scratch: LocalId, results: Vec<ValueType>,
-    ) -> StructuredResult<Vec<Instruction>> {
-        let Some(name) = self.source.functions.get(index).map(|function| function.name.clone()) else {
-            return Ok(vec![Instruction::Unreachable]);
-        };
-        if !self.function_matches_indirect_call(&name, call) {
-            return self.indirect_call_branch(call, index + 1, scratch, results);
+    /// Emit trampoline functions for all source functions and populate the element segment.
+    ///
+    /// The funcref table itself is pre-declared at the start of `module()` so that
+    /// `call_indirect` can reference it during function body emission.  This method
+    /// fills in the trampolines and the active element segment that populates the table.
+    fn emit_function_table(&mut self, source: &ir::Module) -> StructuredResult<()> {
+        let table = self
+            .func_table
+            .expect("func_table must be set before emit_function_table");
+        let n = source.functions.len();
+        if n == 0 {
+            return Ok(());
         }
-        let mut condition = vec![
-            Instruction::LocalGet { local: scratch, type_: ValueType::I32 },
-            Instruction::I32Load(mem_arg(
-                self.ensure_memory(),
-                u32::from(ClosureConstants::FunctionIdOffset),
-                2,
-            )),
-            Instruction::I32Const(self.function_id(&name) as i32),
-            Instruction::I32Eq,
-        ];
-        let mut then_body = Vec::new();
-        if let Some(function) = self.source.functions.iter().find(|function| function.name == name) {
-            for (capture_index, type_) in function.closure_captures.iter().enumerate() {
-                then_body.push(Instruction::LocalGet { local: scratch, type_: ValueType::I32 });
-                then_body.push(load_for_type(
-                    self.ensure_memory(),
-                    u32::from(ClosureConstants::CapturesOffset)
-                        + capture_index as u32 * u32::from(ClosureConstants::CaptureSlotSize),
-                    value_type(type_, call.callee.span)?,
-                ));
-            }
+
+        let mut table_entries: Vec<FunctionId> = Vec::with_capacity(n);
+        for ir_function in &source.functions {
+            let id = self.emit_trampoline(ir_function)?;
+            table_entries.push(id);
         }
-        for argument in &call.arguments {
-            self.expression(&argument.value, &mut then_body)?;
-        }
-        let signature = self.required_signature(&name)?;
-        then_body.push(Instruction::Call { function: self.function_id_structured(&name), type_: signature.type_ });
-        let else_body = self.indirect_call_branch(call, index + 1, scratch, results.clone())?;
-        condition.push(Instruction::If { type_: BlockType::new([], results), then_body, else_body });
-        Ok(condition)
+
+        self.module
+            .push_element(ElementSegment { table, offset: 0, functions: table_entries });
+
+        Ok(())
     }
 
-    fn function_matches_indirect_call(&self, name: &str, call: &ir::IndirectCall) -> bool {
-        let Some(function) = self.source.functions.iter().find(|function| function.name == name) else {
-            return false;
+    /// Build a trampoline for `ir_function`.
+    ///
+    /// The trampoline signature is `(i32 closure_ptr, non_capture_params...) -> result`.
+    /// Its body loads captures from the closure object, then calls the real Wasm function.
+    ///
+    /// If any type cannot be represented (e.g. a residual Generic), an `unreachable` trap
+    /// trampoline is emitted instead so the table slot is still occupied by a valid function.
+    fn emit_trampoline(&mut self, ir_function: &ir::Function) -> StructuredResult<FunctionId> {
+        let non_capture_params: Vec<&ir::Local> = ir_function
+            .params
+            .iter()
+            .skip(ir_function.closure_captures.len())
+            .collect();
+
+        let mut trampoline_param_types = vec![ValueType::I32];
+        for param in &non_capture_params {
+            match maybe_value_type(&param.type_) {
+                Some(t) => trampoline_param_types.push(t),
+                None => return self.emit_trap_trampoline(),
+            }
+        }
+
+        let trampoline_result_types = match result_types(&ir_function.return_type, ir_function.span) {
+            Ok(r) => r,
+            Err(_) => return self.emit_trap_trampoline(),
         };
-        let params = function.params.iter().skip(function.closure_captures.len());
-        params.len() == call.arguments.len()
-            && params
-                .zip(&call.arguments)
-                .all(|(param, argument)| param.type_ == argument.value.type_)
-            && call.abi.return_.as_ref().map(|value| &value.type_) == Some(&function.return_type)
+
+        for cap_type in &ir_function.closure_captures {
+            if maybe_value_type(cap_type).is_none() {
+                return self.emit_trap_trampoline();
+            }
+        }
+
+        let trampoline_type = FunctionType::new(trampoline_param_types.clone(), trampoline_result_types);
+        let type_id = self.module.intern_type(trampoline_type.clone());
+
+        let mut body: Vec<Instruction> = Vec::new();
+
+        let memory = self.ensure_memory();
+        for (i, cap_type) in ir_function.closure_captures.iter().enumerate() {
+            let wasm_type = maybe_value_type(cap_type).unwrap();
+            let offset =
+                u32::from(ClosureConstants::CapturesOffset) + i as u32 * u32::from(ClosureConstants::CaptureSlotSize);
+            body.push(Instruction::LocalGet { local: LocalId(0), type_: ValueType::I32 });
+            body.push(load_for_type(memory, offset, wasm_type));
+        }
+
+        for (j, param) in non_capture_params.iter().enumerate() {
+            let wasm_type = maybe_value_type(&param.type_).unwrap();
+            body.push(Instruction::LocalGet { local: LocalId(1 + j as u32), type_: wasm_type });
+        }
+
+        let callee_id = self.function_id_structured(&ir_function.name);
+        let callee_type = self
+            .signatures
+            .get(&ir_function.name)
+            .map(|sig| sig.type_.clone())
+            .unwrap_or_else(|| {
+                FunctionType::new(
+                    ir_function
+                        .params
+                        .iter()
+                        .filter_map(|p| maybe_value_type(&p.type_))
+                        .collect::<Vec<_>>(),
+                    result_types(&ir_function.return_type, ir_function.span).unwrap_or_default(),
+                )
+            });
+        body.push(Instruction::Call { function: callee_id, type_: callee_type });
+
+        let mut trampoline =
+            Function { name: Some(format!("{}__trampoline", ir_function.name)), ..Function::new(type_id) };
+
+        for &t in &trampoline_param_types {
+            trampoline.params.push(Local { name: None, type_: t });
+        }
+        trampoline.body = body;
+
+        Ok(self.module.push_function(trampoline))
+    }
+
+    /// Emit a single `unreachable` function used as a placeholder for table slots
+    /// whose source function has types that cannot be trampolined.
+    fn emit_trap_trampoline(&mut self) -> StructuredResult<FunctionId> {
+        let type_id = self.module.intern_type(FunctionType::new([ValueType::I32], []));
+        let mut trampoline = Function::new(type_id);
+        trampoline.name = Some("__trap_trampoline".into());
+        trampoline.params = vec![Local { name: None, type_: ValueType::I32 }];
+        trampoline.body = vec![Instruction::Unreachable];
+        Ok(self.module.push_function(trampoline))
     }
 
     fn static_values<'b>(
@@ -2701,6 +2847,49 @@ fn store_for_type(memory: MemoryId, offset: u32, type_: ValueType) -> Instructio
 
 fn needs_scratch(function: &ir::Function) -> bool {
     block_needs_scratch(&function.body)
+}
+
+/// Compute how many depth-specific `__funcid_N` locals are needed.
+///
+/// Each level of indirect calls nested as arguments of another indirect call
+/// needs its own local so that the outer call's saved table index is not
+/// clobbered when an inner call saves its own.  Returns the number of unique
+/// depth levels (= max nesting depth + 1).
+fn indirect_call_max_arg_depth(block: &ir::Block) -> usize {
+    block
+        .instructions
+        .iter()
+        .map(|i| match i {
+            ir::Instruction::Evaluate { expression, .. } | ir::Instruction::LocalSet { value: expression, .. } => {
+                expr_indirect_depth(expression, 0)
+            }
+            ir::Instruction::AssertMatch { value, .. } => expr_indirect_depth(value, 0),
+        })
+        .chain(std::iter::once(expr_indirect_depth(&block.result, 0)))
+        .max()
+        .unwrap_or(0)
+}
+
+/// Returns the minimum number of depth-indexed funcid locals the expression
+/// tree requires (= max nesting level + 1, where outermost = level 0).
+fn expr_indirect_depth(expr: &ir::Expression, depth: usize) -> usize {
+    match &expr.kind {
+        ExpressionKind::IndirectCall(call) => {
+            let from_callee = expr_indirect_depth(&call.callee, depth);
+            let from_args = call
+                .arguments
+                .iter()
+                .map(|a| expr_indirect_depth(&a.value, depth + 1))
+                .max()
+                .unwrap_or(0);
+            (depth + 1).max(from_callee).max(from_args)
+        }
+        _ => expr
+            .children()
+            .map(|c| expr_indirect_depth(c, depth))
+            .max()
+            .unwrap_or(0),
+    }
 }
 
 fn needs_allocation(function: &ir::Function) -> bool {

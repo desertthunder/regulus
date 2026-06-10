@@ -1,6 +1,6 @@
 //! Checked WAT fragments for copy runtime helpers.
 
-pub(crate) const COPY_HELPERS: &str = r#"
+pub const COPY_HELPERS: &str = r#"
   (func $__copy_bytes (param $src i32) (param $dst i32) (param $len i32)
     (local $i i32)
     i32.const 0

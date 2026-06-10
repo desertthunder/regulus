@@ -1,6 +1,6 @@
 //! Checked WAT fragments for dictionaries runtime helpers.
 
-pub(crate) const DICTIONARY_HELPERS: &str = r#"
+pub const DICTIONARY_HELPERS: &str = r#"
   (func $__dict_new (result i32)
     (local $buckets i32) (local $i i32)
     i32.const 64

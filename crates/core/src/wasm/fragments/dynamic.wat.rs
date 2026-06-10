@@ -1,6 +1,6 @@
 //! Checked WAT fragments for dynamic values and primitive decoders.
 
-pub(crate) const DYNAMIC_HELPERS: &str = r#"
+pub const DYNAMIC_HELPERS: &str = r#"
   (func $__dynamic_i64 (param $tag i32) (param $value i64) (result i32)
     (local $slots i32)
     i32.const 8

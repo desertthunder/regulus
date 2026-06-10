@@ -12,7 +12,7 @@ use crate::{
 };
 
 pub use bit_slices::{BitArrayLiteral, BitArraySegment, BitSegmentOption, BitSegmentType, BitStringPatternSegment};
-pub(super) use lowerer::{FunctionContext, Lowerer};
+pub use lowerer::{FunctionContext, Lowerer};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct LocalId(pub u32);

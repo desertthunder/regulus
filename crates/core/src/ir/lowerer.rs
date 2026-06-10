@@ -9,18 +9,18 @@ use crate::stdlib::{MemberStrategy, StdlibRegistry};
 use crate::types::{ConstructorInfo, TypedModule};
 use bit_slices::{ast_bit_array_literal, bit_array_literal, bit_string_pattern_segments};
 
-pub(super) fn lower(module: TypedModule) -> Result<Module, Diagnostics> {
+pub fn lower(module: TypedModule) -> Result<Module, Diagnostics> {
     Lowerer::new(module).lower()
 }
 
-pub(crate) struct Lowerer {
+pub struct Lowerer {
     module: TypedModule,
     function_types: HashMap<String, Type>,
     function_labels: FunctionLabelMap,
     constructors: HashMap<String, ConstructorInfo>,
     expression_types: HashMap<Span, Type>,
     diagnostics: Diagnostics,
-    pub(super) lifted_functions: Vec<Function>,
+    pub lifted_functions: Vec<Function>,
     anonymous_counter: usize,
 }
 
@@ -254,7 +254,7 @@ impl Lowerer {
         })
     }
 
-    pub(super) fn lower_block(&mut self, context: &mut FunctionContext, block: &ast::Block) -> Option<Block> {
+    pub fn lower_block(&mut self, context: &mut FunctionContext, block: &ast::Block) -> Option<Block> {
         context.push_scope();
         let mut instructions = Vec::new();
         let mut result = self.nil_expression(block.span);
@@ -314,7 +314,7 @@ impl Lowerer {
         Some(Block { instructions, result: Box::new(result), span: block.span })
     }
 
-    pub(super) fn lower_expression(
+    pub fn lower_expression(
         &mut self, context: &mut FunctionContext, expression: &AstExpression,
     ) -> Option<Expression> {
         match expression {
@@ -779,7 +779,7 @@ impl Lowerer {
         closure::lower_capture(self, context, capture)
     }
 
-    pub(super) fn next_anonymous_name(&mut self) -> String {
+    pub fn next_anonymous_name(&mut self) -> String {
         let name = format!("__anon_{}", self.anonymous_counter);
         self.anonymous_counter += 1;
         name
@@ -1675,11 +1675,11 @@ impl Lowerer {
         }
     }
 
-    pub(super) fn typed_expression_type(&self, span: Span) -> Option<Type> {
+    pub fn typed_expression_type(&self, span: Span) -> Option<Type> {
         self.expression_types.get(&span).cloned()
     }
 
-    pub(super) fn nil_expression(&self, span: Span) -> Expression {
+    pub fn nil_expression(&self, span: Span) -> Expression {
         Expression {
             type_: Type::Nil,
             span,
@@ -2061,23 +2061,23 @@ fn substitute_type_generics(type_: &Type, substitutions: &HashMap<String, Type>)
 }
 
 #[derive(Default)]
-pub(crate) struct FunctionContext {
-    pub(super) locals: Vec<Local>,
+pub struct FunctionContext {
+    pub locals: Vec<Local>,
     scopes: Vec<HashMap<String, LocalId>>,
 }
 
 impl FunctionContext {
-    pub(super) fn allocate(&mut self, name: &ast::Name, type_: Type) -> Local {
+    pub fn allocate(&mut self, name: &ast::Name, type_: Type) -> Local {
         let local = Local { id: LocalId(self.locals.len() as u32), name: name.text.clone(), type_, span: name.span };
         self.locals.push(local.clone());
         local
     }
 
-    pub(super) fn local(&self, id: LocalId) -> &Local {
+    pub fn local(&self, id: LocalId) -> &Local {
         &self.locals[id.0 as usize]
     }
 
-    pub(super) fn bind(&mut self, name: String, local: LocalId) {
+    pub fn bind(&mut self, name: String, local: LocalId) {
         if let Some(scope) = self.scopes.last_mut() {
             scope.insert(name, local);
         }
@@ -2092,11 +2092,11 @@ impl FunctionContext {
         None
     }
 
-    pub(super) fn push_scope(&mut self) {
+    pub fn push_scope(&mut self) {
         self.scopes.push(HashMap::new());
     }
 
-    pub(super) fn pop_scope(&mut self) {
+    pub fn pop_scope(&mut self) {
         self.scopes.pop();
     }
 }

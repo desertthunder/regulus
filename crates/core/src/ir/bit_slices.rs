@@ -52,13 +52,13 @@ pub enum BitSegmentOption {
     NativeEndian,
 }
 
-pub(super) fn bit_array_literal(raw: &ast::RawSyntax) -> BitArrayLiteral {
+pub fn bit_array_literal(raw: &ast::RawSyntax) -> BitArrayLiteral {
     let segments = bit_array_segments(raw);
     let bit_len = segments.iter().map(|segment| segment.bit_size).sum();
     BitArrayLiteral { segments, bit_len }
 }
 
-pub(super) fn ast_bit_array_literal(bit_array: &ast::BitArray) -> BitArrayLiteral {
+pub fn ast_bit_array_literal(bit_array: &ast::BitArray) -> BitArrayLiteral {
     let segments = bit_array
         .segments
         .iter()
@@ -177,7 +177,7 @@ fn bit_size_from_options(options: &[BitSegmentOption]) -> Option<u32> {
     size.checked_mul(unit)
 }
 
-pub(super) fn bit_string_pattern_segments(
+pub fn bit_string_pattern_segments(
     context: &mut FunctionContext, raw: &ast::RawSyntax,
 ) -> Vec<BitStringPatternSegment> {
     let Some(inner) = raw

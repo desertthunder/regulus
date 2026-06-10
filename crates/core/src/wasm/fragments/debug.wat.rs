@@ -1,6 +1,6 @@
 //! Checked WAT fragments for debug runtime helpers.
 
-pub(crate) const DEBUG_HELPERS: &str = r#"
+pub const DEBUG_HELPERS: &str = r#"
   (func $__debug_tag (param $ptr i32) (result i32)
     local.get $ptr
     i32.eqz
