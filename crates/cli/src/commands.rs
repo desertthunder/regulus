@@ -35,11 +35,7 @@ fn project(input: &Path) -> ExitCode {
             }
             ExitCode::SUCCESS
         }
-        Err(diagnostics) => {
-            echo::error(format!("could not load project {}", input.display()));
-            echo::diagnostics(&diagnostics);
-            ExitCode::FAILURE
-        }
+        Err(diagnostics) => echo::fail_with_diagnostics("load project", input.display(), &diagnostics),
     }
 }
 
@@ -48,33 +44,23 @@ fn compile(
 ) -> ExitCode {
     let source = match fs::read_to_string(input) {
         Ok(source) => SourceFile::with_path(SourceFileId(0), input, source),
-        Err(error) => {
-            echo::error(format!("could not read {}: {error}", input.display()));
-            return ExitCode::FAILURE;
-        }
+        Err(error) => return echo::fail("read", input.display(), error),
     };
 
     let compiled = match compile_with_dumps(source, target.into()) {
         Ok(compiled) => compiled,
-        Err(diagnostics) => {
-            echo::error(format!("could not compile {}", input.display()));
-            echo::diagnostics(&diagnostics);
-            return ExitCode::FAILURE;
-        }
+        Err(diagnostics) => return echo::fail_with_diagnostics("compile", input.display(), &diagnostics),
     };
 
     if let Some(dump_dir) = dump_dir
         && let Err(error) = write_debug_dumps(&dump_dir, &compiled)
     {
-        // TODO: this pattern is used a lot and could become echo::fail
-        echo::error(format!("could not write debug dumps: {error}"));
-        return ExitCode::FAILURE;
+        return echo::fail("write", "debug dumps", error);
     }
 
     let output = output.unwrap_or_else(|| input.with_extension("wasm"));
     if let Err(error) = write_file(&output, &compiled.wasm.bytes) {
-        echo::error(format!("could not write {}: {error}", output.display()));
-        return ExitCode::FAILURE;
+        return echo::fail("write", output.display(), error);
     }
     echo::status(
         "wasm",
@@ -84,8 +70,7 @@ fn compile(
     if let Some(wat_path) = wat {
         let wat_path = wat_path.unwrap_or_else(|| output.with_extension("wat"));
         if let Err(error) = write_file(&wat_path, compiled.wasm.wat.as_bytes()) {
-            echo::error(format!("could not write {}: {error}", wat_path.display()));
-            return ExitCode::FAILURE;
+            return echo::fail("write", wat_path.display(), error);
         }
         echo::status("wat", wat_path.display().to_string());
     }
