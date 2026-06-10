@@ -66,7 +66,7 @@ Support useful standard library modules and host calls.
 - [x] Support `gleam/dict`.
 - [x] Support `gleam/float`.
 - [x] Support `gleam/function`.
-- [ ] Support `gleam/bit_array`.
+- [x] Support `gleam/bit_array`.
 - [ ] Support `gleam/bytes_tree`.
 - [ ] Support `gleam/string_tree`.
 - [ ] Support `gleam/dynamic`.

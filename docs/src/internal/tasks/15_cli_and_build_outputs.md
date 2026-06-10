@@ -29,6 +29,30 @@ Make the CLI compile projects and produce useful artifacts.
 - [ ] Avoid writing partial final artifacts after a failed compile unless the
       user explicitly requested debug dumps.
 
+### Structured Wasm construction
+
+- [ ] Define compiler-owned Wasm module, import, function, local, memory,
+      table, export, data segment, and custom-section data structures.
+- [ ] Define typed Wasm instruction enums with explicit operand-stack effects.
+- [ ] Add a validation pass for instruction stack effects, branch result types,
+      local indices, function signatures, and call signatures.
+- [ ] Emit Wasm bytes from the structured module without going through WAT.
+- [ ] Keep optional WAT output by rendering the structured module, not by using
+      handwritten backend strings as the source of truth.
+- [ ] Move scalar operations, direct calls, branches, locals, and exports to the
+      structured builder.
+- [ ] Move managed-value allocation, pattern matching, closures, and indirect
+      calls to the structured builder.
+- [ ] Move stdlib intrinsics, host imports, and target adapters to structured
+      imports and calls.
+- [ ] Replace runtime helper WAT string blocks with structured helper modules or
+      checked precompiled helper fragments.
+- [ ] Track helper dependencies explicitly so unused helpers are not emitted.
+- [ ] Add deterministic WAT snapshots generated from structured Wasm.
+- [ ] Add tests that backend validation reports source-spanned diagnostics
+      before byte emission for stack, signature, local, and target-adapter
+      mistakes.
+
 ### Diagnostics and user output
 
 - [ ] Render diagnostics with source snippets, labels, notes, and file paths.

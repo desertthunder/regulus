@@ -1,3 +1,4 @@
+import gleam/bit_array
 import gleam/bool
 import gleam/dict
 import gleam/float
@@ -67,6 +68,22 @@ pub fn float_larger() -> Float {
   float.max(1.5, float.negate(-2.5))
 }
 
+pub fn float_text() -> String {
+  float.to_string(1.5)
+}
+
 pub fn same_value() -> Int {
   function.identity(9)
+}
+
+pub fn constant_value() -> Int {
+  function.constant(7, "ignored")
+}
+
+pub fn bits_size() -> Int {
+  bit_array.bit_size(<<1, 2, 3>>)
+}
+
+pub fn bits_start() -> Bool {
+  bit_array.starts_with(<<1, 2, 3>>, <<1, 2>>)
 }

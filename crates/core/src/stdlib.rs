@@ -87,7 +87,7 @@ fn stdlib_modules() -> Vec<StdlibModule> {
         StdlibModule::gleam_result(),
         StdlibModule::gleam_option(),
         StdlibModule::gleam_order(),
-        StdlibModule::remaining("gleam/bit_array"),
+        StdlibModule::gleam_bit_array(),
         StdlibModule::gleam_bool(),
         StdlibModule::remaining("gleam/bytes_tree"),
         StdlibModule::gleam_dict(),
@@ -298,6 +298,37 @@ impl StdlibModule {
         )
     }
 
+    fn gleam_bit_array() -> Self {
+        Self::new(
+            "gleam/bit_array",
+            ModuleStrategy::Hybrid,
+            &[
+                function(
+                    "append",
+                    vec![Type::BitArray, Type::BitArray],
+                    Type::BitArray,
+                    MemberStrategy::Intrinsic,
+                ),
+                function(
+                    "concat",
+                    vec![Type::List(Box::new(Type::BitArray))],
+                    Type::BitArray,
+                    MemberStrategy::Intrinsic,
+                ),
+                function("bit_size", vec![Type::BitArray], Type::Int, MemberStrategy::Intrinsic),
+                function("byte_size", vec![Type::BitArray], Type::Int, MemberStrategy::Intrinsic),
+                function("is_empty", vec![Type::BitArray], Type::Bool, MemberStrategy::Intrinsic),
+                function(
+                    "starts_with",
+                    vec![Type::BitArray, Type::BitArray],
+                    Type::Bool,
+                    MemberStrategy::Intrinsic,
+                ),
+            ],
+            &[],
+        )
+    }
+
     fn gleam_bool() -> Self {
         Self::new(
             "gleam/bool",
@@ -366,6 +397,7 @@ impl StdlibModule {
                     Type::custom("Order", vec![]),
                     MemberStrategy::Intrinsic,
                 ),
+                function("to_string", vec![Type::Float], Type::String, MemberStrategy::Intrinsic),
                 function(
                     "max",
                     vec![Type::Float, Type::Float],
@@ -388,12 +420,38 @@ impl StdlibModule {
         Self::new(
             "gleam/function",
             ModuleStrategy::Hybrid,
-            &[function(
-                "identity",
-                vec![Type::generic("a")],
-                Type::generic("a"),
-                MemberStrategy::Intrinsic,
-            )],
+            &[
+                function(
+                    "identity",
+                    vec![Type::generic("a")],
+                    Type::generic("a"),
+                    MemberStrategy::Intrinsic,
+                ),
+                function(
+                    "constant",
+                    vec![Type::generic("a"), Type::generic("b")],
+                    Type::generic("a"),
+                    MemberStrategy::Intrinsic,
+                ),
+                function(
+                    "compose",
+                    vec![
+                        fn_type(vec![Type::generic("b")], Type::generic("c")),
+                        fn_type(vec![Type::generic("a")], Type::generic("b")),
+                    ],
+                    fn_type(vec![Type::generic("a")], Type::generic("c")),
+                    MemberStrategy::InterfaceOnly,
+                ),
+                function(
+                    "flip",
+                    vec![fn_type(
+                        vec![Type::generic("a"), Type::generic("b")],
+                        Type::generic("c"),
+                    )],
+                    fn_type(vec![Type::generic("b"), Type::generic("a")], Type::generic("c")),
+                    MemberStrategy::InterfaceOnly,
+                ),
+            ],
             &[],
         )
     }

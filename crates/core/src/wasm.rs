@@ -553,6 +553,43 @@ impl Emitter {
                 writeln!(self.functions, "    call $__list_reverse").expect("write WAT");
                 self.uses_runtime = true;
             }
+            "__stdlib_gleam_bit_array_append" => {
+                self.expression(&call.arguments[0].value);
+                self.expression(&call.arguments[1].value);
+                writeln!(self.functions, "    call $__bit_array_append").expect("write WAT");
+                self.uses_runtime = true;
+            }
+            "__stdlib_gleam_bit_array_concat" => {
+                self.expression(&call.arguments[0].value);
+                writeln!(self.functions, "    call $__bit_array_concat_list").expect("write WAT");
+                self.uses_runtime = true;
+            }
+            "__stdlib_gleam_bit_array_bit_size" => {
+                self.expression(&call.arguments[0].value);
+                writeln!(self.functions, "    call $__bit_array_len").expect("write WAT");
+                writeln!(self.functions, "    i64.extend_i32_u").expect("write WAT");
+                self.uses_runtime = true;
+            }
+            "__stdlib_gleam_bit_array_byte_size" => {
+                self.expression(&call.arguments[0].value);
+                writeln!(self.functions, "    call $__bit_array_len").expect("write WAT");
+                writeln!(self.functions, "    call $__bit_array_payload_len").expect("write WAT");
+                writeln!(self.functions, "    i64.extend_i32_u").expect("write WAT");
+                self.uses_runtime = true;
+            }
+            "__stdlib_gleam_bit_array_is_empty" => {
+                self.expression(&call.arguments[0].value);
+                writeln!(self.functions, "    call $__bit_array_len").expect("write WAT");
+                writeln!(self.functions, "    i32.eqz").expect("write WAT");
+                self.uses_runtime = true;
+            }
+            "__stdlib_gleam_bit_array_starts_with" => {
+                self.expression(&call.arguments[0].value);
+                writeln!(self.functions, "    i32.const 0").expect("write WAT");
+                self.expression(&call.arguments[1].value);
+                writeln!(self.functions, "    call $__bit_array_match").expect("write WAT");
+                self.uses_runtime = true;
+            }
             "__stdlib_gleam_bool_to_string" => self.stdlib_bool_to_string(call),
             "__stdlib_gleam_bool_negate" => {
                 self.expression(&call.arguments[0].value);
@@ -565,16 +602,18 @@ impl Emitter {
                 self.order_from_compare_result();
             }
             "__stdlib_gleam_dict_new" => {
-                writeln!(self.functions, "    i32.const 0").expect("write WAT");
+                writeln!(self.functions, "    call $__dict_new").expect("write WAT");
+                self.uses_runtime = true;
             }
             "__stdlib_gleam_dict_size" => {
                 self.expression(&call.arguments[0].value);
-                writeln!(self.functions, "    call $__list_length").expect("write WAT");
+                writeln!(self.functions, "    call $__dict_size").expect("write WAT");
                 self.uses_runtime = true;
             }
             "__stdlib_gleam_dict_is_empty" => {
                 self.expression(&call.arguments[0].value);
-                writeln!(self.functions, "    i32.eqz").expect("write WAT");
+                writeln!(self.functions, "    call $__dict_is_empty").expect("write WAT");
+                self.uses_runtime = true;
             }
             "__stdlib_gleam_dict_insert" => self.stdlib_dict_insert(call),
             "__stdlib_gleam_dict_get" => self.stdlib_dict_get(call),
@@ -585,6 +624,11 @@ impl Emitter {
                 self.expression(&call.arguments[1].value);
                 writeln!(self.functions, "    call $__compare_f64").expect("write WAT");
                 self.order_from_compare_result();
+                self.uses_runtime = true;
+            }
+            "__stdlib_gleam_float_to_string" => {
+                self.expression(&call.arguments[0].value);
+                writeln!(self.functions, "    call $__float_to_string").expect("write WAT");
                 self.uses_runtime = true;
             }
             "__stdlib_gleam_float_max" => {
@@ -602,7 +646,7 @@ impl Emitter {
                 self.expression(&call.arguments[0].value);
                 writeln!(self.functions, "    f64.sub").expect("write WAT");
             }
-            "__stdlib_gleam_function_identity" => {
+            "__stdlib_gleam_function_identity" | "__stdlib_gleam_function_constant" => {
                 self.expression(&call.arguments[0].value);
             }
             "__stdlib_gleam_io_debug" => self.stdlib_io_debug(call),
@@ -3134,7 +3178,8 @@ pub fn main() { io.println("hi") }
     #[test]
     fn runs_initial_stdlib_intrinsics() {
         let wasm = compile_wasm(
-            r#"import gleam/bool
+            r#"import gleam/bit_array
+import gleam/bool
 import gleam/dict
 import gleam/float
 import gleam/function
@@ -3177,6 +3222,11 @@ pub fn dict_missing() -> Bool {
   let values = dict.insert(dict.new(), "a", 42)
   dict.has_key(dict.delete(values, "a"), "a")
 }
+pub fn dict_persistent_size() -> Int {
+  let original = dict.new()
+  let updated = dict.insert(original, "a", 42)
+  dict.size(original) + dict.size(updated)
+}
 pub fn float_rank() -> Int {
   case float.compare(1.0, 2.0) {
     order.Lt -> -1
@@ -3185,7 +3235,15 @@ pub fn float_rank() -> Int {
   }
 }
 pub fn float_larger() -> Float { float.max(1.5, float.negate(-2.5)) }
+pub fn float_text() -> String { float.to_string(1.5) }
 pub fn same_value() -> Int { function.identity(9) }
+pub fn constant_value() -> Int { function.constant(7, "ignored") }
+pub fn bits_size() -> Int { bit_array.bit_size(<<1, 2, 3>>) }
+pub fn bytes_size() -> Int { bit_array.byte_size(<<1:4, 2:4, 3:4>>) }
+pub fn bits_empty() -> Bool { bit_array.is_empty(<<>>) }
+pub fn bits_start() -> Bool { bit_array.starts_with(<<1, 2, 3>>, <<1, 2>>) }
+pub fn bits_joined() -> BitArray { bit_array.concat([<<1>>, <<2>>, <<3>>]) }
+pub fn bits_append_size() -> Int { bit_array.bit_size(bit_array.append(<<1>>, <<2>>)) }
 "#,
         );
         let engine = Engine::default();
@@ -3272,6 +3330,15 @@ pub fn same_value() -> Int { function.identity(9) }
             .get_typed_func::<(), i32>(&mut store, "dict_missing")
             .expect("get dict_missing export");
         assert_eq!(dict_missing.call(&mut store, ()).expect("call dict_missing"), 0);
+        let dict_persistent_size = instance
+            .get_typed_func::<(), i64>(&mut store, "dict_persistent_size")
+            .expect("get dict_persistent_size export");
+        assert_eq!(
+            dict_persistent_size
+                .call(&mut store, ())
+                .expect("call dict_persistent_size"),
+            1
+        );
         let float_rank = instance
             .get_typed_func::<(), i64>(&mut store, "float_rank")
             .expect("get float_rank export");
@@ -3280,10 +3347,50 @@ pub fn same_value() -> Int { function.identity(9) }
             .get_typed_func::<(), f64>(&mut store, "float_larger")
             .expect("get float_larger export");
         assert_eq!(float_larger.call(&mut store, ()).expect("call float_larger"), 2.5);
+        let float_text = instance
+            .get_typed_func::<(), i32>(&mut store, "float_text")
+            .expect("get float_text export");
+        let pointer = float_text.call(&mut store, ()).expect("call float_text") as usize;
+        memory.read(&store, pointer, &mut bytes).expect("read float text");
+        assert_eq!(&bytes[8..16], b"1.500000");
         let same_value = instance
             .get_typed_func::<(), i64>(&mut store, "same_value")
             .expect("get same_value export");
         assert_eq!(same_value.call(&mut store, ()).expect("call same_value"), 9);
+        let constant_value = instance
+            .get_typed_func::<(), i64>(&mut store, "constant_value")
+            .expect("get constant_value export");
+        assert_eq!(constant_value.call(&mut store, ()).expect("call constant_value"), 7);
+        let bits_size = instance
+            .get_typed_func::<(), i64>(&mut store, "bits_size")
+            .expect("get bits_size export");
+        assert_eq!(bits_size.call(&mut store, ()).expect("call bits_size"), 24);
+        let bytes_size = instance
+            .get_typed_func::<(), i64>(&mut store, "bytes_size")
+            .expect("get bytes_size export");
+        assert_eq!(bytes_size.call(&mut store, ()).expect("call bytes_size"), 2);
+        let bits_empty = instance
+            .get_typed_func::<(), i32>(&mut store, "bits_empty")
+            .expect("get bits_empty export");
+        assert_eq!(bits_empty.call(&mut store, ()).expect("call bits_empty"), 1);
+        let bits_start = instance
+            .get_typed_func::<(), i32>(&mut store, "bits_start")
+            .expect("get bits_start export");
+        assert_eq!(bits_start.call(&mut store, ()).expect("call bits_start"), 1);
+        let bits_append_size = instance
+            .get_typed_func::<(), i64>(&mut store, "bits_append_size")
+            .expect("get bits_append_size export");
+        assert_eq!(
+            bits_append_size.call(&mut store, ()).expect("call bits_append_size"),
+            16
+        );
+        let bits_joined = instance
+            .get_typed_func::<(), i32>(&mut store, "bits_joined")
+            .expect("get bits_joined export");
+        let pointer = bits_joined.call(&mut store, ()).expect("call bits_joined") as usize;
+        memory.read(&store, pointer, &mut bytes).expect("read joined bit array");
+        assert_eq!(u32::from_le_bytes(bytes[4..8].try_into().unwrap()), 24);
+        assert_eq!(&bytes[8..11], &[1, 2, 3]);
     }
 
     #[test]
