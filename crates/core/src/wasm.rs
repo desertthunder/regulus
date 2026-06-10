@@ -4,9 +4,9 @@
 
 mod binary;
 mod builder;
+mod codegen;
 mod encode;
 mod helpers;
-mod structured;
 mod validator;
 
 use std::{
@@ -80,7 +80,7 @@ pub fn emit(module: &ir::Module) -> Result<WasmModule, Diagnostics> {
 }
 
 pub fn emit_with_options(module: &ir::Module, options: EmitOptions) -> Result<WasmModule, Diagnostics> {
-    if let Some(module) = structured::emit(module, options)? {
+    if let Some(module) = codegen::emit(module, options)? {
         let wat = structured_wat(&module)?;
         let bytes = structured_bytes(&module)?;
         return Ok(WasmModule { wat, bytes });
@@ -102,7 +102,7 @@ pub fn emit_wat(module: &ir::Module) -> Result<String, Diagnostics> {
 }
 
 pub fn emit_wat_with_options(module: &ir::Module, options: EmitOptions) -> Result<String, Diagnostics> {
-    if let Some(module) = structured::emit(module, options)? {
+    if let Some(module) = codegen::emit(module, options)? {
         return structured_wat(&module);
     }
 

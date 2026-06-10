@@ -41,7 +41,7 @@ Make the CLI compile projects and produce useful artifacts.
       handwritten backend strings as the source of truth.
 - [x] Move scalar operations, direct calls, branches, locals, and exports to the
       structured builder.
-- [ ] Move managed-value allocation, pattern matching, closures, and indirect
+- [x] Move managed-value allocation, pattern matching, closures, and indirect
       calls to the structured builder.
 - [ ] Move stdlib intrinsics, host imports, and target adapters to structured
       imports and calls.
