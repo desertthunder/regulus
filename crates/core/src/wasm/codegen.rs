@@ -2,18 +2,18 @@
 
 use std::collections::HashMap;
 
-use super::EmitOptions;
 use super::builder::{
-    BlockType, DataSegment, Export, ExportDesc, Function, FunctionId, FunctionType, Instruction, Local, LocalId,
-    Memory, MemoryArg, MemoryId, Module, TypeId, ValueType,
+    BlockType, DataSegment, Export, ExportDesc, Function, FunctionId, FunctionType, Import, ImportDesc, Instruction,
+    Local, LocalId, Memory, MemoryArg, MemoryId, Module, TypeId, ValueType,
 };
+use super::{EmitOptions, WasmTarget};
 use crate::ast::LiteralKind;
 use crate::diagnostic::{Diagnostic, DiagnosticCode, Diagnostics, Label};
 use crate::ir::{self, ExpressionKind};
-use crate::{ClosureConstants, runtime, types::Type};
+use crate::{ClosureConstants, runtime, stdlib::STDLIB_IO_HOST_MODULE, types::Type};
 
-pub(super) fn emit(module: &ir::Module, _options: EmitOptions) -> Result<Option<Module>, Diagnostics> {
-    let emitter = StructuredEmitter::new(module);
+pub(super) fn emit(module: &ir::Module, options: EmitOptions) -> Result<Option<Module>, Diagnostics> {
+    let emitter = StructuredEmitter::new(module, options);
     match emitter.module(module) {
         Ok(module) => Ok(Some(module)),
         Err(StructuredError::Unsupported) => Ok(None),
@@ -27,15 +27,47 @@ struct StructuredEmitter<'a> {
     signatures: HashMap<String, FunctionSignature>,
     function_ids: HashMap<String, FunctionId>,
     local_indices: HashMap<ir::LocalId, LocalId>,
+    debug_imports: HashMap<DebugImport, FunctionId>,
+    debug_locals: HashMap<DebugImport, LocalId>,
+    scratch_local: Option<LocalId>,
+    options: EmitOptions,
     config: runtime::RuntimeConfig,
     next_static_offset: u32,
     memory: Option<MemoryId>,
+    imported_functions: u32,
 }
 
 #[derive(Debug, Clone)]
 struct FunctionSignature {
     type_id: TypeId,
     type_: FunctionType,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum DebugImport {
+    Bool,
+    Value,
+    I64,
+    F64,
+}
+
+impl DebugImport {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Bool => "debug_bool",
+            Self::Value => "debug_value",
+            Self::I64 => "debug_i64",
+            Self::F64 => "debug_f64",
+        }
+    }
+
+    fn value_type(self) -> ValueType {
+        match self {
+            Self::Bool | Self::Value => ValueType::I32,
+            Self::I64 => ValueType::I64,
+            Self::F64 => ValueType::F64,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -47,16 +79,21 @@ enum StructuredError {
 type StructuredResult<T> = Result<T, StructuredError>;
 
 impl<'a> StructuredEmitter<'a> {
-    fn new(source: &'a ir::Module) -> Self {
+    fn new(source: &'a ir::Module, options: EmitOptions) -> Self {
         Self {
             source,
             module: Module::new(),
             signatures: HashMap::new(),
             function_ids: HashMap::new(),
             local_indices: HashMap::new(),
+            debug_imports: HashMap::new(),
+            debug_locals: HashMap::new(),
+            scratch_local: None,
+            options,
             config: runtime::RuntimeConfig::DEFAULT,
             next_static_offset: runtime::RuntimeConfig::DEFAULT.static_data_start,
             memory: None,
+            imported_functions: 0,
         }
     }
 
@@ -70,16 +107,42 @@ impl<'a> StructuredEmitter<'a> {
         }
 
         for function in &source.functions {
-            match &function.abi.boundary {
-                ir::CallBoundary::HostImport { .. } | ir::CallBoundary::ModuleImport { .. } => {
-                    return Err(StructuredError::Unsupported);
+            if matches!(
+                function.abi.boundary,
+                ir::CallBoundary::HostImport { .. } | ir::CallBoundary::ModuleImport { .. }
+            ) {
+                self.import_function(function)?;
+            }
+        }
+
+        for function in &source.functions {
+            for import in needed_debug_imports(function) {
+                if self.options.target == WasmTarget::Wasi {
+                    return Err(StructuredError::Diagnostics(vec![
+                        Diagnostic::new(
+                            DiagnosticCode::WasmError,
+                            format!(
+                                "stdlib host call `gleam/io.debug` is not supported for target `{}`",
+                                self.options.target.name()
+                            ),
+                        )
+                        .with_label(Label::primary(function.span, "unsupported host call for this target"))
+                        .with_note("supported targets for `gleam/io` host calls are `wasmtime` and `browser`"),
+                    ]));
                 }
-                ir::CallBoundary::Internal | ir::CallBoundary::ModuleExport => {
-                    let name = function.name.clone();
-                    let function = self.function(function)?;
-                    let id = self.module.push_function(function);
-                    self.function_ids.insert(name, id);
-                }
+                self.ensure_debug_import(import);
+            }
+        }
+
+        for function in &source.functions {
+            if matches!(
+                function.abi.boundary,
+                ir::CallBoundary::Internal | ir::CallBoundary::ModuleExport
+            ) {
+                let name = function.name.clone();
+                let function = self.function(function)?;
+                let id = self.module.push_function(function);
+                self.function_ids.insert(name, id);
             }
         }
 
@@ -87,11 +150,12 @@ impl<'a> StructuredEmitter<'a> {
             self.constant(constant)?;
         }
 
-        for (index, function) in source.functions.iter().enumerate() {
+        for function in &source.functions {
             if matches!(function.abi.boundary, ir::CallBoundary::ModuleExport) {
+                let function_id = self.function_id_structured(&function.name);
                 self.module
                     .exports
-                    .push(Export { name: function.name.clone(), desc: ExportDesc::Function(FunctionId(index as u32)) });
+                    .push(Export { name: function.name.clone(), desc: ExportDesc::Function(function_id) });
             }
         }
 
@@ -102,6 +166,66 @@ impl<'a> StructuredEmitter<'a> {
         }
 
         Ok(self.module)
+    }
+
+    fn concrete_import(&self, function: &ir::Function) -> StructuredResult<Option<(String, String)>> {
+        match &function.abi.boundary {
+            ir::CallBoundary::HostImport { module, name } if module == STDLIB_IO_HOST_MODULE => {
+                Ok(Some(self.stdlib_io_import(name, function.span)?))
+            }
+            ir::CallBoundary::HostImport { module, name } if module == self.options.target.host_module() => {
+                Ok(Some((module.clone(), name.clone())))
+            }
+            ir::CallBoundary::HostImport { module, .. } => Err(StructuredError::Diagnostics(vec![
+                Diagnostic::new(
+                    DiagnosticCode::WasmError,
+                    format!(
+                        "function `{}` imports host module `{module}`, but target {:?} expects `{}`",
+                        function.name,
+                        self.options.target,
+                        self.options.target.host_module()
+                    ),
+                )
+                .with_label(Label::primary(function.span, "unsupported target import here")),
+            ])),
+            ir::CallBoundary::ModuleImport { module } => Ok(Some((module.clone(), function.name.clone()))),
+            ir::CallBoundary::Internal | ir::CallBoundary::ModuleExport => Ok(None),
+        }
+    }
+
+    fn stdlib_io_import(&self, name: &str, span: crate::source::Span) -> StructuredResult<(String, String)> {
+        match self.options.target {
+            WasmTarget::Wasmtime => Ok(("env".into(), name.into())),
+            WasmTarget::Browser => Ok(("browser".into(), name.into())),
+            WasmTarget::Wasi => Err(StructuredError::Diagnostics(vec![
+                Diagnostic::new(
+                    DiagnosticCode::WasmError,
+                    format!(
+                        "stdlib host call `gleam/io.{name}` is not supported for target `{}`",
+                        self.options.target.name()
+                    ),
+                )
+                .with_label(Label::primary(span, "unsupported host call for this target"))
+                .with_note("supported targets for `gleam/io` host calls are `wasmtime` and `browser`"),
+            ])),
+        }
+    }
+
+    fn import_function(&mut self, function: &ir::Function) -> StructuredResult<()> {
+        let Some((module, name)) = self.concrete_import(function)? else {
+            return Ok(());
+        };
+        let signature = self
+            .signatures
+            .get(&function.name)
+            .expect("function signature should be registered")
+            .clone();
+        self.module
+            .push_import(Import { module, name, desc: ImportDesc::Function(signature.type_id) });
+        let id = FunctionId(self.imported_functions);
+        self.imported_functions += 1;
+        self.function_ids.insert(function.name.clone(), id);
+        Ok(())
     }
 
     fn function_signature(&mut self, function: &ir::Function) -> StructuredResult<FunctionSignature> {
@@ -123,6 +247,8 @@ impl<'a> StructuredEmitter<'a> {
             .expect("function signature should be registered")
             .clone();
         self.local_indices.clear();
+        self.debug_locals.clear();
+        self.scratch_local = None;
 
         let mut structured = Function::new(signature.type_id);
         structured.name = Some(function.name.clone());
@@ -141,9 +267,18 @@ impl<'a> StructuredEmitter<'a> {
         }
 
         if needs_scratch(function) {
+            let id = LocalId((structured.params.len() + structured.locals.len()) as u32);
             structured
                 .locals
                 .push(Local { name: Some("__scratch".into()), type_: ValueType::I32 });
+            self.scratch_local = Some(id);
+        }
+        for debug_import in needed_debug_imports(function) {
+            let id = LocalId((structured.params.len() + structured.locals.len()) as u32);
+            structured
+                .locals
+                .push(Local { name: Some(format!("__{}", debug_import.name())), type_: debug_import.value_type() });
+            self.debug_locals.insert(debug_import, id);
         }
         structured.body = self.block(&function.body)?;
         Ok(structured)
@@ -306,21 +441,25 @@ impl<'a> StructuredEmitter<'a> {
             }
             "__op_and" => self.short_circuit_bool(call, false, out)?,
             "__op_or" => self.short_circuit_bool(call, true, out)?,
+            "__stdlib_gleam_float_negate" => {
+                out.push(Instruction::F64Const((-0.0f64).to_bits()));
+                self.expression(&call.arguments[0].value, out)?;
+                out.push(Instruction::F64Sub);
+            }
+            "__stdlib_gleam_float_max" | "__stdlib_gleam_float_min" => {
+                // Keep these in the legacy path until structured locals can
+                // preserve each argument without evaluating it twice.
+                return Err(StructuredError::Unsupported);
+            }
             "__stdlib_gleam_function_identity" | "__stdlib_gleam_function_constant" => {
                 self.expression(&call.arguments[0].value, out)?;
             }
+            "__stdlib_gleam_io_debug" => self.stdlib_io_debug(call, out)?,
             _ => {
                 let id = self
                     .function_ids
                     .get(&call.function)
                     .copied()
-                    .or_else(|| {
-                        self.source
-                            .functions
-                            .iter()
-                            .position(|f| f.name == call.function)
-                            .map(|i| FunctionId(i as u32))
-                    })
                     .ok_or(StructuredError::Unsupported)?;
                 let signature = self
                     .signatures
@@ -339,6 +478,66 @@ impl<'a> StructuredEmitter<'a> {
     fn binary_arguments(&mut self, call: &ir::DirectCall, out: &mut Vec<Instruction>) -> StructuredResult<()> {
         self.expression(&call.arguments[0].value, out)?;
         self.expression(&call.arguments[1].value, out)
+    }
+
+    fn stdlib_io_debug(&mut self, call: &ir::DirectCall, out: &mut Vec<Instruction>) -> StructuredResult<()> {
+        let value = &call.arguments[0].value;
+        let import = match value.type_ {
+            Type::Int => DebugImport::I64,
+            Type::Float => DebugImport::F64,
+            Type::Bool => DebugImport::Bool,
+            Type::String
+            | Type::BitArray
+            | Type::Tuple(_)
+            | Type::List(_)
+            | Type::Record { .. }
+            | Type::Custom { .. }
+            | Type::Opaque { .. }
+            | Type::Function { .. } => DebugImport::Value,
+            Type::Nil => return Ok(()),
+            Type::Generic(_) => return Err(StructuredError::Unsupported),
+        };
+        if self.options.target == WasmTarget::Wasi {
+            return Err(StructuredError::Diagnostics(vec![
+                Diagnostic::new(
+                    DiagnosticCode::WasmError,
+                    format!(
+                        "stdlib host call `gleam/io.debug` is not supported for target `{}`",
+                        self.options.target.name()
+                    ),
+                )
+                .with_label(Label::primary(value.span, "unsupported host call for this target"))
+                .with_note("supported targets for `gleam/io` host calls are `wasmtime` and `browser`"),
+            ]));
+        }
+        let local = self
+            .debug_locals
+            .get(&import)
+            .copied()
+            .ok_or(StructuredError::Unsupported)?;
+        let function = self.ensure_debug_import(import);
+        self.expression(value, out)?;
+        out.push(Instruction::LocalTee { local, type_: import.value_type() });
+        out.push(Instruction::Call { function, type_: FunctionType::new([import.value_type()], []) });
+        out.push(Instruction::LocalGet { local, type_: import.value_type() });
+        Ok(())
+    }
+
+    fn ensure_debug_import(&mut self, import: DebugImport) -> FunctionId {
+        if let Some(id) = self.debug_imports.get(&import).copied() {
+            return id;
+        }
+        let type_ = FunctionType::new([import.value_type()], []);
+        let type_id = self.module.push_type(type_);
+        self.module.push_import(Import {
+            module: self.options.target.host_module().into(),
+            name: import.name().into(),
+            desc: ImportDesc::Function(type_id),
+        });
+        let id = FunctionId(self.imported_functions);
+        self.imported_functions += 1;
+        self.debug_imports.insert(import, id);
+        id
     }
 
     fn short_circuit_bool(
@@ -651,7 +850,7 @@ impl<'a> StructuredEmitter<'a> {
     }
 
     fn indirect_call(&mut self, call: &ir::IndirectCall, out: &mut Vec<Instruction>) -> StructuredResult<()> {
-        let scratch = self.next_local();
+        let scratch = self.scratch_local.ok_or(StructuredError::Unsupported)?;
         self.expression(&call.callee, out)?;
         out.push(Instruction::LocalSet { local: scratch, type_: ValueType::I32 });
         let results = call
@@ -819,10 +1018,6 @@ impl<'a> StructuredEmitter<'a> {
         memory
     }
 
-    fn next_local(&self) -> LocalId {
-        LocalId(self.local_indices.len() as u32)
-    }
-
     fn function_id(&self, name: &str) -> u32 {
         self.source
             .functions
@@ -905,6 +1100,78 @@ fn local_type(local: ir::LocalId, module: &ir::Module) -> Type {
 
 fn needs_scratch(function: &ir::Function) -> bool {
     block_needs_scratch(&function.body)
+}
+
+fn needed_debug_imports(function: &ir::Function) -> Vec<DebugImport> {
+    let mut imports = Vec::new();
+    collect_block_debug_imports(&function.body, &mut imports);
+    imports.sort_by_key(|import| match import {
+        DebugImport::Bool => 0,
+        DebugImport::Value => 1,
+        DebugImport::I64 => 2,
+        DebugImport::F64 => 3,
+    });
+    imports.dedup();
+    imports
+}
+
+fn collect_block_debug_imports(block: &ir::Block, imports: &mut Vec<DebugImport>) {
+    for instruction in &block.instructions {
+        match instruction {
+            ir::Instruction::Evaluate { expression, .. } | ir::Instruction::LocalSet { value: expression, .. } => {
+                collect_expression_debug_imports(expression, imports);
+            }
+            ir::Instruction::AssertMatch { value, .. } => collect_expression_debug_imports(value, imports),
+        }
+    }
+    collect_expression_debug_imports(&block.result, imports);
+}
+
+fn collect_expression_debug_imports(expression: &ir::Expression, imports: &mut Vec<DebugImport>) {
+    match &expression.kind {
+        ExpressionKind::DirectCall(call) if call.function == "__stdlib_gleam_io_debug" => {
+            if let Some(argument) = call.arguments.first() {
+                match argument.value.type_ {
+                    Type::Int => imports.push(DebugImport::I64),
+                    Type::Float => imports.push(DebugImport::F64),
+                    Type::Bool => imports.push(DebugImport::Bool),
+                    Type::String
+                    | Type::BitArray
+                    | Type::Tuple(_)
+                    | Type::List(_)
+                    | Type::Record { .. }
+                    | Type::Custom { .. }
+                    | Type::Opaque { .. }
+                    | Type::Function { .. } => imports.push(DebugImport::Value),
+                    Type::Nil | Type::Generic(_) => {}
+                }
+            }
+            for argument in &call.arguments {
+                collect_expression_debug_imports(&argument.value, imports);
+            }
+        }
+        ExpressionKind::DirectCall(call) => {
+            for argument in &call.arguments {
+                collect_expression_debug_imports(&argument.value, imports);
+            }
+        }
+        ExpressionKind::Branch(branch) => {
+            for subject in &branch.subjects {
+                collect_expression_debug_imports(subject, imports);
+            }
+            for clause in &branch.clauses {
+                if let Some(guard) = &clause.guard {
+                    collect_expression_debug_imports(guard, imports);
+                }
+                collect_expression_debug_imports(&clause.body, imports);
+            }
+        }
+        ExpressionKind::Pipeline(pipeline) => {
+            collect_expression_debug_imports(&pipeline.input, imports);
+            collect_expression_debug_imports(&pipeline.call, imports);
+        }
+        _ => {}
+    }
 }
 
 fn block_needs_scratch(block: &ir::Block) -> bool {

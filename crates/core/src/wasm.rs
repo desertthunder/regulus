@@ -2154,11 +2154,14 @@ mod tests {
 
         insta::assert_snapshot!(emit_wat(&module).expect("emit wat"), @r#"
 (module
-  (import "env" "inc" (func $host_inc (param i64) (result i64)))
-  (func $main (export "main") (result i64)
+  (type (func (param i64) (result i64)))
+  (type (func (result i64)))
+  (import "env" "inc" (func (type 0) (param i64) (result i64)))
+  (func $main (type 1) (result i64)
     i64.const 41
-    call $host_inc
+    call 0
   )
+  (export "main" (func 1))
 )
 "#);
     }
@@ -2900,7 +2903,7 @@ pub fn main() { io.println("hi") }
 
         assert!(
             wasm.wat
-                .contains("(import \"browser\" \"println\" (func $__stdlib_gleam_io_println"),
+                .contains("(import \"browser\" \"println\" (func (type 0) (param i32)))"),
             "{}",
             wasm.wat
         );

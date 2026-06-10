@@ -43,7 +43,7 @@ Make the CLI compile projects and produce useful artifacts.
       structured builder.
 - [x] Move managed-value allocation, pattern matching, closures, and indirect
       calls to the structured builder.
-- [ ] Move stdlib intrinsics, host imports, and target adapters to structured
+- [x] Move stdlib intrinsics, host imports, and target adapters to structured
       imports and calls.
 - [ ] Replace runtime helper WAT string blocks with structured helper modules or
       checked precompiled helper fragments.
