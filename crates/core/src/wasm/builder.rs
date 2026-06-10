@@ -350,8 +350,10 @@ pub(crate) enum Instruction {
     I64Mul,
     I64DivS,
     I64RemS,
+    I32WrapI64,
     I64ExtendI32U,
     I64ReinterpretF64,
+    F64ReinterpretI64,
     F64Add,
     F64Sub,
     F64Mul,
@@ -420,8 +422,10 @@ impl Instruction {
                 StackEffect::new([I32, I32], [I32])
             }
             I::I64Add | I::I64Sub | I::I64Mul | I::I64DivS | I::I64RemS => StackEffect::new([I64, I64], [I64]),
+            I::I32WrapI64 => StackEffect::new([I64], [I32]),
             I::I64ExtendI32U => StackEffect::new([I32], [I64]),
             I::I64ReinterpretF64 => StackEffect::new([F64], [I64]),
+            I::F64ReinterpretI64 => StackEffect::new([I64], [F64]),
             I::F64Add | I::F64Sub | I::F64Mul | I::F64Div | I::F64Min | I::F64Max => {
                 StackEffect::new([F64, F64], [F64])
             }
@@ -781,8 +785,10 @@ fn instruction_inline_wat(instruction: &Instruction) -> String {
         Instruction::I64Mul => "i64.mul".into(),
         Instruction::I64DivS => "i64.div_s".into(),
         Instruction::I64RemS => "i64.rem_s".into(),
+        Instruction::I32WrapI64 => "i32.wrap_i64".into(),
         Instruction::I64ExtendI32U => "i64.extend_i32_u".into(),
         Instruction::I64ReinterpretF64 => "i64.reinterpret_f64".into(),
+        Instruction::F64ReinterpretI64 => "f64.reinterpret_i64".into(),
         Instruction::F64Add => "f64.add".into(),
         Instruction::F64Sub => "f64.sub".into(),
         Instruction::F64Mul => "f64.mul".into(),

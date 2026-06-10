@@ -2945,6 +2945,219 @@ pub fn nested_option() -> Int {
         );
     }
 
+    fn exported_function_with_body(name: &str, return_type: Type, result: ir::Expression, span: Span) -> ir::Function {
+        ir::Function {
+            closure_captures: Vec::new(),
+            name: name.into(),
+            public: true,
+            params: Vec::new(),
+            locals: Vec::new(),
+            return_type: return_type.clone(),
+            abi: ir::CallAbi {
+                params: Vec::new(),
+                return_: Some(ir::AbiValue::from(&return_type)),
+                boundary: ir::CallBoundary::ModuleExport,
+            },
+            body: ir::Block { instructions: Vec::new(), result: Box::new(result), span },
+            span,
+        }
+    }
+
+    fn assert_emit_wasm_error(module: ir::Module, expected: &str, span: Span) {
+        let errors = module.emit_wat().expect_err("invalid module should fail Wasm emission");
+        assert!(
+            errors.iter().any(|diagnostic| diagnostic.message.contains(expected)),
+            "{errors:?}"
+        );
+        assert!(
+            errors
+                .iter()
+                .any(|diagnostic| diagnostic.labels.iter().any(|label| label.span == span)),
+            "{errors:?}"
+        );
+    }
+
+    #[test]
+    fn literal_parse_failures_report_source_spanned_diagnostics() {
+        let span = Span::new(SourceFileId(0), 3, 9);
+        let result = ir::Expression {
+            type_: Type::Int,
+            span,
+            kind: ExpressionKind::Literal(ir::Literal { kind: LiteralKind::Int, source: "nope".into() }),
+        };
+        let function = exported_function_with_body("bad", Type::Int, result, span);
+
+        assert_emit_wasm_error(ir_module(vec![function], span), "invalid int literal", span);
+    }
+
+    #[test]
+    fn static_value_parse_failures_report_source_spanned_diagnostics() {
+        let span = Span::new(SourceFileId(0), 10, 16);
+        let bad_field = ir::Expression {
+            type_: Type::Int,
+            span,
+            kind: ExpressionKind::Literal(ir::Literal { kind: LiteralKind::Int, source: "nope".into() }),
+        };
+        let result =
+            ir::Expression { type_: Type::Tuple(vec![Type::Int]), span, kind: ExpressionKind::Tuple(vec![bad_field]) };
+        let function = exported_function_with_body("bad_tuple", Type::Tuple(vec![Type::Int]), result, span);
+
+        assert_emit_wasm_error(ir_module(vec![function], span), "invalid int literal", span);
+    }
+
+    fn bit_array_expr(values: &[u64], span: Span) -> ir::Expression {
+        let segments = values
+            .iter()
+            .map(|value| ir::BitArraySegment {
+                value: *value,
+                bit_size: 8,
+                type_: ir::BitSegmentType::Integer,
+                options: Vec::new(),
+                span,
+            })
+            .collect::<Vec<_>>();
+        ir::Expression {
+            type_: Type::BitArray,
+            span,
+            kind: ExpressionKind::BitArray(ir::BitArrayLiteral { bit_len: values.len() as u32 * 8, segments }),
+        }
+    }
+
+    #[test]
+    fn structured_codegen_ports_residual_ir_forms() {
+        let span = Span::new(SourceFileId(0), 30, 40);
+        let bit_concat = exported_function_with_body(
+            "bits",
+            Type::BitArray,
+            ir::Expression {
+                type_: Type::BitArray,
+                span,
+                kind: ExpressionKind::BitArrayConcat {
+                    left: Box::new(bit_array_expr(&[1], span)),
+                    right: Box::new(bit_array_expr(&[2], span)),
+                },
+            },
+            span,
+        );
+        let bit_test = exported_function_with_body(
+            "is_bits",
+            Type::Bool,
+            ir::Expression {
+                type_: Type::Bool,
+                span,
+                kind: ExpressionKind::BitStringDeconstruct {
+                    bit_array: Box::new(bit_array_expr(&[1], span)),
+                    segments: Vec::new(),
+                },
+            },
+            span,
+        );
+        let allocate = exported_function_with_body(
+            "allocate",
+            Type::String,
+            ir::Expression {
+                type_: Type::String,
+                span,
+                kind: ExpressionKind::Memory(ir::MemoryOperation::Allocate { bytes: Box::new(int_expr("16", span)) }),
+            },
+            span,
+        );
+        let wasm = ir_module(vec![bit_concat, bit_test, allocate], span)
+            .emit_wasm()
+            .expect("emit residual IR wasm");
+        let engine = Engine::default();
+        let module = Module::new(&engine, &wasm.bytes).expect("compile wasm module");
+        let mut store = Store::new(&engine, ());
+        let instance = Instance::new(&mut store, &module, &[]).expect("instantiate module");
+        let memory = instance.get_memory(&mut store, "memory").expect("memory export");
+        let bits = instance
+            .get_typed_func::<(), i32>(&mut store, "bits")
+            .expect("get bits export");
+        let pointer = bits.call(&mut store, ()).expect("call bits") as usize;
+        let mut bytes = [0; 16];
+        memory.read(&store, pointer, &mut bytes).expect("read bit array");
+        assert_eq!(u32::from_le_bytes(bytes[4..8].try_into().unwrap()), 16);
+        let is_bits = instance
+            .get_typed_func::<(), i32>(&mut store, "is_bits")
+            .expect("get is_bits export");
+        assert_eq!(is_bits.call(&mut store, ()).expect("call is_bits"), 1);
+        let allocate = instance
+            .get_typed_func::<(), i32>(&mut store, "allocate")
+            .expect("get allocate export");
+        assert!(allocate.call(&mut store, ()).expect("call allocate") >= 4096);
+    }
+
+    #[test]
+    fn structured_codegen_ports_list_deconstruct_ir() {
+        let span = Span::new(SourceFileId(0), 41, 50);
+        let list = ir::Expression {
+            type_: Type::List(Box::new(Type::Int)),
+            span,
+            kind: ExpressionKind::List(vec![int_expr("41", span)]),
+        };
+        let function = ir::Function {
+            closure_captures: Vec::new(),
+            name: "head".into(),
+            public: true,
+            params: Vec::new(),
+            locals: vec![
+                ir::Local { id: ir::LocalId(0), name: "head".into(), type_: Type::Int, span },
+                ir::Local { id: ir::LocalId(1), name: "tail".into(), type_: Type::List(Box::new(Type::Int)), span },
+            ],
+            return_type: Type::Int,
+            abi: ir::CallAbi {
+                params: Vec::new(),
+                return_: Some(ir::AbiValue::from(&Type::Int)),
+                boundary: ir::CallBoundary::ModuleExport,
+            },
+            body: ir::Block {
+                instructions: vec![ir::Instruction::Evaluate {
+                    expression: ir::Expression {
+                        type_: Type::Nil,
+                        span,
+                        kind: ExpressionKind::ListDeconstruct {
+                            list: Box::new(list),
+                            head: ir::LocalId(0),
+                            tail: ir::LocalId(1),
+                        },
+                    },
+                    span,
+                }],
+                result: Box::new(ir::Expression {
+                    type_: Type::Int,
+                    span,
+                    kind: ExpressionKind::LocalGet(ir::LocalId(0)),
+                }),
+                span,
+            },
+            span,
+        };
+        let wasm = ir_module(vec![function], span)
+            .emit_wasm()
+            .expect("emit list deconstruct wasm");
+        let engine = Engine::default();
+        let module = Module::new(&engine, &wasm.bytes).expect("compile wasm module");
+        let mut store = Store::new(&engine, ());
+        let instance = Instance::new(&mut store, &module, &[]).expect("instantiate module");
+        let head = instance
+            .get_typed_func::<(), i64>(&mut store, "head")
+            .expect("get head export");
+        assert_eq!(head.call(&mut store, ()).expect("call head"), 41);
+    }
+
+    #[test]
+    fn structured_codegen_ports_failure_ir() {
+        let wasm = compile_wasm("pub fn fails() -> Int { panic }");
+        let engine = Engine::default();
+        let module = Module::new(&engine, &wasm.bytes).expect("compile wasm module");
+        let mut store = Store::new(&engine, ());
+        let instance = Instance::new(&mut store, &module, &[]).expect("instantiate module");
+        let fails = instance
+            .get_typed_func::<(), i64>(&mut store, "fails")
+            .expect("get fails export");
+        assert!(fails.call(&mut store, ()).is_err());
+    }
+
     #[test]
     fn backend_validation_reports_source_spanned_stack_diagnostics() {
         let span = Span::new(SourceFileId(0), 5, 9);

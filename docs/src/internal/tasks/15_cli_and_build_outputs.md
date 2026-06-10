@@ -84,17 +84,16 @@ Make the CLI compile projects and produce useful artifacts.
   - [x] Keep unsupported IR as source-spanned `WasmError` diagnostics.
   - [x] Audit remaining `StructuredError::Unsupported` sites
     - [x] Port dynamic tuple/list/record literals with non-static fields.
-    - [ ] Port `BitArrayConcat`, `BitStringDeconstruct`, `ListDeconstruct`,
+    - [x] Port `BitArrayConcat`, `BitStringDeconstruct`, `ListDeconstruct`,
           `Failure`, and `MemoryOperation::Allocate` IR.
-    - [ ] Replace literal/static-value parse failures with source-spanned
+    - [x] Replace literal/static-value parse failures with source-spanned
           diagnostics.
     - [ ] Replace missing scratch/allocation/dynamic local and signature lookups
-          with internal backend diagnostics or checked invariants.
+          with checked invariants.
     - [ ] Add tests that each unsupported residual IR path reports a precise
           diagnostic with a source span.
   - [ ] Delete the old `Emitter` implementation and fallback-only tests.
-  - [ ] Decide whether helper-backed modules may keep checked WAT fragments or
-        need direct structured byte emission too.
+  - [ ] Helper-backed modules need direct structured byte emission too.
 - [x] Add tests that backend validation reports source-spanned diagnostics
       before byte emission for stack, signature, local, and target-adapter
       mistakes.

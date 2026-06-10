@@ -546,7 +546,7 @@ impl<'a> StructuredEmitter<'a> {
 
     fn expression(&mut self, expression: &ir::Expression, out: &mut Vec<Instruction>) -> StructuredResult<()> {
         match &expression.kind {
-            ExpressionKind::Literal(literal) => self.literal(literal, out),
+            ExpressionKind::Literal(literal) => self.literal(literal, expression.span, out),
             ExpressionKind::LocalGet(local) => {
                 let type_ = value_type(&expression.type_, expression.span)?;
                 out.push(Instruction::LocalGet { local: self.local(*local, expression.span)?, type_ });
@@ -620,6 +620,12 @@ impl<'a> StructuredEmitter<'a> {
                 self.managed_field_load(tuple, *index, &expression.type_, out)
             }
             ExpressionKind::ListCons { head, tail } => self.list_cons(head, tail, out),
+            ExpressionKind::BitArrayConcat { left, right } => self.bit_array_concat(left, right, out),
+            ExpressionKind::BitStringDeconstruct { bit_array, .. } => {
+                self.managed_tag_test(bit_array, runtime::ObjectTag::BitArray, None, out)
+            }
+            ExpressionKind::ListDeconstruct { list, head, tail } => self.list_deconstruct(list, *head, *tail, out),
+            ExpressionKind::Failure(failure) => self.failure(failure, out),
             ExpressionKind::Memory(operation) => self.memory_operation(operation, out),
             ExpressionKind::IndirectCall(call) => self.indirect_call(call, out),
             ExpressionKind::BitArray(bit_array) => {
@@ -634,24 +640,25 @@ impl<'a> StructuredEmitter<'a> {
                     .with_label(Label::primary(expression.span, "residual use expression here"))
                     .with_note("`use` must lower to callback-passing call IR before Wasm emission"),
             ])),
-            _ => Err(StructuredError::Unsupported),
         }
     }
 
-    fn literal(&mut self, literal: &ir::Literal, out: &mut Vec<Instruction>) -> StructuredResult<()> {
+    fn literal(
+        &mut self, literal: &ir::Literal, span: crate::source::Span, out: &mut Vec<Instruction>,
+    ) -> StructuredResult<()> {
         match literal.kind {
             LiteralKind::Int => {
                 let value = literal
                     .source
                     .parse::<i64>()
-                    .map_err(|_| StructuredError::Unsupported)?;
+                    .map_err(|_| literal_parse_diagnostic(literal, span, "signed 64-bit integer"))?;
                 out.push(Instruction::I64Const(value));
             }
             LiteralKind::Float => {
                 let value = literal
                     .source
                     .parse::<f64>()
-                    .map_err(|_| StructuredError::Unsupported)?;
+                    .map_err(|_| literal_parse_diagnostic(literal, span, "64-bit float"))?;
                 out.push(Instruction::F64Const(value.to_bits()));
             }
             LiteralKind::Bool => out.push(Instruction::I32Const(if literal.source == "True" { 1 } else { 0 })),
@@ -1547,6 +1554,20 @@ impl<'a> StructuredEmitter<'a> {
         Ok(())
     }
 
+    fn bit_array_concat(
+        &mut self, left: &ir::Expression, right: &ir::Expression, out: &mut Vec<Instruction>,
+    ) -> StructuredResult<()> {
+        self.expression(left, out)?;
+        self.expression(right, out)?;
+        self.call_runtime_helper(
+            "__bit_array_append",
+            [ValueType::I32, ValueType::I32],
+            [ValueType::I32],
+            out,
+        );
+        Ok(())
+    }
+
     fn list_cons(
         &mut self, head: &ir::Expression, tail: &ir::Expression, out: &mut Vec<Instruction>,
     ) -> StructuredResult<()> {
@@ -1973,6 +1994,12 @@ impl<'a> StructuredEmitter<'a> {
         Ok(())
     }
 
+    fn managed_tag_test(
+        &mut self, expression: &ir::Expression, tag: runtime::ObjectTag, size: Option<u32>, out: &mut Vec<Instruction>,
+    ) -> StructuredResult<()> {
+        self.managed_tag_test_subject(&PatternSubject { root: expression, path: Vec::new() }, tag, size, out)
+    }
+
     fn managed_tag_test_subject(
         &mut self, subject: &PatternSubject<'_>, tag: runtime::ObjectTag, size: Option<u32>, out: &mut Vec<Instruction>,
     ) -> StructuredResult<()> {
@@ -2217,11 +2244,56 @@ impl<'a> StructuredEmitter<'a> {
         Ok(())
     }
 
+    fn list_deconstruct(
+        &mut self, list: &ir::Expression, head: ir::LocalId, tail: ir::LocalId, out: &mut Vec<Instruction>,
+    ) -> StructuredResult<()> {
+        self.expression(list, out)?;
+        self.call_runtime_helper("__list_head", [ValueType::I32], [ValueType::I64], out);
+        let head_type = self.local_types.get(&head).cloned().unwrap_or(Type::Int);
+        self.slot_bits_to_value(&head_type, list.span, out)?;
+        out.push(Instruction::LocalSet {
+            local: self.local(head, list.span)?,
+            type_: value_type(&head_type, list.span)?,
+        });
+        self.expression(list, out)?;
+        self.call_runtime_helper("__list_tail", [ValueType::I32], [ValueType::I32], out);
+        out.push(Instruction::LocalSet { local: self.local(tail, list.span)?, type_: ValueType::I32 });
+        Ok(())
+    }
+
+    fn slot_bits_to_value(
+        &mut self, type_: &Type, span: crate::source::Span, out: &mut Vec<Instruction>,
+    ) -> StructuredResult<()> {
+        match value_type(type_, span)? {
+            ValueType::I64 => {}
+            ValueType::I32 => out.push(Instruction::I32WrapI64),
+            ValueType::F64 => out.push(Instruction::F64ReinterpretI64),
+            ValueType::F32 | ValueType::FuncRef | ValueType::ExternRef => return Err(StructuredError::Unsupported),
+        }
+        Ok(())
+    }
+
+    fn failure(&mut self, failure: &ir::FailurePath, out: &mut Vec<Instruction>) -> StructuredResult<()> {
+        let helper = match failure.reason {
+            ir::FailureReason::AssertMatch | ir::FailureReason::BranchFallthrough => "__match_fail",
+            ir::FailureReason::Panic | ir::FailureReason::Todo | ir::FailureReason::Assert => "__panic",
+        };
+        self.call_runtime_helper(helper, [], [], out);
+        out.push(Instruction::Unreachable);
+        Ok(())
+    }
+
     fn memory_operation(
         &mut self, operation: &ir::MemoryOperation, out: &mut Vec<Instruction>,
     ) -> StructuredResult<()> {
         match operation {
-            ir::MemoryOperation::Allocate { .. } => Err(StructuredError::Unsupported),
+            ir::MemoryOperation::Allocate { bytes } => {
+                self.expression(bytes, out)?;
+                if value_type(&bytes.type_, bytes.span)? == ValueType::I64 {
+                    out.push(Instruction::I32WrapI64);
+                }
+                self.allocate_dynamic(out)
+            }
             ir::MemoryOperation::Load { address, type_ } => {
                 self.expression(address, out)?;
                 out.push(match type_ {
@@ -2329,7 +2401,11 @@ impl<'a> StructuredEmitter<'a> {
     fn static_value(&mut self, expression: &ir::Expression) -> StructuredResult<u64> {
         match &expression.kind {
             ExpressionKind::Literal(literal) => match literal.kind {
-                LiteralKind::Int => literal.source.parse::<u64>().map_err(|_| StructuredError::Unsupported),
+                LiteralKind::Int => literal
+                    .source
+                    .parse::<i64>()
+                    .map(|value| value as u64)
+                    .map_err(|_| literal_parse_diagnostic(literal, expression.span, "signed 64-bit integer")),
                 LiteralKind::Bool => Ok(if literal.source == "True" { 1 } else { 0 }),
                 LiteralKind::Nil => Ok(0),
                 LiteralKind::String => {
@@ -2340,7 +2416,7 @@ impl<'a> StructuredEmitter<'a> {
                     .source
                     .parse::<f64>()
                     .map(f64::to_bits)
-                    .map_err(|_| StructuredError::Unsupported),
+                    .map_err(|_| literal_parse_diagnostic(literal, expression.span, "64-bit float")),
             },
             ExpressionKind::Tuple(items) => {
                 let fields = self.static_values(items)?;
@@ -2490,6 +2566,28 @@ impl<'a> StructuredEmitter<'a> {
             ])
         })
     }
+}
+
+fn literal_parse_diagnostic(
+    literal: &ir::Literal, span: crate::source::Span, expected: &'static str,
+) -> StructuredError {
+    let kind = match literal.kind {
+        LiteralKind::Int => "int",
+        LiteralKind::Float => "float",
+        LiteralKind::Bool => "bool",
+        LiteralKind::Nil => "nil",
+        LiteralKind::String => "string",
+    };
+    StructuredError::Diagnostics(vec![
+        Diagnostic::new(
+            DiagnosticCode::WasmError,
+            format!("invalid {kind} literal in Wasm backend"),
+        )
+        .with_label(Label::primary(
+            span,
+            format!("could not parse `{}` as {expected}", literal.source),
+        )),
+    ])
 }
 
 fn literal_type(literal: &ir::Literal) -> Type {
