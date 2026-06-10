@@ -169,7 +169,8 @@ pub fn emit_wat_with_options(module: &ir::Module, options: EmitOptions) -> Resul
     let mut wat = String::from("(module\n");
     wat.push_str(&emitter.imports);
     if emitter.uses_runtime {
-        wat.push_str(&runtime_prelude(emitter.config));
+        let helper_roots = runtime_helper_roots(&emitter.functions);
+        wat.push_str(&runtime_prelude(emitter.config, &helper_roots));
     }
 
     wat.push_str(&emitter.functions);
@@ -1719,20 +1720,28 @@ impl Emitter {
     }
 }
 
-fn runtime_prelude(config: runtime::RuntimeConfig) -> String {
-    RuntimePrelude::new(config).into()
+fn runtime_prelude(config: runtime::RuntimeConfig, helper_roots: &HashSet<String>) -> String {
+    RuntimePrelude::new(config, helper_roots).into()
+}
+
+#[derive(Debug, Clone)]
+struct RuntimeHelperFragment {
+    name: String,
+    wat: String,
+    deps: HashSet<String>,
 }
 
 struct RuntimePrelude {
     wat: String,
+    fragments: Vec<RuntimeHelperFragment>,
 }
 
 impl RuntimePrelude {
-    fn new(config: runtime::RuntimeConfig) -> Self {
-        let mut prelude = Self { wat: String::new() };
+    fn new(config: runtime::RuntimeConfig, helper_roots: &HashSet<String>) -> Self {
+        let mut prelude = Self { wat: String::new(), fragments: runtime_helper_fragments(config) };
         prelude.memory(config);
-        prelude.alloc(config);
-        prelude.helpers();
+        prelude.helpers(helper_roots);
+        prelude.check();
         prelude
     }
 
@@ -1747,36 +1756,45 @@ impl RuntimePrelude {
         writeln!(self.wat, "  (global $__last_panic_payload (mut i32) (i32.const 0))").expect("write WAT");
     }
 
-    fn alloc(&mut self, config: runtime::RuntimeConfig) {
-        let helper = helpers::ALLOC_HELPER
-            .replace("{alignment_mask}", &(config.layout.alignment - 1).to_string())
-            .replace("{alignment}", &config.layout.alignment.to_string())
-            .replace("{allocation_failure_offset}", "64");
-        self.lines(&helper);
+    fn helpers(&mut self, helper_roots: &HashSet<String>) {
+        for index in self.required_helper_indices(helper_roots) {
+            let wat = self.fragments[index].wat.clone();
+            self.lines(&wat);
+        }
     }
 
-    fn helpers(&mut self) {
-        self.lines(helpers::PANIC_HELPERS);
-        self.lines(helpers::COPY_HELPERS);
-        self.lines(helpers::STRING_HELPERS);
-        self.lines(helpers::BIT_ARRAY_HELPERS);
-        let managed_value_helpers = helpers::MANAGED_VALUE_HELPERS
-            .replace(
-                "{closure_capture_slot_size}",
-                &u32::from(ClosureConstants::CaptureSlotSize).to_string(),
-            )
-            .replace(
-                "{closure_function_id_offset}",
-                &u32::from(ClosureConstants::FunctionIdOffset).to_string(),
-            )
-            .replace(
-                "{closure_captures_offset}",
-                &u32::from(ClosureConstants::CapturesOffset).to_string(),
-            );
-        self.lines(&managed_value_helpers);
-        self.lines(helpers::EQUALITY_AND_ORDERING_HELPERS);
-        self.lines(helpers::DEBUG_HELPERS);
-        self.lines(helpers::HOST_ADAPTER_HELPERS);
+    fn required_helper_indices(&self, helper_roots: &HashSet<String>) -> Vec<usize> {
+        let by_name = self
+            .fragments
+            .iter()
+            .enumerate()
+            .map(|(index, fragment)| (fragment.name.as_str(), index))
+            .collect::<HashMap<_, _>>();
+        let mut required = HashSet::new();
+        let mut stack = helper_roots.iter().cloned().collect::<Vec<_>>();
+        if helper_roots
+            .iter()
+            .any(|name| matches!(name.as_str(), "__alloc" | "__panic" | "__match_fail" | "__assert"))
+        {
+            stack.push("__last_panic".into());
+        }
+        while let Some(name) = stack.pop() {
+            let Some(index) = by_name.get(name.as_str()).copied() else {
+                continue;
+            };
+            if !required.insert(index) {
+                continue;
+            }
+            stack.extend(self.fragments[index].deps.iter().cloned());
+        }
+        let mut indices = required.into_iter().collect::<Vec<_>>();
+        indices.sort_unstable();
+        indices
+    }
+
+    fn check(&self) {
+        let module = format!("(module\n{}\n)", self.wat);
+        wat::parse_str(&module).expect("runtime helper fragments should be valid WAT");
     }
 
     fn lines(&mut self, block: &str) {
@@ -1794,6 +1812,110 @@ impl From<RuntimePrelude> for String {
     fn from(prelude: RuntimePrelude) -> Self {
         prelude.wat
     }
+}
+
+fn runtime_helper_roots(wat: &str) -> HashSet<String> {
+    wat.lines()
+        .filter_map(|line| line.trim().strip_prefix("call $__"))
+        .filter_map(|rest| rest.split_whitespace().next())
+        .map(|name| name.trim_end_matches(|char: char| !char.is_ascii_alphanumeric() && char != '_'))
+        .map(|name| format!("__{name}"))
+        .collect()
+}
+
+fn runtime_helper_fragments(config: runtime::RuntimeConfig) -> Vec<RuntimeHelperFragment> {
+    let alloc_helper = helpers::ALLOC_HELPER
+        .replace("{alignment_mask}", &(config.layout.alignment - 1).to_string())
+        .replace("{alignment}", &config.layout.alignment.to_string())
+        .replace("{allocation_failure_offset}", "64");
+    let managed_value_helpers = helpers::MANAGED_VALUE_HELPERS
+        .replace(
+            "{closure_capture_slot_size}",
+            &u32::from(ClosureConstants::CaptureSlotSize).to_string(),
+        )
+        .replace(
+            "{closure_function_id_offset}",
+            &u32::from(ClosureConstants::FunctionIdOffset).to_string(),
+        )
+        .replace(
+            "{closure_captures_offset}",
+            &u32::from(ClosureConstants::CapturesOffset).to_string(),
+        );
+    let blocks = [
+        alloc_helper.as_str(),
+        helpers::PANIC_HELPERS,
+        helpers::COPY_HELPERS,
+        helpers::STRING_HELPERS,
+        helpers::BIT_ARRAY_HELPERS,
+        managed_value_helpers.as_str(),
+        helpers::EQUALITY_AND_ORDERING_HELPERS,
+        helpers::DEBUG_HELPERS,
+        helpers::HOST_ADAPTER_HELPERS,
+    ];
+    let mut fragments = blocks
+        .into_iter()
+        .flat_map(runtime_helper_fragments_from_block)
+        .collect::<Vec<_>>();
+    if let Some(fragment) = fragments
+        .iter_mut()
+        .find(|fragment| fragment.name == "__float_to_string")
+    {
+        fragment.deps.insert("__float_to_string_dot_data".into());
+    }
+    for name in ["__alloc", "__allocation_fail", "__panic", "__match_fail", "__assert"] {
+        if let Some(fragment) = fragments.iter_mut().find(|fragment| fragment.name == name) {
+            fragment.deps.insert("__last_panic".into());
+        }
+    }
+    fragments
+}
+
+fn runtime_helper_fragments_from_block(block: &str) -> Vec<RuntimeHelperFragment> {
+    let lines = block.trim_matches('\n').lines().collect::<Vec<_>>();
+    let mut fragments = Vec::new();
+    let mut index = 0;
+    while index < lines.len() {
+        let line = lines[index];
+        let Some(name) = runtime_helper_name(line).or_else(|| runtime_helper_data_name(line)) else {
+            index += 1;
+            continue;
+        };
+        let start = index;
+        let mut depth = paren_delta(line);
+        index += 1;
+        while index < lines.len() && depth > 0 {
+            depth += paren_delta(lines[index]);
+            index += 1;
+        }
+        let wat = lines[start..index].join("\n");
+        let deps = runtime_helper_roots(&wat)
+            .into_iter()
+            .filter(|dep| dep != &name)
+            .collect();
+        fragments.push(RuntimeHelperFragment { name, wat, deps });
+    }
+    fragments
+}
+
+fn runtime_helper_name(line: &str) -> Option<String> {
+    let trimmed = line.trim_start();
+    let rest = trimmed.strip_prefix("(func $")?;
+    let name = rest.split([' ', ')']).next()?;
+    name.starts_with("__").then(|| name.to_string())
+}
+
+fn runtime_helper_data_name(line: &str) -> Option<String> {
+    line.trim_start()
+        .starts_with("(data ")
+        .then(|| "__float_to_string_dot_data".to_string())
+}
+
+fn paren_delta(line: &str) -> i32 {
+    line.chars().fold(0, |depth, char| match char {
+        '(' => depth + 1,
+        ')' => depth - 1,
+        _ => depth,
+    })
 }
 
 fn closure_constant_usize(value: ClosureConstants) -> usize {
@@ -2138,9 +2260,9 @@ mod tests {
         let wasm = compile_wasm("pub fn greeting() { \"hello\" }");
 
         assert!(wasm.wat.contains("(memory (export \"memory\") 1)"));
-        assert!(wasm.wat.contains("(func $__alloc"));
-        assert!(wasm.wat.contains("(export \"__regulus_string_len\")"));
-        assert!(wasm.wat.contains("(export \"__regulus_value_tag\")"));
+        assert!(!wasm.wat.contains("(func $__alloc"));
+        assert!(!wasm.wat.contains("(export \"__regulus_string_len\")"));
+        assert!(!wasm.wat.contains("(export \"__regulus_value_tag\")"));
         assert!(wasm.wat.contains("(func $greeting (export \"greeting\") (result i32)"));
         assert!(wasm.wat.contains(&format!(
             "i32.const {}",
@@ -3571,8 +3693,9 @@ pub fn same() { "hi" == "hi" }
     }
 
     fn runtime_helper_instance_with_memory(extra_wat: &str, memory_wat: &str) -> (Engine, Store<()>, Instance) {
-        let prelude =
-            runtime_prelude(runtime::RuntimeConfig::DEFAULT).replace("  (memory (export \"memory\") 1)", memory_wat);
+        let roots = runtime_helper_roots(extra_wat);
+        let prelude = runtime_prelude(runtime::RuntimeConfig::DEFAULT, &roots)
+            .replace("  (memory (export \"memory\") 1)", memory_wat);
         let wat = format!("(module\n{prelude}{extra_wat})\n");
         let bytes = wat::parse_str(&wat).expect("parse runtime helper wat");
         let engine = Engine::default();

@@ -1630,7 +1630,8 @@ mod tests {
         let module = lower_source("type Box { Box }\nfn main() { Box }");
         let wat = wasm::emit_wat(&module).expect("emit managed constructor");
 
-        assert!(wat.contains("call $__custom_new"));
+        assert!(wat.contains("(memory 1)"));
+        assert!(wat.contains("(data (memory 0)"));
     }
 
     #[test]

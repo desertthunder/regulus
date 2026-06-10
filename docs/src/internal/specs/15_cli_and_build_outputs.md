@@ -41,8 +41,29 @@ compiler diagnostics rather than WAT parse or Wasmtime translation errors.
 The migration should be incremental. Keep textual WAT snapshots available while
 introducing typed instructions, then move one codegen area at a time from string
 printing to the structured builder. Runtime helpers can remain as checked WAT
-blocks at first, but should become structured helper modules or precompiled
-binary fragments before this milestone is considered complete.
+fragments while the builder API matures, but their shape should make that
+remaining debt explicit.
+
+Runtime WAT fragments are not the structured builder. The current helper source
+should therefore be named for what it is: checked fragments. Rename
+`crates/core/src/wasm/helpers.rs` to `fragments.rs`, then split it into domain
+modules under `crates/core/src/wasm/fragments/`. Use `*.wat.rs` filenames for
+these modules so readers can tell that the contents are WAT-backed Rust
+constants, not native builder code. Expected domains include allocation, panic,
+strings, lists, bit arrays, dictionaries, managed values, equality/ordering,
+debug, and host adapters.
+
+The split should preserve explicit dependency tracking. Codegen should request
+helpers by stable fragment names, the fragment registry should resolve
+transitive dependencies, and emission should include only reachable fragments.
+Tests should cover both sides: a small program must not emit unrelated runtime
+fragments, and a program using a helper family must still include all
+transitive helper dependencies.
+
+After the split, the next optional migration is to port one domain at a time
+from checked WAT fragments to builder-native helper modules or checked
+precompiled binary fragments. Each port should delete the corresponding WAT
+fragment module once equivalent validation and snapshots exist.
 
 ## Usability
 

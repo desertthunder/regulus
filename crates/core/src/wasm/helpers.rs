@@ -474,9 +474,6 @@ pub const STRING_HELPERS: &str = r#"
     local.get $frac_str
     call $__string_concat
   )
-  (func $__string_inspect (param $ptr i32) (result i32)
-    local.get $ptr
-  )
 "#;
 
 pub const BIT_ARRAY_HELPERS: &str = r#"
@@ -719,21 +716,6 @@ pub const BIT_ARRAY_HELPERS: &str = r#"
 "#;
 
 pub const EQUALITY_AND_ORDERING_HELPERS: &str = r#"
-  (func $__equal_ptr (param $left i32) (param $right i32) (result i32)
-    local.get $left
-    local.get $right
-    i32.eq
-  )
-  (func $__equal_i64 (param $left i64) (param $right i64) (result i32)
-    local.get $left
-    local.get $right
-    i64.eq
-  )
-  (func $__equal_f64 (param $left f64) (param $right f64) (result i32)
-    local.get $left
-    local.get $right
-    f64.eq
-  )
   (func $__equal_bytes (param $left i32) (param $right i32) (param $len i32) (result i32)
     (local $i i32)
     i32.const 0
@@ -1044,16 +1026,6 @@ pub const EQUALITY_AND_ORDERING_HELPERS: &str = r#"
       end
     end
   )
-  (func $__compare_bool (param $left i32) (param $right i32) (result i32)
-    local.get $left
-    local.get $right
-    i32.sub
-  )
-  (func $__compare_string (param $left i32) (param $right i32) (result i32)
-    local.get $left
-    local.get $right
-    call $__string_compare
-  )
   (func $__compare_bytes (param $left i32) (param $right i32) (param $len i32) (result i32)
     (local $i i32) (local $left_byte i32) (local $right_byte i32)
     i32.const 0
@@ -1360,21 +1332,6 @@ pub const DEBUG_HELPERS: &str = r#"
       i32.load
     end
   )
-  (func $__debug_size (param $ptr i32) (result i32)
-    local.get $ptr
-    i32.eqz
-    if (result i32)
-      i32.const 0
-    else
-      local.get $ptr
-      i32.const 4
-      i32.add
-      i32.load
-    end
-  )
-  (func $__debug_inspect (param $ptr i32) (result i32)
-    local.get $ptr
-  )
   (func $__debug_reason (param $ptr i32) (result i32)
     local.get $ptr
     i32.const 8
@@ -1391,43 +1348,9 @@ pub const DEBUG_HELPERS: &str = r#"
     i32.add
     i64.load
   )
-  (func $__debug_payload_i32 (param $ptr i32) (param $index i32) (result i32)
-    local.get $ptr
-    local.get $index
-    call $__debug_payload_i64
-    i32.wrap_i64
-  )
 "#;
 
 pub const HOST_ADAPTER_HELPERS: &str = r#"
-  (func $__regulus_string_len (export "__regulus_string_len") (param $ptr i32) (result i32)
-    local.get $ptr
-    call $__string_len
-  )
-  (func $__regulus_string_data (export "__regulus_string_data") (param $ptr i32) (result i32)
-    local.get $ptr
-    call $__string_data
-  )
-  (func $__regulus_value_tag (export "__regulus_value_tag") (param $ptr i32) (result i32)
-    local.get $ptr
-    call $__debug_tag
-  )
-  (func $__regulus_value_size (export "__regulus_value_size") (param $ptr i32) (result i32)
-    local.get $ptr
-    call $__debug_size
-  )
-  (func $__regulus_value_field_i64 (export "__regulus_value_field_i64")
-    (param $ptr i32) (param $index i32) (result i64)
-    local.get $ptr
-    local.get $index
-    call $__debug_payload_i64
-  )
-  (func $__regulus_value_field_i32 (export "__regulus_value_field_i32")
-    (param $ptr i32) (param $index i32) (result i32)
-    local.get $ptr
-    local.get $index
-    call $__debug_payload_i32
-  )
 "#;
 
 pub const MANAGED_VALUE_HELPERS: &str = r#"
@@ -1611,12 +1534,6 @@ pub const MANAGED_VALUE_HELPERS: &str = r#"
     i32.add
     i64.load
   )
-  (func $__field_load_i32 (param $ptr i32) (param $index i32) (result i32)
-    local.get $ptr
-    local.get $index
-    call $__field_load_i64
-    i32.wrap_i64
-  )
   (func $__closure_new (param $function_id i32) (param $capture_count i32) (param $captures i32) (result i32)
     (local $ptr i32)
     local.get $capture_count
@@ -1651,65 +1568,6 @@ pub const MANAGED_VALUE_HELPERS: &str = r#"
     i32.const {closure_capture_slot_size}
     i32.mul
     call $__copy_bytes
-    local.get $ptr
-  )
-  (func $__opaque_new (param $type_tag i32) (param $payload i32) (result i32)
-    (local $ptr i32)
-    i32.const 16
-    call $__alloc
-    local.set $ptr
-    local.get $ptr
-    i32.const 8
-    i32.store
-    local.get $ptr
-    i32.const 4
-    i32.add
-    i32.const 0
-    i32.store
-    local.get $ptr
-    i32.const 8
-    i32.add
-    local.get $type_tag
-    i32.store
-    local.get $ptr
-    i32.const 12
-    i32.add
-    local.get $payload
-    i32.store
-    local.get $ptr
-  )
-  (func $__error_new (param $reason i32) (param $arity i32) (param $fields i32) (result i32)
-    (local $ptr i32)
-    local.get $arity
-    i32.const 8
-    i32.mul
-    i32.const 12
-    i32.add
-    i32.const 7
-    i32.add
-    i32.const -8
-    i32.and
-    call $__alloc
-    local.set $ptr
-    local.get $ptr
-    i32.const 9
-    i32.store
-    local.get $ptr
-    i32.const 4
-    i32.add
-    local.get $arity
-    i32.store
-    local.get $ptr
-    i32.const 8
-    i32.add
-    local.get $reason
-    i32.store
-    local.get $fields
-    local.get $ptr
-    i32.const 12
-    i32.add
-    local.get $arity
-    call $__copy_slots
     local.get $ptr
   )
   (func $__panic_value_new (param $reason i32) (param $arity i32) (param $fields i32) (result i32)
