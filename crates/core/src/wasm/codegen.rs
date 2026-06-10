@@ -860,7 +860,7 @@ impl<'a> StructuredEmitter<'a> {
             .map(|value| result_types(&value.type_, call.callee.span))
             .transpose()?
             .unwrap_or_default();
-        let body = self.indirect_call_branch(call, 0, scratch, results.clone())?;
+        let body = self.indirect_call_branch(call, 0, scratch, results)?;
         out.extend(body);
         Ok(())
     }
@@ -1069,7 +1069,7 @@ fn maybe_value_type(type_: &Type) -> Option<ValueType> {
 }
 
 fn mem_arg(memory: MemoryId, offset: u32, align: u32) -> MemoryArg {
-    MemoryArg { memory, offset, align }
+    MemoryArg { memory, align, offset }
 }
 
 fn load_for_type(memory: MemoryId, offset: u32, type_: ValueType) -> Instruction {

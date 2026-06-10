@@ -6,7 +6,7 @@ mod binary;
 mod builder;
 mod codegen;
 mod encode;
-mod helpers;
+mod fragments;
 mod validator;
 
 use std::{
@@ -1824,11 +1824,11 @@ fn runtime_helper_roots(wat: &str) -> HashSet<String> {
 }
 
 fn runtime_helper_fragments(config: runtime::RuntimeConfig) -> Vec<RuntimeHelperFragment> {
-    let alloc_helper = helpers::ALLOC_HELPER
+    let alloc_helper = fragments::allocation::ALLOC_HELPER
         .replace("{alignment_mask}", &(config.layout.alignment - 1).to_string())
         .replace("{alignment}", &config.layout.alignment.to_string())
         .replace("{allocation_failure_offset}", "64");
-    let managed_value_helpers = helpers::MANAGED_VALUE_HELPERS
+    let managed_value_helpers = fragments::managed_values::MANAGED_VALUE_HELPERS
         .replace(
             "{closure_capture_slot_size}",
             &u32::from(ClosureConstants::CaptureSlotSize).to_string(),
@@ -1843,14 +1843,16 @@ fn runtime_helper_fragments(config: runtime::RuntimeConfig) -> Vec<RuntimeHelper
         );
     let blocks = [
         alloc_helper.as_str(),
-        helpers::PANIC_HELPERS,
-        helpers::COPY_HELPERS,
-        helpers::STRING_HELPERS,
-        helpers::BIT_ARRAY_HELPERS,
+        fragments::panic::PANIC_HELPERS,
+        fragments::copy::COPY_HELPERS,
+        fragments::strings::STRING_HELPERS,
+        fragments::bit_arrays::BIT_ARRAY_HELPERS,
+        fragments::lists::LIST_HELPERS,
         managed_value_helpers.as_str(),
-        helpers::EQUALITY_AND_ORDERING_HELPERS,
-        helpers::DEBUG_HELPERS,
-        helpers::HOST_ADAPTER_HELPERS,
+        fragments::dictionaries::DICTIONARY_HELPERS,
+        fragments::equality_ordering::EQUALITY_AND_ORDERING_HELPERS,
+        fragments::debug::DEBUG_HELPERS,
+        fragments::host_adapters::HOST_ADAPTER_HELPERS,
     ];
     let mut fragments = blocks
         .into_iter()
@@ -2268,6 +2270,28 @@ mod tests {
             "i32.const {}",
             runtime::RuntimeConfig::DEFAULT.static_data_start
         )));
+    }
+
+    #[test]
+    fn omits_unreachable_runtime_fragment_domains() {
+        let wasm = compile_wasm("pub fn join() { \"a\" <> \"b\" }");
+
+        assert!(wasm.wat.contains("(func $__string_concat"));
+        assert!(wasm.wat.contains("(func $__alloc"));
+        assert!(!wasm.wat.contains("(func $__dict_new"), "{}", wasm.wat);
+        assert!(!wasm.wat.contains("(func $__list_cons"), "{}", wasm.wat);
+        assert!(!wasm.wat.contains("(func $__bit_array_new"), "{}", wasm.wat);
+    }
+
+    #[test]
+    fn includes_transitive_runtime_fragment_dependencies() {
+        let wasm = compile_wasm("pub fn join() { \"a\" <> \"b\" }");
+
+        assert!(wasm.wat.contains("(func $__string_concat"));
+        assert!(wasm.wat.contains("(func $__string_len"));
+        assert!(wasm.wat.contains("(func $__string_data"));
+        assert!(wasm.wat.contains("(func $__string_new"));
+        assert!(wasm.wat.contains("(func $__copy_bytes"));
     }
 
     #[test]

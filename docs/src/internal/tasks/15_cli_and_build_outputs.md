@@ -48,12 +48,12 @@ Make the CLI compile projects and produce useful artifacts.
 - [x] Replace runtime helper WAT string blocks with structured helper modules or
       checked precompiled helper fragments.
 - [x] Track helper dependencies explicitly so unused helpers are not emitted.
-- [ ] Rename `crates/core/src/wasm/helpers.rs` to `fragments.rs`
-- [ ] Split runtime fragments by domain under `crates/core/src/wasm/fragments/`
+- [x] Rename `crates/core/src/wasm/helpers.rs` to `fragments.rs`
+- [x] Split runtime fragments by domain under `crates/core/src/wasm/fragments/`
       using `*.wat.rs` modules for allocation, strings, lists, bit arrays,
       dictionaries, managed values, equality/ordering, panic, debug, and host
       adapters.
-- [ ] Keep fragment dependency metadata explicit after the split, with tests
+- [x] Keep fragment dependency metadata explicit after the split, with tests
       proving unused domain fragments are not emitted.
 - [ ] Add deterministic WAT snapshots generated from structured Wasm.
 - [ ] Add tests that backend validation reports source-spanned diagnostics
