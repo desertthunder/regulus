@@ -79,13 +79,47 @@ Support useful standard library modules and host calls.
 - [ ] Decide whether Cloudflare Workers are a target or browser host profile.
 - [ ] Document import module names for browser and Worker host adapters.
 
+### Higher-order intrinsics and runtime callbacks
+
+- [ ] Define one closure-callback ABI for compiler intrinsics, runtime helpers,
+      and compiler-generated adapters.
+- [ ] Lower intrinsics that invoke user closures through IR or generated
+      closure adapters, not bespoke WAT callback code.
+- [ ] Reuse ordinary closure capture layout, indirect-call dispatch, type
+      checks, and result ABI for intrinsic callbacks.
+- [ ] Support callback-taking stdlib functions such as `list.map`,
+      `list.fold`, `result.map`, `option.map`, `function.compose`, and
+      `function.flip` through the shared mechanism.
+- [ ] Add diagnostics for unsupported callback parameter, return, capture, or
+      host boundary ABI shapes before WAT assembly.
+- [ ] Add tests for closures passed to intrinsics, captured closures, nested
+      callbacks, generic callbacks, and callback failures.
+
 ### JSON and structured data
 
-- [ ] Choose whether first examples decode JSON in Gleam or in host code.
-- [ ] Support the selected `gleam/dynamic` and `gleam/dynamic/decode` surface
-      so JSON decoding happens in Gleam.
+- [ ] Define the JSON bridge from host JSON or JSON text to `Dynamic`.
+- [ ] Map JSON null, bool, number, string, array, and object values to
+      documented dynamic runtime shapes.
+- [ ] Support full `gleam/dynamic` value construction and classification.
+- [ ] Support full `gleam/dynamic/decode` compatibility so JSON decoding
+      happens in Gleam.
+- [ ] Lower decoder combinators that call user closures through IR or another
+      compiler-owned plan rather than plain runtime WAT helpers.
+- [ ] Reuse normal closure dispatch for decoder continuations used by `field`,
+      `map`, `then`, `recursive`, and generated record decoders.
+- [ ] Implement property lookup and path traversal for `field`, `subfield`,
+      `at`, `optional_field`, and `optionally_at`.
+- [ ] Implement collection decoding for `list` and `dict`, including nested
+      error paths and error aggregation.
+- [ ] Implement decoder composition for `success`, `failure`, `map`, `then`,
+      `one_of`, `collapse_errors`, and `map_errors`.
+- [ ] Implement `optional`, `recursive`, and `new_primitive_decoder` with the
+      same behavior as the Gleam stdlib.
+- [ ] Construct real `DecodeError(expected, found, path)` values.
 - [ ] Add diagnostics for unsupported decoders and structured response shapes.
 - [ ] Add fixtures for simple JSON input and JSON-like structured output.
+- [ ] Add fixtures for nested objects, optional/null fields, lists, dicts,
+      records, enum variants, `one_of`, and decode error paths.
 
 ### Group 2: remaining stdlib
 
@@ -96,8 +130,8 @@ Support useful standard library modules and host calls.
 - [x] Support `gleam/bit_array`.
 - [ ] Support `gleam/bytes_tree`.
 - [ ] Support `gleam/string_tree`.
-- [ ] Support `gleam/dynamic`.
-- [ ] Support `gleam/dynamic/decode`.
+- [ ] Support full `gleam/dynamic`.
+- [ ] Support full `gleam/dynamic/decode`.
 - [ ] Support `gleam/pair`.
 - [ ] Support `gleam/set`.
 - [ ] Support `gleam/uri`.

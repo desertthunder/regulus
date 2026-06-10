@@ -379,6 +379,27 @@ impl Lowerer {
                 })
             }
             AstExpression::FieldAccess(field_access) => {
+                if let Some(stdlib_value) = stdlib_call(&self.module.resolved.ast, expression)
+                    && stdlib_value.strategy == MemberStrategy::Intrinsic
+                    && !matches!(stdlib_value.type_, Type::Function { .. })
+                {
+                    let type_ = self
+                        .typed_expression_type(field_access.span)
+                        .unwrap_or_else(|| stdlib_value.type_.clone());
+                    return Some(Expression {
+                        type_: type_.clone(),
+                        span: field_access.span,
+                        kind: ExpressionKind::DirectCall(DirectCall {
+                            function: stdlib_lowered_name(&stdlib_value.module, &stdlib_value.member),
+                            arguments: Vec::new(),
+                            abi: call_abi(
+                                &Type::Function { params: Vec::new(), return_type: Box::new(type_) },
+                                CallBoundary::Internal,
+                            ),
+                        }),
+                    });
+                }
+
                 let record = self.lower_expression(context, &field_access.record)?;
                 let type_ = self.typed_expression_type(field_access.span).unwrap_or(Type::Nil);
                 Some(Expression {

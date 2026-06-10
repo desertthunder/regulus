@@ -690,6 +690,68 @@ impl Emitter {
             "__stdlib_gleam_function_identity" | "__stdlib_gleam_function_constant" => {
                 self.expression(&call.arguments[0].value);
             }
+            "__stdlib_gleam_dynamic_array" | "__stdlib_gleam_dynamic_list" => {
+                self.expression(&call.arguments[0].value);
+                writeln!(self.functions, "    call $__dynamic_list").expect("write WAT");
+                self.uses_runtime = true;
+            }
+            "__stdlib_gleam_dynamic_bit_array" => {
+                self.expression(&call.arguments[0].value);
+                writeln!(self.functions, "    call $__dynamic_bit_array").expect("write WAT");
+                self.uses_runtime = true;
+            }
+            "__stdlib_gleam_dynamic_bool" => {
+                self.expression(&call.arguments[0].value);
+                writeln!(self.functions, "    call $__dynamic_bool").expect("write WAT");
+                self.uses_runtime = true;
+            }
+            "__stdlib_gleam_dynamic_float" => {
+                self.expression(&call.arguments[0].value);
+                writeln!(self.functions, "    call $__dynamic_float").expect("write WAT");
+                self.uses_runtime = true;
+            }
+            "__stdlib_gleam_dynamic_int" => {
+                self.expression(&call.arguments[0].value);
+                writeln!(self.functions, "    call $__dynamic_int").expect("write WAT");
+                self.uses_runtime = true;
+            }
+            "__stdlib_gleam_dynamic_nil" => {
+                writeln!(self.functions, "    call $__dynamic_nil").expect("write WAT");
+                self.uses_runtime = true;
+            }
+            "__stdlib_gleam_dynamic_properties" => {
+                self.expression(&call.arguments[0].value);
+                writeln!(self.functions, "    call $__dynamic_properties").expect("write WAT");
+                self.uses_runtime = true;
+            }
+            "__stdlib_gleam_dynamic_string" => {
+                self.expression(&call.arguments[0].value);
+                writeln!(self.functions, "    call $__dynamic_string").expect("write WAT");
+                self.uses_runtime = true;
+            }
+            "__stdlib_gleam_dynamic_classify" => self.stdlib_dynamic_classify(call),
+            "__stdlib_gleam_dynamic_decode_dynamic" => self.stdlib_decoder(100, 0),
+            "__stdlib_gleam_dynamic_decode_int" => self.stdlib_decoder(101, 0),
+            "__stdlib_gleam_dynamic_decode_float" => self.stdlib_decoder(102, 0),
+            "__stdlib_gleam_dynamic_decode_bool" => self.stdlib_decoder(103, 0),
+            "__stdlib_gleam_dynamic_decode_string" => self.stdlib_decoder(104, 0),
+            "__stdlib_gleam_dynamic_decode_bit_array" => self.stdlib_decoder(105, 0),
+            "__stdlib_gleam_dynamic_decode_list" => {
+                self.expression(&call.arguments[0].value);
+                writeln!(self.functions, "    call $__decoder_list").expect("write WAT");
+                self.uses_runtime = true;
+            }
+            "__stdlib_gleam_dynamic_decode_optional" => {
+                self.expression(&call.arguments[0].value);
+                writeln!(self.functions, "    call $__decoder_optional").expect("write WAT");
+                self.uses_runtime = true;
+            }
+            "__stdlib_gleam_dynamic_decode_run" => {
+                self.expression(&call.arguments[0].value);
+                self.expression(&call.arguments[1].value);
+                writeln!(self.functions, "    call $__decode_run").expect("write WAT");
+                self.uses_runtime = true;
+            }
             "__stdlib_gleam_io_debug" => self.stdlib_io_debug(call),
             _ => {
                 for argument in &call.arguments {
@@ -709,6 +771,91 @@ impl Emitter {
         writeln!(self.functions, "    else").expect("write WAT");
         writeln!(self.functions, "      i32.const {false_ptr}").expect("write WAT");
         writeln!(self.functions, "    end").expect("write WAT");
+    }
+
+    fn stdlib_dynamic_classify(&mut self, call: &ir::DirectCall) {
+        let int_ptr = self.static_string("Int");
+        let float_ptr = self.static_string("Float");
+        let bool_ptr = self.static_string("Bool");
+        let string_ptr = self.static_string("String");
+        let bit_array_ptr = self.static_string("BitArray");
+        let list_ptr = self.static_string("List");
+        let nil_ptr = self.static_string("Nil");
+        let dict_ptr = self.static_string("Dict");
+        let unknown_ptr = self.static_string("Unknown");
+        self.expression(&call.arguments[0].value);
+        writeln!(self.functions, "    call $__dynamic_tag").expect("write WAT");
+        writeln!(self.functions, "    i32.const 1").expect("write WAT");
+        writeln!(self.functions, "    i32.eq").expect("write WAT");
+        writeln!(self.functions, "    if (result i32)").expect("write WAT");
+        writeln!(self.functions, "      i32.const {int_ptr}").expect("write WAT");
+        writeln!(self.functions, "    else").expect("write WAT");
+        self.expression(&call.arguments[0].value);
+        writeln!(self.functions, "      call $__dynamic_tag").expect("write WAT");
+        writeln!(self.functions, "      i32.const 2").expect("write WAT");
+        writeln!(self.functions, "      i32.eq").expect("write WAT");
+        writeln!(self.functions, "      if (result i32)").expect("write WAT");
+        writeln!(self.functions, "        i32.const {float_ptr}").expect("write WAT");
+        writeln!(self.functions, "      else").expect("write WAT");
+        self.expression(&call.arguments[0].value);
+        writeln!(self.functions, "        call $__dynamic_tag").expect("write WAT");
+        writeln!(self.functions, "        i32.const 3").expect("write WAT");
+        writeln!(self.functions, "        i32.eq").expect("write WAT");
+        writeln!(self.functions, "        if (result i32)").expect("write WAT");
+        writeln!(self.functions, "          i32.const {bool_ptr}").expect("write WAT");
+        writeln!(self.functions, "        else").expect("write WAT");
+        self.expression(&call.arguments[0].value);
+        writeln!(self.functions, "          call $__dynamic_tag").expect("write WAT");
+        writeln!(self.functions, "          i32.const 4").expect("write WAT");
+        writeln!(self.functions, "          i32.eq").expect("write WAT");
+        writeln!(self.functions, "          if (result i32)").expect("write WAT");
+        writeln!(self.functions, "            i32.const {string_ptr}").expect("write WAT");
+        writeln!(self.functions, "          else").expect("write WAT");
+        self.expression(&call.arguments[0].value);
+        writeln!(self.functions, "            call $__dynamic_tag").expect("write WAT");
+        writeln!(self.functions, "            i32.const 5").expect("write WAT");
+        writeln!(self.functions, "            i32.eq").expect("write WAT");
+        writeln!(self.functions, "            if (result i32)").expect("write WAT");
+        writeln!(self.functions, "              i32.const {bit_array_ptr}").expect("write WAT");
+        writeln!(self.functions, "            else").expect("write WAT");
+        self.expression(&call.arguments[0].value);
+        writeln!(self.functions, "              call $__dynamic_tag").expect("write WAT");
+        writeln!(self.functions, "              i32.const 6").expect("write WAT");
+        writeln!(self.functions, "              i32.eq").expect("write WAT");
+        writeln!(self.functions, "              if (result i32)").expect("write WAT");
+        writeln!(self.functions, "                i32.const {list_ptr}").expect("write WAT");
+        writeln!(self.functions, "              else").expect("write WAT");
+        self.expression(&call.arguments[0].value);
+        writeln!(self.functions, "                call $__dynamic_tag").expect("write WAT");
+        writeln!(self.functions, "                i32.const 7").expect("write WAT");
+        writeln!(self.functions, "                i32.eq").expect("write WAT");
+        writeln!(self.functions, "                if (result i32)").expect("write WAT");
+        writeln!(self.functions, "                  i32.const {nil_ptr}").expect("write WAT");
+        writeln!(self.functions, "                else").expect("write WAT");
+        self.expression(&call.arguments[0].value);
+        writeln!(self.functions, "                  call $__dynamic_tag").expect("write WAT");
+        writeln!(self.functions, "                  i32.const 8").expect("write WAT");
+        writeln!(self.functions, "                  i32.eq").expect("write WAT");
+        writeln!(self.functions, "                  if (result i32)").expect("write WAT");
+        writeln!(self.functions, "                    i32.const {dict_ptr}").expect("write WAT");
+        writeln!(self.functions, "                  else").expect("write WAT");
+        writeln!(self.functions, "                    i32.const {unknown_ptr}").expect("write WAT");
+        writeln!(self.functions, "                  end").expect("write WAT");
+        writeln!(self.functions, "                end").expect("write WAT");
+        writeln!(self.functions, "              end").expect("write WAT");
+        writeln!(self.functions, "            end").expect("write WAT");
+        writeln!(self.functions, "          end").expect("write WAT");
+        writeln!(self.functions, "        end").expect("write WAT");
+        writeln!(self.functions, "      end").expect("write WAT");
+        writeln!(self.functions, "    end").expect("write WAT");
+        self.uses_runtime = true;
+    }
+
+    fn stdlib_decoder(&mut self, kind: i32, inner: i32) {
+        writeln!(self.functions, "    i32.const {kind}").expect("write WAT");
+        writeln!(self.functions, "    i32.const {inner}").expect("write WAT");
+        writeln!(self.functions, "    call $__decoder").expect("write WAT");
+        self.uses_runtime = true;
     }
 
     fn order_from_compare_result(&mut self) {
@@ -1886,6 +2033,7 @@ impl runtime::RuntimeConfig {
             fragments::lists::LIST_HELPERS,
             managed_value_helpers.as_str(),
             fragments::dictionaries::DICTIONARY_HELPERS,
+            fragments::dynamic::DYNAMIC_HELPERS,
             fragments::equality_ordering::EQUALITY_AND_ORDERING_HELPERS,
             fragments::debug::DEBUG_HELPERS,
             fragments::host_adapters::HOST_ADAPTER_HELPERS,
@@ -3439,6 +3587,33 @@ pub fn bits_append_size() -> Int { bit_array.bit_size(bit_array.append(<<1>>, <<
         let wasm = compile_wasm(include_str!("../../../fixtures/wasm/common_stdlib.gleam"));
 
         assert!(!wasm.wat.contains("(import \"env\" \"print\""), "{}", wasm.wat);
+    }
+
+    #[test]
+    fn runs_primitive_dynamic_decode_intrinsics() {
+        let wasm = compile_wasm(
+            r#"import gleam/dynamic
+import gleam/dynamic/decode
+import gleam/result.{Ok, Error}
+
+pub fn decoded_int() -> Int {
+  case decode.run(dynamic.int(42), decode.int) {
+    Ok(value) -> value
+    Error(_) -> 0
+  }
+}
+"#,
+        );
+
+        let engine = Engine::default();
+        let module = Module::new(&engine, &wasm.bytes).expect("compile wasm module");
+        let mut store = Store::new(&engine, ());
+        let instance = Instance::new(&mut store, &module, &[]).expect("instantiate module");
+        let decoded_int = instance
+            .get_typed_func::<(), i64>(&mut store, "decoded_int")
+            .expect("get decoded_int export");
+
+        assert_eq!(decoded_int.call(&mut store, ()).expect("call decoded_int"), 42);
     }
 
     #[test]

@@ -10,6 +10,8 @@ pub(crate) mod copy;
 pub(crate) mod debug;
 #[path = "fragments/dictionaries.wat.rs"]
 pub(crate) mod dictionaries;
+#[path = "fragments/dynamic.wat.rs"]
+pub(crate) mod dynamic;
 #[path = "fragments/equality_ordering.wat.rs"]
 pub(crate) mod equality_ordering;
 #[path = "fragments/host_adapters.wat.rs"]

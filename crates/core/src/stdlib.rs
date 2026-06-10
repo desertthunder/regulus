@@ -91,8 +91,8 @@ fn stdlib_modules() -> Vec<StdlibModule> {
         StdlibModule::gleam_bool(),
         StdlibModule::remaining("gleam/bytes_tree"),
         StdlibModule::gleam_dict(),
-        StdlibModule::remaining("gleam/dynamic"),
-        StdlibModule::remaining("gleam/dynamic/decode"),
+        StdlibModule::gleam_dynamic(),
+        StdlibModule::gleam_dynamic_decode(),
         StdlibModule::gleam_float(),
         StdlibModule::gleam_function(),
         StdlibModule::remaining("gleam/pair"),
@@ -386,6 +386,206 @@ impl StdlibModule {
         )
     }
 
+    fn gleam_dynamic() -> Self {
+        let dynamic_type = type_decl("Dynamic", vec![], true, vec![]);
+        Self::new(
+            "gleam/dynamic",
+            ModuleStrategy::Hybrid,
+            &[
+                function("array", vec![list(dynamic())], dynamic(), MemberStrategy::Intrinsic),
+                function("bit_array", vec![Type::BitArray], dynamic(), MemberStrategy::Intrinsic),
+                function("bool", vec![Type::Bool], dynamic(), MemberStrategy::Intrinsic),
+                function("classify", vec![dynamic()], Type::String, MemberStrategy::Intrinsic),
+                function("float", vec![Type::Float], dynamic(), MemberStrategy::Intrinsic),
+                function("int", vec![Type::Int], dynamic(), MemberStrategy::Intrinsic),
+                function("list", vec![list(dynamic())], dynamic(), MemberStrategy::Intrinsic),
+                function("nil", vec![], dynamic(), MemberStrategy::Intrinsic),
+                function(
+                    "properties",
+                    vec![list(Type::Tuple(vec![dynamic(), dynamic()]))],
+                    dynamic(),
+                    MemberStrategy::Intrinsic,
+                ),
+                function("string", vec![Type::String], dynamic(), MemberStrategy::Intrinsic),
+            ],
+            &[dynamic_type],
+        )
+    }
+
+    fn gleam_dynamic_decode() -> Self {
+        let decoder_type = type_decl("Decoder", vec!["t"], true, vec![]);
+        let decode_error_type = type_decl(
+            "DecodeError",
+            vec![],
+            false,
+            vec![constructor(
+                "DecodeError",
+                vec![
+                    field("expected", Type::String),
+                    field("found", Type::String),
+                    field("path", list(Type::String)),
+                ],
+                decode_error(),
+            )],
+        );
+        Self::new(
+            "gleam/dynamic/decode",
+            ModuleStrategy::Hybrid,
+            &[
+                value("bit_array", decoder(Type::BitArray), MemberStrategy::Intrinsic),
+                value("bool", decoder(Type::Bool), MemberStrategy::Intrinsic),
+                value("dynamic", decoder(dynamic()), MemberStrategy::Intrinsic),
+                value("float", decoder(Type::Float), MemberStrategy::Intrinsic),
+                value("int", decoder(Type::Int), MemberStrategy::Intrinsic),
+                value("string", decoder(Type::String), MemberStrategy::Intrinsic),
+                function(
+                    "run",
+                    vec![dynamic(), decoder(Type::generic("t"))],
+                    result(Type::generic("t"), list(decode_error())),
+                    MemberStrategy::Intrinsic,
+                ),
+                function(
+                    "list",
+                    vec![decoder(Type::generic("a"))],
+                    decoder(list(Type::generic("a"))),
+                    MemberStrategy::Intrinsic,
+                ),
+                function(
+                    "optional",
+                    vec![decoder(Type::generic("a"))],
+                    decoder(option(Type::generic("a"))),
+                    MemberStrategy::Intrinsic,
+                ),
+                function(
+                    "dict",
+                    vec![decoder(Type::generic("k")), decoder(Type::generic("v"))],
+                    decoder(dict(Type::generic("k"), Type::generic("v"))),
+                    MemberStrategy::InterfaceOnly,
+                ),
+                function(
+                    "at",
+                    vec![list(Type::generic("segment")), decoder(Type::generic("a"))],
+                    decoder(Type::generic("a")),
+                    MemberStrategy::InterfaceOnly,
+                ),
+                function(
+                    "optionally_at",
+                    vec![
+                        list(Type::generic("segment")),
+                        Type::generic("a"),
+                        decoder(Type::generic("a")),
+                    ],
+                    decoder(Type::generic("a")),
+                    MemberStrategy::InterfaceOnly,
+                ),
+                function(
+                    "field",
+                    vec![
+                        Type::generic("name"),
+                        decoder(Type::generic("t")),
+                        fn_type(vec![Type::generic("t")], decoder(Type::generic("final"))),
+                    ],
+                    decoder(Type::generic("final")),
+                    MemberStrategy::InterfaceOnly,
+                ),
+                function(
+                    "optional_field",
+                    vec![
+                        Type::generic("name"),
+                        Type::generic("t"),
+                        decoder(Type::generic("t")),
+                        fn_type(vec![Type::generic("t")], decoder(Type::generic("final"))),
+                    ],
+                    decoder(Type::generic("final")),
+                    MemberStrategy::InterfaceOnly,
+                ),
+                function(
+                    "subfield",
+                    vec![
+                        list(Type::generic("name")),
+                        decoder(Type::generic("t")),
+                        fn_type(vec![Type::generic("t")], decoder(Type::generic("final"))),
+                    ],
+                    decoder(Type::generic("final")),
+                    MemberStrategy::InterfaceOnly,
+                ),
+                function(
+                    "success",
+                    vec![Type::generic("t")],
+                    decoder(Type::generic("t")),
+                    MemberStrategy::InterfaceOnly,
+                ),
+                function(
+                    "failure",
+                    vec![Type::generic("a"), Type::String],
+                    decoder(Type::generic("a")),
+                    MemberStrategy::InterfaceOnly,
+                ),
+                function(
+                    "map",
+                    vec![
+                        decoder(Type::generic("a")),
+                        fn_type(vec![Type::generic("a")], Type::generic("b")),
+                    ],
+                    decoder(Type::generic("b")),
+                    MemberStrategy::InterfaceOnly,
+                ),
+                function(
+                    "then",
+                    vec![
+                        decoder(Type::generic("a")),
+                        fn_type(vec![Type::generic("a")], decoder(Type::generic("b"))),
+                    ],
+                    decoder(Type::generic("b")),
+                    MemberStrategy::InterfaceOnly,
+                ),
+                function(
+                    "one_of",
+                    vec![decoder(Type::generic("a")), list(decoder(Type::generic("a")))],
+                    decoder(Type::generic("a")),
+                    MemberStrategy::InterfaceOnly,
+                ),
+                function(
+                    "collapse_errors",
+                    vec![decoder(Type::generic("a")), Type::String],
+                    decoder(Type::generic("a")),
+                    MemberStrategy::InterfaceOnly,
+                ),
+                function(
+                    "map_errors",
+                    vec![
+                        decoder(Type::generic("a")),
+                        fn_type(vec![list(decode_error())], list(decode_error())),
+                    ],
+                    decoder(Type::generic("a")),
+                    MemberStrategy::InterfaceOnly,
+                ),
+                function(
+                    "recursive",
+                    vec![fn_type(vec![], decoder(Type::generic("a")))],
+                    decoder(Type::generic("a")),
+                    MemberStrategy::InterfaceOnly,
+                ),
+                function(
+                    "new_primitive_decoder",
+                    vec![
+                        Type::String,
+                        fn_type(vec![dynamic()], result(Type::generic("t"), Type::generic("t"))),
+                    ],
+                    decoder(Type::generic("t")),
+                    MemberStrategy::InterfaceOnly,
+                ),
+                function(
+                    "decode_error",
+                    vec![Type::String, dynamic()],
+                    list(decode_error()),
+                    MemberStrategy::InterfaceOnly,
+                ),
+            ],
+            &[decoder_type, decode_error_type],
+        )
+    }
+
     fn gleam_float() -> Self {
         Self::new(
             "gleam/float",
@@ -497,6 +697,10 @@ fn function(name: &'static str, params: Vec<Type>, return_type: Type, strategy: 
     StdlibMemberSpec { name, strategy, type_: Some(fn_type(params, return_type)) }
 }
 
+fn value(name: &'static str, type_: Type, strategy: MemberStrategy) -> StdlibMemberSpec {
+    StdlibMemberSpec { name, strategy, type_: Some(type_) }
+}
+
 fn constructor_member(name: &'static str) -> StdlibMemberSpec {
     StdlibMemberSpec { name, strategy: MemberStrategy::ManagedConstructor, type_: None }
 }
@@ -537,6 +741,18 @@ fn option(item: Type) -> Type {
 
 fn dict(key: Type, value: Type) -> Type {
     Type::custom("Dict", vec![key, value])
+}
+
+fn dynamic() -> Type {
+    Type::custom("Dynamic", vec![])
+}
+
+fn decoder(item: Type) -> Type {
+    Type::custom("Decoder", vec![item])
+}
+
+fn decode_error() -> Type {
+    Type::custom("DecodeError", vec![])
 }
 
 #[cfg(test)]

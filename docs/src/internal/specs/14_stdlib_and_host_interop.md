@@ -157,17 +157,60 @@ Cloudflare Workers may use the browser target initially, but the compiler needs
 an explicit decision: either add a `workers` target or document Workers as a
 browser-host profile with a distinct adapter contract.
 
+## Higher-order intrinsics and runtime callbacks
+
+Compiler/runtime intrinsics must support the same closure semantics as ordinary
+Gleam code. This includes passing closures into stdlib functions, storing them
+inside managed values, invoking captured closures from compiler-generated
+helper code, and preserving argument and return ABI rules.
+
+Plain runtime WAT helpers should not invent a second closure calling convention.
+Any intrinsic that needs to call a user function must either lower to IR that
+uses normal indirect-call dispatch, or call through a compiler-generated closure
+adapter with the same capture layout and type checks as ordinary closures.
+
+This applies beyond dynamic decoding. Higher-order stdlib members such as
+`list.map`, `list.fold`, `result.map`, `option.map`, `function.compose`,
+`function.flip`, and future host adapters must use this shared mechanism rather
+than bespoke per-helper callback code.
+
+Unsupported callback shapes should be rejected before WAT assembly with a
+source-spanned diagnostic naming the intrinsic, closure type, and ABI shape.
+
 ## Decoding and structured data
 
 The weather example needs a small JSON decoding path for NWS responses. The
-Wisp reference API needs structured JSON output. This can come from selected
-`gleam/dynamic` and `gleam/dynamic/decode` support, a small compiler-provided
-JSON bridge, or a deliberate choice to keep JSON parsing in the host for the
-first example milestone.
+Wisp reference API needs structured JSON output. JSON should decode in Gleam
+using `gleam/dynamic` and `gleam/dynamic/decode`, with a documented bridge that
+turns JSON text or host JSON values into `dynamic.Dynamic`.
 
-Whichever strategy is chosen must be explicit. Unsupported decoders,
-dependency modules, and structured response shapes should fail with
-source-spanned diagnostics.
+The bridge must map JSON values to dynamic values consistently:
+
+| JSON shape | Dynamic shape                                                 |
+| ---------- | ------------------------------------------------------------- |
+| `null`     | `dynamic.nil()`                                               |
+| boolean    | dynamic bool                                                  |
+| number     | dynamic int or float, preserving integer values when possible |
+| string     | dynamic string                                                |
+| array      | dynamic array/list of dynamic values                          |
+| object     | dynamic properties with string keys                           |
+
+Full `gleam/dynamic/decode` compatibility requires more than primitive runtime
+helpers. Decoder combinators such as `field`, `map`, `then`, and `recursive`
+call user closures or continuations. Runtime WAT helpers cannot call arbitrary
+Gleam closures on their own, so these combinators should be lowered through IR
+or another compiler-owned decoder plan that reuses normal closure dispatch.
+Low-level runtime helpers should only provide operations such as dynamic
+classification, property lookup, list traversal, and decode error allocation.
+
+The supported decoder surface should include primitive decoders, `list`,
+`dict`, `optional`, path and field decoders, `success`, `failure`, `map`,
+`then`, `one_of`, error mapping, `recursive`, and primitive custom decoders.
+Decode errors must preserve `DecodeError(expected, found, path)` with paths for
+fields, nested paths, and list indexes.
+
+Unsupported decoders, dependency modules, bridge shapes, and structured
+response shapes should fail with source-spanned diagnostics.
 
 ## Diagnostics
 
