@@ -83,7 +83,7 @@ Make the CLI compile projects and produce useful artifacts.
   - [x] Disable silent fallback from structured codegen to the WAT emitter.
   - [x] Keep unsupported IR as source-spanned `WasmError` diagnostics.
   - [x] Audit remaining `StructuredError::Unsupported` sites
-    - [ ] Port dynamic tuple/list/record literals with non-static fields.
+    - [x] Port dynamic tuple/list/record literals with non-static fields.
     - [ ] Port `BitArrayConcat`, `BitStringDeconstruct`, `ListDeconstruct`,
           `Failure`, and `MemoryOperation::Allocate` IR.
     - [ ] Replace literal/static-value parse failures with source-spanned

@@ -2656,6 +2656,103 @@ mod tests {
     }
 
     #[test]
+    fn structured_codegen_runs_dynamic_tuple_and_list_literals() {
+        let wasm = compile_wasm(
+            r#"import gleam/list
+
+pub fn first(x: Int) -> Int {
+  case #(x, 2) {
+    #(left, _) -> left
+  }
+}
+pub fn count(x: Int) -> Int { list.length([x, 2, 3]) }
+"#,
+        );
+
+        assert!(wasm.wat.contains("(global $__heap (mut i32)"), "{}", wasm.wat);
+        assert!(!wasm.wat.contains("structured Wasm emitter does not support"));
+
+        let engine = Engine::default();
+        let module = Module::new(&engine, &wasm.bytes).expect("compile wasm module");
+        let mut store = Store::new(&engine, ());
+        let instance = Instance::new(&mut store, &module, &[]).expect("instantiate module");
+        let first = instance
+            .get_typed_func::<i64, i64>(&mut store, "first")
+            .expect("get first export");
+        assert_eq!(first.call(&mut store, 41).expect("call first"), 41);
+        let count = instance
+            .get_typed_func::<i64, i64>(&mut store, "count")
+            .expect("get count export");
+        assert_eq!(count.call(&mut store, 41).expect("call count"), 3);
+    }
+
+    #[test]
+    fn structured_codegen_runs_dynamic_record_literals() {
+        let span = Span::new(SourceFileId(0), 0, 1);
+        let record_type = Type::Record {
+            name: "Point".into(),
+            fields: vec![
+                types::FieldInfo { name: "x".into(), type_: Type::Int },
+                types::FieldInfo { name: "y".into(), type_: Type::Int },
+            ],
+        };
+        let function = ir::Function {
+            closure_captures: Vec::new(),
+            name: "point".into(),
+            public: true,
+            params: vec![ir::Local { id: ir::LocalId(0), name: "x".into(), type_: Type::Int, span }],
+            locals: vec![ir::Local { id: ir::LocalId(0), name: "x".into(), type_: Type::Int, span }],
+            return_type: record_type.clone(),
+            abi: ir::CallAbi {
+                params: vec![ir::AbiValue::from(&Type::Int)],
+                return_: Some(ir::AbiValue::from(&record_type)),
+                boundary: ir::CallBoundary::ModuleExport,
+            },
+            body: ir::Block {
+                instructions: Vec::new(),
+                result: Box::new(ir::Expression {
+                    type_: record_type,
+                    span,
+                    kind: ExpressionKind::Record(ir::RecordValue {
+                        name: "Point".into(),
+                        fields: vec![
+                            ir::RecordFieldValue {
+                                name: "x".into(),
+                                value: ir::Expression {
+                                    type_: Type::Int,
+                                    span,
+                                    kind: ExpressionKind::LocalGet(ir::LocalId(0)),
+                                },
+                            },
+                            ir::RecordFieldValue { name: "y".into(), value: int_expr("2", span) },
+                        ],
+                    }),
+                }),
+                span,
+            },
+            span,
+        };
+        let wasm = ir_module(vec![function], span).emit_wasm().expect("emit wasm");
+        let engine = Engine::default();
+        let module = Module::new(&engine, &wasm.bytes).expect("compile wasm module");
+        let mut store = Store::new(&engine, ());
+        let instance = Instance::new(&mut store, &module, &[]).expect("instantiate module");
+        let point = instance
+            .get_typed_func::<i64, i32>(&mut store, "point")
+            .expect("get point export");
+        let pointer = point.call(&mut store, 41).expect("call point") as usize;
+        let memory = instance.get_memory(&mut store, "memory").expect("memory export");
+        let mut bytes = [0; 24];
+        memory.read(&store, pointer, &mut bytes).expect("read record");
+        assert_eq!(
+            u32::from_le_bytes(bytes[0..4].try_into().unwrap()),
+            u32::from(ObjectTag::Record)
+        );
+        assert_eq!(u64::from_le_bytes(bytes[8..16].try_into().unwrap()), 41);
+        assert_eq!(u64::from_le_bytes(bytes[16..24].try_into().unwrap()), 2);
+    }
+
+    #[test]
     fn structured_codegen_runs_string_length_intrinsics() {
         let wasm = compile_wasm(
             r#"import gleam/string

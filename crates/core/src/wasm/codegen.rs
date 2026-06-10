@@ -557,20 +557,37 @@ impl<'a> StructuredEmitter<'a> {
             ExpressionKind::RuntimeEquality { left, right } => self.runtime_equality(left, right, out),
             ExpressionKind::Branch(branch) => self.branch(branch, &expression.type_, expression.span, out),
             ExpressionKind::Pipeline(pipeline) => self.pipeline(pipeline, out),
-            ExpressionKind::Tuple(items) => {
-                let fields = self.static_values(items)?;
-                let object = runtime::tuple_object(self.config, self.next_static_offset, &fields);
-                self.static_pointer(object, out)
-            }
-            ExpressionKind::List(items) => {
-                let pointer = self.static_list(items)?;
-                out.push(Instruction::I32Const(pointer as i32));
-                Ok(())
-            }
+            ExpressionKind::Tuple(items) => match self.static_values(items) {
+                Ok(fields) => {
+                    let object = runtime::tuple_object(self.config, self.next_static_offset, &fields);
+                    self.static_pointer(object, out)
+                }
+                Err(StructuredError::Unsupported) => {
+                    self.field_array_value(runtime::ObjectTag::Tuple, items.iter(), out)
+                }
+                Err(error) => Err(error),
+            },
+            ExpressionKind::List(items) => match self.static_list(items) {
+                Ok(pointer) => {
+                    out.push(Instruction::I32Const(pointer as i32));
+                    Ok(())
+                }
+                Err(StructuredError::Unsupported) => self.list_value(items, out),
+                Err(error) => Err(error),
+            },
             ExpressionKind::Record(record) => {
-                let fields = self.static_values(record.fields.iter().map(|field| &field.value))?;
-                let object = runtime::record_object(self.config, self.next_static_offset, &fields);
-                self.static_pointer(object, out)
+                match self.static_values(record.fields.iter().map(|field| &field.value)) {
+                    Ok(fields) => {
+                        let object = runtime::record_object(self.config, self.next_static_offset, &fields);
+                        self.static_pointer(object, out)
+                    }
+                    Err(StructuredError::Unsupported) => self.field_array_value(
+                        runtime::ObjectTag::Record,
+                        record.fields.iter().map(|field| &field.value),
+                        out,
+                    ),
+                    Err(error) => Err(error),
+                }
             }
             ExpressionKind::RecordUpdate { record, constructor, fields } => {
                 self.record_update(record, constructor, fields, &expression.type_, out)
@@ -1412,6 +1429,63 @@ impl<'a> StructuredEmitter<'a> {
             )));
         }
         out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
+        Ok(())
+    }
+
+    fn field_array_value<'b>(
+        &mut self, tag: runtime::ObjectTag, fields: impl IntoIterator<Item = &'b ir::Expression>,
+        out: &mut Vec<Instruction>,
+    ) -> StructuredResult<()> {
+        let fields = fields.into_iter().collect::<Vec<_>>();
+        let ptr = self.alloc_local.ok_or(StructuredError::Unsupported)?;
+        let size = match tag {
+            runtime::ObjectTag::Tuple => self.config.layout.tuple_size(fields.len() as u32, 8),
+            runtime::ObjectTag::Record => self.config.layout.record_size(fields.len() as u32, 8),
+            _ => return Err(StructuredError::Unsupported),
+        };
+        self.allocate(size, out)?;
+        out.push(Instruction::LocalTee { local: ptr, type_: ValueType::I32 });
+        out.push(Instruction::I32Const(u32::from(tag) as i32));
+        out.push(Instruction::I32Store(mem_arg(self.ensure_memory(), 0, 2)));
+        out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
+        out.push(Instruction::I32Const(fields.len() as i32));
+        out.push(Instruction::I32Store(mem_arg(self.ensure_memory(), 4, 2)));
+        for (index, field) in fields.iter().enumerate() {
+            out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
+            self.expression_slot_value(field, out)?;
+            out.push(Instruction::I64Store(mem_arg(
+                self.ensure_memory(),
+                8 + index as u32 * 8,
+                3,
+            )));
+        }
+        out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
+        Ok(())
+    }
+
+    fn list_value(&mut self, items: &[ir::Expression], out: &mut Vec<Instruction>) -> StructuredResult<()> {
+        let tail = self.scratch_local.ok_or(StructuredError::Unsupported)?;
+        let ptr = self.alloc_local.ok_or(StructuredError::Unsupported)?;
+        out.push(Instruction::I32Const(0));
+        out.push(Instruction::LocalSet { local: tail, type_: ValueType::I32 });
+        for item in items.iter().rev() {
+            self.allocate(self.config.layout.list_cons_size(8), out)?;
+            out.push(Instruction::LocalTee { local: ptr, type_: ValueType::I32 });
+            out.push(Instruction::I32Const(u32::from(runtime::ObjectTag::ListCons) as i32));
+            out.push(Instruction::I32Store(mem_arg(self.ensure_memory(), 0, 2)));
+            out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
+            out.push(Instruction::I32Const(2));
+            out.push(Instruction::I32Store(mem_arg(self.ensure_memory(), 4, 2)));
+            out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
+            self.expression_slot_value(item, out)?;
+            out.push(Instruction::I64Store(mem_arg(self.ensure_memory(), 8, 3)));
+            out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
+            out.push(Instruction::LocalGet { local: tail, type_: ValueType::I32 });
+            out.push(Instruction::I32Store(mem_arg(self.ensure_memory(), 16, 2)));
+            out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
+            out.push(Instruction::LocalSet { local: tail, type_: ValueType::I32 });
+        }
+        out.push(Instruction::LocalGet { local: tail, type_: ValueType::I32 });
         Ok(())
     }
 
@@ -2630,8 +2704,24 @@ fn expression_needs_allocation(expression: &ir::Expression) -> bool {
                 | ExpressionKind::Memory(_)
         )
         || matches!(&expression.kind, ExpressionKind::DirectCall(call) if matches!(call.function.as_str(), "__op_string_concat" | "__stdlib_gleam_string_append"))
-        || matches!(&expression.kind, ExpressionKind::Constructor(constructor) if !constructor.arguments.iter().all(|arg| matches!(arg.kind, ExpressionKind::Literal(_) | ExpressionKind::Tuple(_) | ExpressionKind::List(_) | ExpressionKind::Record(_) | ExpressionKind::Constructor(_) | ExpressionKind::FunctionValue(_) | ExpressionKind::BitArray(_))))
+        || matches!(&expression.kind, ExpressionKind::Tuple(_) | ExpressionKind::List(_) | ExpressionKind::Record(_) if !expression_is_static_allocatable(expression))
+        || matches!(&expression.kind, ExpressionKind::Constructor(constructor) if !constructor.arguments.iter().all(expression_is_static_allocatable))
         || expression.children().any(expression_needs_allocation)
+}
+
+fn expression_is_static_allocatable(expression: &ir::Expression) -> bool {
+    match &expression.kind {
+        ExpressionKind::Literal(_) | ExpressionKind::FunctionValue(_) | ExpressionKind::BitArray(_) => true,
+        ExpressionKind::Tuple(items) | ExpressionKind::List(items) => {
+            items.iter().all(expression_is_static_allocatable)
+        }
+        ExpressionKind::Record(record) => record
+            .fields
+            .iter()
+            .all(|field| expression_is_static_allocatable(&field.value)),
+        ExpressionKind::Constructor(constructor) => constructor.arguments.iter().all(expression_is_static_allocatable),
+        _ => false,
+    }
 }
 
 fn needs_dynamic_decode(block: &ir::Block) -> bool {
@@ -2662,6 +2752,7 @@ fn block_needs_scratch(block: &ir::Block) -> bool {
 fn expression_needs_scratch(expression: &ir::Expression) -> bool {
     match &expression.kind {
         ExpressionKind::IndirectCall(_) | ExpressionKind::RecordUpdate { .. } => true,
+        ExpressionKind::List(_) if !expression_is_static_allocatable(expression) => true,
         ExpressionKind::DirectCall(call) => {
             matches!(
                 call.function.as_str(),
