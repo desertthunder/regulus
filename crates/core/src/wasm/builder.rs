@@ -334,7 +334,9 @@ pub(crate) enum Instruction {
     I32Add,
     I32Sub,
     I32And,
+    I32Or,
     I32Mul,
+    I32Shl,
     I32DivS,
     I32ShrU,
     I64Add,
@@ -348,6 +350,8 @@ pub(crate) enum Instruction {
     F64Sub,
     F64Mul,
     F64Div,
+    F64Min,
+    F64Max,
     I32Load(MemoryArg),
     I32Load8U(MemoryArg),
     I32Store(MemoryArg),
@@ -404,13 +408,15 @@ impl Instruction {
             I::I64Eqz => StackEffect::new([I64], [I32]),
             I::I64Eq | I::I64Ne | I::I64LtS | I::I64GtS | I::I64LeS | I::I64GeS => StackEffect::new([I64, I64], [I32]),
             I::F64Eq | I::F64Ne | I::F64Lt | I::F64Gt | I::F64Le | I::F64Ge => StackEffect::new([F64, F64], [I32]),
-            I::I32Add | I::I32Sub | I::I32And | I::I32Mul | I::I32DivS | I::I32ShrU => {
+            I::I32Add | I::I32Sub | I::I32And | I::I32Or | I::I32Mul | I::I32DivS | I::I32Shl | I::I32ShrU => {
                 StackEffect::new([I32, I32], [I32])
             }
             I::I64Add | I::I64Sub | I::I64Mul | I::I64DivS | I::I64RemS => StackEffect::new([I64, I64], [I64]),
             I::I64ExtendI32U => StackEffect::new([I32], [I64]),
             I::I64ReinterpretF64 => StackEffect::new([F64], [I64]),
-            I::F64Add | I::F64Sub | I::F64Mul | I::F64Div => StackEffect::new([F64, F64], [F64]),
+            I::F64Add | I::F64Sub | I::F64Mul | I::F64Div | I::F64Min | I::F64Max => {
+                StackEffect::new([F64, F64], [F64])
+            }
             I::I32Load(_) | I::I32Load8U(_) => StackEffect::new([I32], [I32]),
             I::I32Store(_) | I::I32Store8(_) => StackEffect::new([I32, I32], []),
             I::I64Load(_) => StackEffect::new([I32], [I64]),
@@ -745,7 +751,9 @@ fn instruction_inline_wat(instruction: &Instruction) -> String {
         Instruction::I32Add => "i32.add".into(),
         Instruction::I32Sub => "i32.sub".into(),
         Instruction::I32And => "i32.and".into(),
+        Instruction::I32Or => "i32.or".into(),
         Instruction::I32Mul => "i32.mul".into(),
+        Instruction::I32Shl => "i32.shl".into(),
         Instruction::I32DivS => "i32.div_s".into(),
         Instruction::I32ShrU => "i32.shr_u".into(),
         Instruction::I64Add => "i64.add".into(),
@@ -759,6 +767,8 @@ fn instruction_inline_wat(instruction: &Instruction) -> String {
         Instruction::F64Sub => "f64.sub".into(),
         Instruction::F64Mul => "f64.mul".into(),
         Instruction::F64Div => "f64.div".into(),
+        Instruction::F64Min => "f64.min".into(),
+        Instruction::F64Max => "f64.max".into(),
         Instruction::I32Load(arg) => memory_wat("i32.load", arg),
         Instruction::I32Load8U(arg) => memory_wat("i32.load8_u", arg),
         Instruction::I32Store(arg) => memory_wat("i32.store", arg),

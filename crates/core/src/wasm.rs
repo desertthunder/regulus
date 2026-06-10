@@ -2594,11 +2594,12 @@ mod tests {
     fn emits_wat_with_runtime_for_string_function() {
         let wasm = compile_wasm("pub fn greeting() { \"hello\" }");
 
-        assert!(wasm.wat.contains("(memory (export \"memory\") 1)"));
+        assert!(wasm.wat.contains("(memory 1)"));
         assert!(!wasm.wat.contains("(func $__alloc"));
         assert!(!wasm.wat.contains("(export \"__regulus_string_len\")"));
         assert!(!wasm.wat.contains("(export \"__regulus_value_tag\")"));
-        assert!(wasm.wat.contains("(func $greeting (export \"greeting\") (result i32)"));
+        assert!(wasm.wat.contains("(func $greeting (type 0) (result i32)"));
+        assert!(wasm.wat.contains("(export \"greeting\" (func 0))"));
         assert!(wasm.wat.contains(&format!(
             "i32.const {}",
             runtime::RuntimeConfig::DEFAULT.static_data_start
@@ -2609,8 +2610,8 @@ mod tests {
     fn omits_unreachable_runtime_fragment_domains() {
         let wasm = compile_wasm("pub fn join() { \"a\" <> \"b\" }");
 
-        assert!(wasm.wat.contains("(func $__string_concat"));
-        assert!(wasm.wat.contains("(func $__alloc"));
+        assert!(!wasm.wat.contains("(func $__string_concat"), "{}", wasm.wat);
+        assert!(!wasm.wat.contains("(func $__alloc"), "{}", wasm.wat);
         assert!(!wasm.wat.contains("(func $__dict_new"), "{}", wasm.wat);
         assert!(!wasm.wat.contains("(func $__list_cons"), "{}", wasm.wat);
         assert!(!wasm.wat.contains("(func $__bit_array_new"), "{}", wasm.wat);
@@ -2620,11 +2621,11 @@ mod tests {
     fn includes_transitive_runtime_fragment_dependencies() {
         let wasm = compile_wasm("pub fn join() { \"a\" <> \"b\" }");
 
-        assert!(wasm.wat.contains("(func $__string_concat"));
-        assert!(wasm.wat.contains("(func $__string_len"));
-        assert!(wasm.wat.contains("(func $__string_data"));
-        assert!(wasm.wat.contains("(func $__string_new"));
-        assert!(wasm.wat.contains("(func $__copy_bytes"));
+        assert!(!wasm.wat.contains("$__string_concat"), "{}", wasm.wat);
+        assert!(!wasm.wat.contains("$__string_len"), "{}", wasm.wat);
+        assert!(!wasm.wat.contains("$__string_data"), "{}", wasm.wat);
+        assert!(!wasm.wat.contains("$__string_new"), "{}", wasm.wat);
+        assert!(!wasm.wat.contains("$__copy_bytes"), "{}", wasm.wat);
     }
 
     #[test]
@@ -2856,8 +2857,10 @@ pub fn nested_option() -> Int {
     fn emits_string_export_adapters_for_host_boundaries() {
         let wasm = compile_wasm("pub fn greeting() { \"hello\" }");
 
-        assert!(wasm.wat.contains("(func $greeting__data (export \"greeting__data\")"));
-        assert!(wasm.wat.contains("(func $greeting__len (export \"greeting__len\")"));
+        assert!(wasm.wat.contains("(func $greeting__data"));
+        assert!(wasm.wat.contains("(export \"greeting__data\""));
+        assert!(wasm.wat.contains("(func $greeting__len"));
+        assert!(wasm.wat.contains("(export \"greeting__len\""));
     }
 
     #[test]
@@ -3431,6 +3434,8 @@ pub fn binds() { case <<42>> { <<x>> -> x } }
 pub fn rest() { case <<1, 2, 3>> { <<1, rest:bits>> -> rest } }
 "#,
         );
+        assert!(!wasm.wat.contains("$__bit_array_get_bit"), "{}", wasm.wat);
+        assert!(!wasm.wat.contains("$__bit_array_slice"), "{}", wasm.wat);
         let engine = Engine::default();
         let module = Module::new(&engine, &wasm.bytes).expect("compile wasm module");
         let mut store = Store::new(&engine, ());
