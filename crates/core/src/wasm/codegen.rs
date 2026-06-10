@@ -67,6 +67,12 @@ struct StructuredEmitter<'a> {
     string_i_local: Option<LocalId>,
     bit_i_local: Option<LocalId>,
     bit_value_local: Option<LocalId>,
+    dynamic_data_local: Option<LocalId>,
+    dynamic_decoder_local: Option<LocalId>,
+    dynamic_kind_local: Option<LocalId>,
+    dynamic_tag_local: Option<LocalId>,
+    dynamic_field_local: Option<LocalId>,
+    dynamic_result_local: Option<LocalId>,
     options: EmitOptions,
     config: runtime::RuntimeConfig,
     next_static_offset: u32,
@@ -137,6 +143,12 @@ impl<'a> StructuredEmitter<'a> {
             string_i_local: None,
             bit_i_local: None,
             bit_value_local: None,
+            dynamic_data_local: None,
+            dynamic_decoder_local: None,
+            dynamic_kind_local: None,
+            dynamic_tag_local: None,
+            dynamic_field_local: None,
+            dynamic_result_local: None,
             options,
             config: runtime::RuntimeConfig::DEFAULT,
             next_static_offset: runtime::RuntimeConfig::DEFAULT.static_data_start,
@@ -352,6 +364,12 @@ impl<'a> StructuredEmitter<'a> {
         self.string_i_local = None;
         self.bit_i_local = None;
         self.bit_value_local = None;
+        self.dynamic_data_local = None;
+        self.dynamic_decoder_local = None;
+        self.dynamic_kind_local = None;
+        self.dynamic_tag_local = None;
+        self.dynamic_field_local = None;
+        self.dynamic_result_local = None;
 
         let mut structured = Function::new(signature.type_id);
         structured.name = Some(function.name.clone());
@@ -426,6 +444,38 @@ impl<'a> StructuredEmitter<'a> {
                 .locals
                 .push(Local { name: Some("__bit_value".into()), type_: ValueType::I64 });
             self.bit_value_local = Some(id);
+        }
+        if needs_dynamic_decode(&function.body) {
+            let id = LocalId((structured.params.len() + structured.locals.len()) as u32);
+            structured
+                .locals
+                .push(Local { name: Some("__dynamic_data".into()), type_: ValueType::I32 });
+            self.dynamic_data_local = Some(id);
+            let id = LocalId((structured.params.len() + structured.locals.len()) as u32);
+            structured
+                .locals
+                .push(Local { name: Some("__dynamic_decoder".into()), type_: ValueType::I32 });
+            self.dynamic_decoder_local = Some(id);
+            let id = LocalId((structured.params.len() + structured.locals.len()) as u32);
+            structured
+                .locals
+                .push(Local { name: Some("__dynamic_kind".into()), type_: ValueType::I64 });
+            self.dynamic_kind_local = Some(id);
+            let id = LocalId((structured.params.len() + structured.locals.len()) as u32);
+            structured
+                .locals
+                .push(Local { name: Some("__dynamic_tag".into()), type_: ValueType::I32 });
+            self.dynamic_tag_local = Some(id);
+            let id = LocalId((structured.params.len() + structured.locals.len()) as u32);
+            structured
+                .locals
+                .push(Local { name: Some("__dynamic_field".into()), type_: ValueType::I64 });
+            self.dynamic_field_local = Some(id);
+            let id = LocalId((structured.params.len() + structured.locals.len()) as u32);
+            structured
+                .locals
+                .push(Local { name: Some("__dynamic_result".into()), type_: ValueType::I32 });
+            self.dynamic_result_local = Some(id);
         }
         for debug_import in needed_debug_imports(function) {
             let id = LocalId((structured.params.len() + structured.locals.len()) as u32);
@@ -631,6 +681,28 @@ impl<'a> StructuredEmitter<'a> {
             "__stdlib_gleam_function_identity" | "__stdlib_gleam_function_constant" => {
                 self.expression(&call.arguments[0].value, out)?;
             }
+            "__stdlib_gleam_dynamic_int" => self.dynamic_i64(call, 1, out)?,
+            "__stdlib_gleam_dynamic_float" => self.dynamic_float(call, out)?,
+            "__stdlib_gleam_dynamic_bool" => self.dynamic_i32(call, 3, out)?,
+            "__stdlib_gleam_dynamic_string" => self.dynamic_i32(call, 4, out)?,
+            "__stdlib_gleam_dynamic_bit_array" => self.dynamic_i32(call, 5, out)?,
+            "__stdlib_gleam_dynamic_array" | "__stdlib_gleam_dynamic_list" => self.dynamic_i32(call, 6, out)?,
+            "__stdlib_gleam_dynamic_nil" => self.dynamic_empty(7, out)?,
+            "__stdlib_gleam_dynamic_decode_dynamic" => self.decoder(100, 0, out)?,
+            "__stdlib_gleam_dynamic_decode_int" => self.decoder(101, 0, out)?,
+            "__stdlib_gleam_dynamic_decode_float" => self.decoder(102, 0, out)?,
+            "__stdlib_gleam_dynamic_decode_bool" => self.decoder(103, 0, out)?,
+            "__stdlib_gleam_dynamic_decode_string" => self.decoder(104, 0, out)?,
+            "__stdlib_gleam_dynamic_decode_bit_array" => self.decoder(105, 0, out)?,
+            "__stdlib_gleam_dynamic_decode_list" => {
+                self.expression(&call.arguments[0].value, out)?;
+                self.decoder_from_stack(106, out)?;
+            }
+            "__stdlib_gleam_dynamic_decode_optional" => {
+                self.expression(&call.arguments[0].value, out)?;
+                self.decoder_from_stack(107, out)?;
+            }
+            "__stdlib_gleam_dynamic_decode_run" => self.decode_run(call, out)?,
             "__stdlib_gleam_io_debug" => self.stdlib_io_debug(call, out)?,
             _ => {
                 let signature = self
@@ -797,6 +869,206 @@ impl<'a> StructuredEmitter<'a> {
         self.copy_string_bytes(&call.arguments[1].value, ptr, right_len, Some(left_len), out)?;
         out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
         Ok(())
+    }
+
+    fn dynamic_i64(&mut self, call: &ir::DirectCall, tag: i32, out: &mut Vec<Instruction>) -> StructuredResult<()> {
+        self.expression(&call.arguments[0].value, out)?;
+        self.dynamic_i64_from_stack(tag, out)
+    }
+
+    fn dynamic_float(&mut self, call: &ir::DirectCall, out: &mut Vec<Instruction>) -> StructuredResult<()> {
+        self.expression(&call.arguments[0].value, out)?;
+        out.push(Instruction::I64ReinterpretF64);
+        self.dynamic_i64_from_stack(2, out)
+    }
+
+    fn dynamic_i32(&mut self, call: &ir::DirectCall, tag: i32, out: &mut Vec<Instruction>) -> StructuredResult<()> {
+        self.expression(&call.arguments[0].value, out)?;
+        out.push(Instruction::I64ExtendI32U);
+        self.dynamic_i64_from_stack(tag, out)
+    }
+
+    fn dynamic_i64_from_stack(&mut self, tag: i32, out: &mut Vec<Instruction>) -> StructuredResult<()> {
+        let field = self.dynamic_field_local.ok_or(StructuredError::Unsupported)?;
+        out.push(Instruction::LocalSet { local: field, type_: ValueType::I64 });
+        self.custom_value(tag, 1, [(12, field)], out)
+    }
+
+    fn dynamic_empty(&mut self, tag: i32, out: &mut Vec<Instruction>) -> StructuredResult<()> {
+        self.custom_value(tag, 0, [], out)
+    }
+
+    fn decoder(&mut self, kind: i64, inner: i32, out: &mut Vec<Instruction>) -> StructuredResult<()> {
+        out.push(Instruction::I32Const(inner));
+        self.decoder_from_stack(kind, out)
+    }
+
+    fn decoder_from_stack(&mut self, kind: i64, out: &mut Vec<Instruction>) -> StructuredResult<()> {
+        let decoder = self.dynamic_decoder_local.ok_or(StructuredError::Unsupported)?;
+        out.push(Instruction::LocalSet { local: decoder, type_: ValueType::I32 });
+        let field = self.dynamic_field_local.ok_or(StructuredError::Unsupported)?;
+        out.push(Instruction::I64Const(kind));
+        out.push(Instruction::LocalSet { local: field, type_: ValueType::I64 });
+        self.custom_value(200, 2, [(12, field)], out)?;
+        let ptr = self.alloc_local.ok_or(StructuredError::Unsupported)?;
+        out.push(Instruction::LocalSet { local: ptr, type_: ValueType::I32 });
+        out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
+        out.push(Instruction::I32Const(20));
+        out.push(Instruction::I32Add);
+        out.push(Instruction::LocalGet { local: decoder, type_: ValueType::I32 });
+        out.push(Instruction::I64ExtendI32U);
+        out.push(Instruction::I64Store(mem_arg(self.ensure_memory(), 0, 3)));
+        out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
+        Ok(())
+    }
+
+    fn custom_value<const N: usize>(
+        &mut self, tag: i32, fields: u32, values: [(u32, LocalId); N], out: &mut Vec<Instruction>,
+    ) -> StructuredResult<()> {
+        let size = self.config.layout.custom_size(fields, 8);
+        self.allocate(size, out)?;
+        let ptr = self.alloc_local.ok_or(StructuredError::Unsupported)?;
+        out.push(Instruction::LocalSet { local: ptr, type_: ValueType::I32 });
+        out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
+        out.push(Instruction::I32Const(u32::from(runtime::ObjectTag::Custom) as i32));
+        out.push(Instruction::I32Store(mem_arg(self.ensure_memory(), 0, 2)));
+        out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
+        out.push(Instruction::I32Const(fields as i32));
+        out.push(Instruction::I32Store(mem_arg(self.ensure_memory(), 4, 2)));
+        out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
+        out.push(Instruction::I32Const(tag));
+        out.push(Instruction::I32Store(mem_arg(self.ensure_memory(), 8, 2)));
+        for (offset, local) in values {
+            out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
+            out.push(Instruction::LocalGet { local, type_: ValueType::I64 });
+            out.push(Instruction::I64Store(mem_arg(self.ensure_memory(), offset, 3)));
+        }
+        out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
+        Ok(())
+    }
+
+    fn decode_run(&mut self, call: &ir::DirectCall, out: &mut Vec<Instruction>) -> StructuredResult<()> {
+        let data = self.dynamic_data_local.ok_or(StructuredError::Unsupported)?;
+        let decoder = self.dynamic_decoder_local.ok_or(StructuredError::Unsupported)?;
+        let kind = self.dynamic_kind_local.ok_or(StructuredError::Unsupported)?;
+        let tag = self.dynamic_tag_local.ok_or(StructuredError::Unsupported)?;
+        let field = self.dynamic_field_local.ok_or(StructuredError::Unsupported)?;
+        let result = self.dynamic_result_local.ok_or(StructuredError::Unsupported)?;
+        self.expression(&call.arguments[0].value, out)?;
+        out.push(Instruction::LocalSet { local: data, type_: ValueType::I32 });
+        self.expression(&call.arguments[1].value, out)?;
+        out.push(Instruction::LocalSet { local: decoder, type_: ValueType::I32 });
+        out.push(Instruction::LocalGet { local: decoder, type_: ValueType::I32 });
+        out.push(Instruction::I64Load(mem_arg(self.ensure_memory(), 12, 3)));
+        out.push(Instruction::LocalSet { local: kind, type_: ValueType::I64 });
+        out.push(Instruction::LocalGet { local: data, type_: ValueType::I32 });
+        out.push(Instruction::I32Eqz);
+        let mut then_body = Vec::new();
+        self.decode_error(&mut then_body)?;
+        then_body.push(Instruction::LocalSet { local: result, type_: ValueType::I32 });
+        let mut else_body = vec![
+            Instruction::LocalGet { local: data, type_: ValueType::I32 },
+            Instruction::I32Load(mem_arg(self.ensure_memory(), 8, 2)),
+            Instruction::LocalSet { local: tag, type_: ValueType::I32 },
+            Instruction::LocalGet { local: data, type_: ValueType::I32 },
+            Instruction::I64Load(mem_arg(self.ensure_memory(), 12, 3)),
+            Instruction::LocalSet { local: field, type_: ValueType::I64 },
+        ];
+        self.decode_kind_chain(
+            &mut else_body,
+            result,
+            kind,
+            tag,
+            field,
+            data,
+            &[(100, 0), (101, 1), (102, 2), (103, 3), (104, 4), (105, 5), (106, 6)],
+        )?;
+        out.push(Instruction::If { type_: BlockType::empty(), then_body, else_body });
+        out.push(Instruction::LocalGet { local: result, type_: ValueType::I32 });
+        Ok(())
+    }
+
+    fn decode_kind_chain(
+        &mut self, out: &mut Vec<Instruction>, result: LocalId, kind: LocalId, tag: LocalId, field: LocalId,
+        data: LocalId, cases: &[(i64, i32)],
+    ) -> StructuredResult<()> {
+        let Some(((decoder_kind, dynamic_tag), rest)) = cases.split_first() else {
+            let mut optional_then = Vec::new();
+            self.decode_optional(&mut optional_then, result, tag, data)?;
+            let mut else_body = Vec::new();
+            self.decode_error(&mut else_body)?;
+            else_body.push(Instruction::LocalSet { local: result, type_: ValueType::I32 });
+            out.extend([
+                Instruction::LocalGet { local: kind, type_: ValueType::I64 },
+                Instruction::I64Const(107),
+                Instruction::I64Eq,
+                Instruction::If { type_: BlockType::empty(), then_body: optional_then, else_body },
+            ]);
+            return Ok(());
+        };
+        let mut condition = vec![
+            Instruction::LocalGet { local: kind, type_: ValueType::I64 },
+            Instruction::I64Const(*decoder_kind),
+            Instruction::I64Eq,
+        ];
+        if *decoder_kind != 100 {
+            condition.extend([
+                Instruction::LocalGet { local: tag, type_: ValueType::I32 },
+                Instruction::I32Const(*dynamic_tag),
+                Instruction::I32Eq,
+                Instruction::I32And,
+            ]);
+        }
+        out.extend(condition);
+        let ok_value = if *decoder_kind == 100 { data } else { field };
+        let ok_type = if *decoder_kind == 100 { ValueType::I32 } else { ValueType::I64 };
+        let mut then_body = vec![Instruction::LocalGet { local: ok_value, type_: ok_type }];
+        if ok_type == ValueType::I32 {
+            then_body.push(Instruction::I64ExtendI32U);
+        }
+        self.decode_ok_from_stack(&mut then_body)?;
+        then_body.push(Instruction::LocalSet { local: result, type_: ValueType::I32 });
+        let mut else_body = Vec::new();
+        self.decode_kind_chain(&mut else_body, result, kind, tag, field, data, rest)?;
+        out.push(Instruction::If { type_: BlockType::empty(), then_body, else_body });
+        Ok(())
+    }
+
+    fn decode_optional(
+        &mut self, out: &mut Vec<Instruction>, result: LocalId, tag: LocalId, data: LocalId,
+    ) -> StructuredResult<()> {
+        out.extend([
+            Instruction::LocalGet { local: tag, type_: ValueType::I32 },
+            Instruction::I32Const(7),
+            Instruction::I32Eq,
+        ]);
+        let mut none_body = Vec::new();
+        self.custom_value(2443824955u32 as i32, 0, [], &mut none_body)?;
+        none_body.push(Instruction::I64ExtendI32U);
+        self.decode_ok_from_stack(&mut none_body)?;
+        none_body.push(Instruction::LocalSet { local: result, type_: ValueType::I32 });
+        let mut some_body = vec![
+            Instruction::LocalGet { local: data, type_: ValueType::I32 },
+            Instruction::I64ExtendI32U,
+        ];
+        let field = self.dynamic_field_local.ok_or(StructuredError::Unsupported)?;
+        some_body.push(Instruction::LocalSet { local: field, type_: ValueType::I64 });
+        self.custom_value(2407843793u32 as i32, 1, [(12, field)], &mut some_body)?;
+        some_body.push(Instruction::I64ExtendI32U);
+        self.decode_ok_from_stack(&mut some_body)?;
+        some_body.push(Instruction::LocalSet { local: result, type_: ValueType::I32 });
+        out.push(Instruction::If { type_: BlockType::empty(), then_body: none_body, else_body: some_body });
+        Ok(())
+    }
+
+    fn decode_ok_from_stack(&mut self, out: &mut Vec<Instruction>) -> StructuredResult<()> {
+        let field = self.dynamic_field_local.ok_or(StructuredError::Unsupported)?;
+        out.push(Instruction::LocalSet { local: field, type_: ValueType::I64 });
+        self.custom_value(1115088027, 1, [(12, field)], out)
+    }
+
+    fn decode_error(&mut self, out: &mut Vec<Instruction>) -> StructuredResult<()> {
+        self.custom_value(4031082741u32 as i32, 1, [], out)
     }
 
     fn copy_string_bytes(
@@ -2015,6 +2287,7 @@ fn expression_needs_string_concat(expression: &ir::Expression) -> bool {
 
 fn block_needs_allocation(block: &ir::Block) -> bool {
     needs_bit_string_pattern(block)
+        || needs_dynamic_decode(block)
         || block.instructions.iter().any(|instruction| match instruction {
             ir::Instruction::Evaluate { expression, .. } | ir::Instruction::LocalSet { value: expression, .. } => {
                 expression_needs_allocation(expression)
@@ -2025,15 +2298,31 @@ fn block_needs_allocation(block: &ir::Block) -> bool {
 }
 
 fn expression_needs_allocation(expression: &ir::Expression) -> bool {
-    matches!(
-        expression.kind,
-        ExpressionKind::AnonymousFunction(_)
-            | ExpressionKind::ListCons { .. }
-            | ExpressionKind::RecordUpdate { .. }
-            | ExpressionKind::Memory(_)
-    ) || matches!(&expression.kind, ExpressionKind::DirectCall(call) if matches!(call.function.as_str(), "__op_string_concat" | "__stdlib_gleam_string_append"))
+    expression_needs_dynamic_decode(expression)
+        || matches!(
+            expression.kind,
+            ExpressionKind::AnonymousFunction(_)
+                | ExpressionKind::ListCons { .. }
+                | ExpressionKind::RecordUpdate { .. }
+                | ExpressionKind::Memory(_)
+        )
+        || matches!(&expression.kind, ExpressionKind::DirectCall(call) if matches!(call.function.as_str(), "__op_string_concat" | "__stdlib_gleam_string_append"))
         || matches!(&expression.kind, ExpressionKind::Constructor(constructor) if !constructor.arguments.iter().all(|arg| matches!(arg.kind, ExpressionKind::Literal(_) | ExpressionKind::Tuple(_) | ExpressionKind::List(_) | ExpressionKind::Record(_) | ExpressionKind::Constructor(_) | ExpressionKind::FunctionValue(_) | ExpressionKind::BitArray(_))))
         || expression.children().any(expression_needs_allocation)
+}
+
+fn needs_dynamic_decode(block: &ir::Block) -> bool {
+    block.instructions.iter().any(|instruction| match instruction {
+        ir::Instruction::Evaluate { expression, .. } | ir::Instruction::LocalSet { value: expression, .. } => {
+            expression_needs_dynamic_decode(expression)
+        }
+        ir::Instruction::AssertMatch { value, .. } => expression_needs_dynamic_decode(value),
+    }) || expression_needs_dynamic_decode(&block.result)
+}
+
+fn expression_needs_dynamic_decode(expression: &ir::Expression) -> bool {
+    matches!(&expression.kind, ExpressionKind::DirectCall(call) if call.function.starts_with("__stdlib_gleam_dynamic"))
+        || expression.children().any(expression_needs_dynamic_decode)
 }
 
 fn block_needs_scratch(block: &ir::Block) -> bool {

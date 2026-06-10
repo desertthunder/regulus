@@ -71,7 +71,7 @@ Make the CLI compile projects and produce useful artifacts.
   - [x] string export adapters
   - [x] bit-string pattern matching
   - [x] record updates
-  - [ ] dynamic decode helpers
+  - [x] dynamic decode helpers
   - [ ] stdlib/runtime helper intrinsics
 - [x] Add tests that backend validation reports source-spanned diagnostics
       before byte emission for stack, signature, local, and target-adapter
