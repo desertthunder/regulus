@@ -678,6 +678,35 @@ impl<'a> StructuredEmitter<'a> {
                 out.push(Instruction::I32Load(mem_arg(self.ensure_memory(), 4, 2)));
                 out.push(Instruction::I32Eqz);
             }
+            "__stdlib_gleam_bit_array_bit_size" => {
+                self.expression(&call.arguments[0].value, out)?;
+                out.push(Instruction::I32Load(mem_arg(self.ensure_memory(), 4, 2)));
+                out.push(Instruction::I64ExtendI32U);
+            }
+            "__stdlib_gleam_bit_array_byte_size" => {
+                self.expression(&call.arguments[0].value, out)?;
+                out.push(Instruction::I32Load(mem_arg(self.ensure_memory(), 4, 2)));
+                out.push(Instruction::I32Const(7));
+                out.push(Instruction::I32Add);
+                out.push(Instruction::I32Const(8));
+                out.push(Instruction::I32DivS);
+                out.push(Instruction::I64ExtendI32U);
+            }
+            "__stdlib_gleam_bit_array_is_empty" => {
+                self.expression(&call.arguments[0].value, out)?;
+                out.push(Instruction::I32Load(mem_arg(self.ensure_memory(), 4, 2)));
+                out.push(Instruction::I32Eqz);
+            }
+            "__stdlib_gleam_bool_to_string" => self.bool_to_string(call, out)?,
+            "__stdlib_gleam_bool_compare" => {
+                let scratch = self.scratch_local.ok_or(StructuredError::Unsupported)?;
+                self.expression(&call.arguments[0].value, out)?;
+                self.expression(&call.arguments[1].value, out)?;
+                out.push(Instruction::I32Sub);
+                out.push(Instruction::LocalSet { local: scratch, type_: ValueType::I32 });
+                self.order_from_compare_local(scratch, out);
+            }
+            "__stdlib_gleam_float_compare" => self.float_compare(call, out)?,
             "__stdlib_gleam_function_identity" | "__stdlib_gleam_function_constant" => {
                 self.expression(&call.arguments[0].value, out)?;
             }
@@ -688,6 +717,8 @@ impl<'a> StructuredEmitter<'a> {
             "__stdlib_gleam_dynamic_bit_array" => self.dynamic_i32(call, 5, out)?,
             "__stdlib_gleam_dynamic_array" | "__stdlib_gleam_dynamic_list" => self.dynamic_i32(call, 6, out)?,
             "__stdlib_gleam_dynamic_nil" => self.dynamic_empty(7, out)?,
+            "__stdlib_gleam_dynamic_properties" => self.dynamic_i32(call, 8, out)?,
+            "__stdlib_gleam_dynamic_classify" => self.dynamic_classify(call, out)?,
             "__stdlib_gleam_dynamic_decode_dynamic" => self.decoder(100, 0, out)?,
             "__stdlib_gleam_dynamic_decode_int" => self.decoder(101, 0, out)?,
             "__stdlib_gleam_dynamic_decode_float" => self.decoder(102, 0, out)?,
@@ -868,6 +899,113 @@ impl<'a> StructuredEmitter<'a> {
         self.copy_string_bytes(&call.arguments[0].value, ptr, left_len, None, out)?;
         self.copy_string_bytes(&call.arguments[1].value, ptr, right_len, Some(left_len), out)?;
         out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
+        Ok(())
+    }
+
+    fn bool_to_string(&mut self, call: &ir::DirectCall, out: &mut Vec<Instruction>) -> StructuredResult<()> {
+        let true_ptr = self.push_static(runtime::string_object(self.config, self.next_static_offset, "True"));
+        let false_ptr = self.push_static(runtime::string_object(self.config, self.next_static_offset, "False"));
+        self.expression(&call.arguments[0].value, out)?;
+        out.push(Instruction::If {
+            type_: BlockType::new([], [ValueType::I32]),
+            then_body: vec![Instruction::I32Const(true_ptr as i32)],
+            else_body: vec![Instruction::I32Const(false_ptr as i32)],
+        });
+        Ok(())
+    }
+
+    fn order_from_compare_local(&mut self, local: LocalId, out: &mut Vec<Instruction>) {
+        let lt_ptr = self.push_static(runtime::custom_object(
+            self.config,
+            self.next_static_offset,
+            super::constructor_tag("Lt"),
+            &[],
+        ));
+        let eq_ptr = self.push_static(runtime::custom_object(
+            self.config,
+            self.next_static_offset,
+            super::constructor_tag("Eq"),
+            &[],
+        ));
+        let gt_ptr = self.push_static(runtime::custom_object(
+            self.config,
+            self.next_static_offset,
+            super::constructor_tag("Gt"),
+            &[],
+        ));
+        out.push(Instruction::LocalGet { local, type_: ValueType::I32 });
+        out.push(Instruction::I32Const(0));
+        out.push(Instruction::I32LtS);
+        out.push(Instruction::If {
+            type_: BlockType::new([], [ValueType::I32]),
+            then_body: vec![Instruction::I32Const(lt_ptr as i32)],
+            else_body: vec![
+                Instruction::LocalGet { local, type_: ValueType::I32 },
+                Instruction::I32Const(0),
+                Instruction::I32GtS,
+                Instruction::If {
+                    type_: BlockType::new([], [ValueType::I32]),
+                    then_body: vec![Instruction::I32Const(gt_ptr as i32)],
+                    else_body: vec![Instruction::I32Const(eq_ptr as i32)],
+                },
+            ],
+        });
+    }
+
+    fn float_compare(&mut self, call: &ir::DirectCall, out: &mut Vec<Instruction>) -> StructuredResult<()> {
+        let scratch = self.scratch_local.ok_or(StructuredError::Unsupported)?;
+        self.expression(&call.arguments[0].value, out)?;
+        self.expression(&call.arguments[1].value, out)?;
+        out.push(Instruction::F64Lt);
+        out.push(Instruction::If {
+            type_: BlockType::new([], [ValueType::I32]),
+            then_body: vec![Instruction::I32Const(-1)],
+            else_body: {
+                let mut body = Vec::new();
+                self.expression(&call.arguments[0].value, &mut body)?;
+                self.expression(&call.arguments[1].value, &mut body)?;
+                body.push(Instruction::F64Gt);
+                body.push(Instruction::If {
+                    type_: BlockType::new([], [ValueType::I32]),
+                    then_body: vec![Instruction::I32Const(1)],
+                    else_body: vec![Instruction::I32Const(0)],
+                });
+                body
+            },
+        });
+        out.push(Instruction::LocalSet { local: scratch, type_: ValueType::I32 });
+        self.order_from_compare_local(scratch, out);
+        Ok(())
+    }
+
+    fn dynamic_classify(&mut self, call: &ir::DirectCall, out: &mut Vec<Instruction>) -> StructuredResult<()> {
+        let names = [
+            (1, "Int"),
+            (2, "Float"),
+            (3, "Bool"),
+            (4, "String"),
+            (5, "BitArray"),
+            (6, "List"),
+            (7, "Nil"),
+            (8, "Dict"),
+        ];
+        let unknown = self.push_static(runtime::string_object(self.config, self.next_static_offset, "Unknown"));
+        let mut else_body = vec![Instruction::I32Const(unknown as i32)];
+        for (tag, name) in names.into_iter().rev() {
+            let ptr = self.push_static(runtime::string_object(self.config, self.next_static_offset, name));
+            let mut condition = Vec::new();
+            self.expression(&call.arguments[0].value, &mut condition)?;
+            condition.push(Instruction::I32Load(mem_arg(self.ensure_memory(), 8, 2)));
+            condition.push(Instruction::I32Const(tag));
+            condition.push(Instruction::I32Eq);
+            condition.push(Instruction::If {
+                type_: BlockType::new([], [ValueType::I32]),
+                then_body: vec![Instruction::I32Const(ptr as i32)],
+                else_body,
+            });
+            else_body = condition;
+        }
+        out.extend(else_body);
         Ok(())
     }
 
@@ -2339,10 +2477,15 @@ fn block_needs_scratch(block: &ir::Block) -> bool {
 fn expression_needs_scratch(expression: &ir::Expression) -> bool {
     match &expression.kind {
         ExpressionKind::IndirectCall(_) | ExpressionKind::RecordUpdate { .. } => true,
-        ExpressionKind::DirectCall(call) => call
-            .arguments
-            .iter()
-            .any(|argument| expression_needs_scratch(&argument.value)),
+        ExpressionKind::DirectCall(call) => {
+            matches!(
+                call.function.as_str(),
+                "__stdlib_gleam_bool_compare" | "__stdlib_gleam_float_compare"
+            ) || call
+                .arguments
+                .iter()
+                .any(|argument| expression_needs_scratch(&argument.value))
+        }
         ExpressionKind::Branch(branch) => {
             branch.subjects.iter().any(expression_needs_scratch)
                 || branch.clauses.iter().any(|clause| {

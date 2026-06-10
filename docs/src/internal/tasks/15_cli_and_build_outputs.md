@@ -73,6 +73,13 @@ Make the CLI compile projects and produce useful artifacts.
   - [x] record updates
   - [x] dynamic decode helpers
   - [ ] stdlib/runtime helper intrinsics
+    - [x] Port simple structured cases: bit-array size predicates,
+          bool text/compare, float compare, dynamic properties, and dynamic
+          classify.
+    - [ ] Port remaining helper-backed cases: int/float string conversion,
+          list helpers, bit-array append/concat/starts_with, and dictionaries.
+    - [ ] Add no-fallback structured tests for the ported stdlib/runtime
+          intrinsics.
 - [x] Add tests that backend validation reports source-spanned diagnostics
       before byte emission for stack, signature, local, and target-adapter
       mistakes.
