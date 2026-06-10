@@ -1,3 +1,9 @@
+//! Direct binary emission for structured WebAssembly modules.
+//!
+//! The emitter writes standard Wasm sections from the compiler-owned module
+//! model. It assumes validation has already checked indices, signatures, stack
+//! effects, and block types before byte emission starts.
+
 use super::{builder::*, encode::*};
 
 pub(super) struct BinaryEmitter<'a> {

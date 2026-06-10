@@ -1,3 +1,9 @@
+//! Validation for the compiler-owned WebAssembly model.
+//!
+//! The validator checks module references and instruction semantics before
+//! binary emission: stack effects, branch labels/results, locals, function and
+//! call signatures, memories, tables, exports, imports, and data offsets.
+
 use super::builder::*;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

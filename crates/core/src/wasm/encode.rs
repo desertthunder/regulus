@@ -1,3 +1,8 @@
+//! Low-level WebAssembly binary encoding helpers.
+//!
+//! This module contains opcode, LEB128, type, local, memory argument, and block
+//! type encoding routines shared by the structured binary emitter.
+
 use super::builder::*;
 
 pub(super) fn encode_instruction(instruction: &Instruction, out: &mut Vec<u8>, module: &Module) {
@@ -91,6 +96,11 @@ pub(super) fn encode_instruction(instruction: &Instruction, out: &mut Vec<u8>, m
         Instruction::I32GeS => out.push(0x4e),
         Instruction::I64Eqz => out.push(0x50),
         Instruction::I64Eq => out.push(0x51),
+        Instruction::I64Ne => out.push(0x52),
+        Instruction::I64LtS => out.push(0x53),
+        Instruction::I64GtS => out.push(0x55),
+        Instruction::I64LeS => out.push(0x57),
+        Instruction::I64GeS => out.push(0x59),
         Instruction::F64Eq => out.push(0x61),
         Instruction::F64Ne => out.push(0x62),
         Instruction::F64Lt => out.push(0x63),
@@ -99,12 +109,14 @@ pub(super) fn encode_instruction(instruction: &Instruction, out: &mut Vec<u8>, m
         Instruction::F64Ge => out.push(0x66),
         Instruction::I32Add => out.push(0x6a),
         Instruction::I32Sub => out.push(0x6b),
+        Instruction::I32And => out.push(0x71),
         Instruction::I32Mul => out.push(0x6c),
         Instruction::I32DivS => out.push(0x6d),
         Instruction::I64Add => out.push(0x7c),
         Instruction::I64Sub => out.push(0x7d),
         Instruction::I64Mul => out.push(0x7e),
         Instruction::I64DivS => out.push(0x7f),
+        Instruction::I64RemS => out.push(0x81),
         Instruction::F64Add => out.push(0xa0),
         Instruction::F64Sub => out.push(0xa1),
         Instruction::F64Mul => out.push(0xa2),

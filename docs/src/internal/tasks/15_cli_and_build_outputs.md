@@ -39,7 +39,7 @@ Make the CLI compile projects and produce useful artifacts.
 - [x] Emit Wasm bytes from the structured module without going through WAT.
 - [x] Keep optional WAT output by rendering the structured module, not by using
       handwritten backend strings as the source of truth.
-- [ ] Move scalar operations, direct calls, branches, locals, and exports to the
+- [x] Move scalar operations, direct calls, branches, locals, and exports to the
       structured builder.
 - [ ] Move managed-value allocation, pattern matching, closures, and indirect
       calls to the structured builder.

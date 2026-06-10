@@ -1,7 +1,12 @@
+//! WebAssembly backend.
+//!
+//! This module owns target selection and backend orchestration.
+
 mod binary;
 mod builder;
 mod encode;
 mod helpers;
+mod structured;
 mod validator;
 
 use std::{
@@ -75,6 +80,12 @@ pub fn emit(module: &ir::Module) -> Result<WasmModule, Diagnostics> {
 }
 
 pub fn emit_with_options(module: &ir::Module, options: EmitOptions) -> Result<WasmModule, Diagnostics> {
+    if let Some(module) = structured::emit(module, options)? {
+        let wat = structured_wat(&module)?;
+        let bytes = structured_bytes(&module)?;
+        return Ok(WasmModule { wat, bytes });
+    }
+
     let wat = emit_wat_with_options(module, options)?;
     let bytes = wat::parse_str(&wat).map_err(|error| {
         vec![Diagnostic::new(
@@ -91,6 +102,10 @@ pub fn emit_wat(module: &ir::Module) -> Result<String, Diagnostics> {
 }
 
 pub fn emit_wat_with_options(module: &ir::Module, options: EmitOptions) -> Result<String, Diagnostics> {
+    if let Some(module) = structured::emit(module, options)? {
+        return structured_wat(&module);
+    }
+
     let mut emitter = Emitter {
         imports: String::new(),
         functions: String::new(),
@@ -170,6 +185,21 @@ pub fn emit_wat_with_options(module: &ir::Module, options: EmitOptions) -> Resul
     }
     wat.push_str(")\n");
     Ok(wat)
+}
+
+fn structured_wat(module: &builder::Module) -> Result<String, Diagnostics> {
+    module.to_wat().map_err(structured_validation_diagnostics)
+}
+
+fn structured_bytes(module: &builder::Module) -> Result<Vec<u8>, Diagnostics> {
+    module.to_wasm_bytes().map_err(structured_validation_diagnostics)
+}
+
+fn structured_validation_diagnostics(errors: Vec<validator::ValidationError>) -> Diagnostics {
+    errors
+        .into_iter()
+        .map(|error| Diagnostic::new(DiagnosticCode::WasmError, error.message))
+        .collect()
 }
 
 #[derive(Clone, Default)]
@@ -2093,9 +2123,11 @@ mod tests {
 
         insta::assert_snapshot!(wasm.wat, @r#"
 (module
-  (func $id (export "id") (param $0 i64) (result i64)
-    local.get $0
+  (type (func (param i64) (result i64)))
+  (func $id (type 0) (param i64) (result i64)
+    local.get 0
   )
+  (export "id" (func 0))
 )
 "#);
         assert!(!wasm.bytes.is_empty());
