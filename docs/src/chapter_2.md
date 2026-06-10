@@ -2,8 +2,7 @@
 
 A compiler needs a structured view of a program before it can do much with it.
 Source code begins as text: characters in a file. The compiler turns that text
-into shapes it can inspect. A module can contain imports and functions. A
-function can contain parameters and a body. A body can contain expressions.
+into shapes it can inspect.
 
 For this project, the path is:
 
@@ -14,34 +13,31 @@ Gleam source
   -> resolver, type checker, and IR lowering
 ```
 
-A traditional compiler often shows a lexer before the parser:
+A traditional compiler separates the first two steps more explicitly:
 
 ```text
 characters -> tokens -> syntax tree
 ```
 
-Tree-sitter handles the tokenizing and parsing together for us, but the ideas
-are still useful. Lexing explains how source text becomes meaningful pieces.
-Parsing explains how those pieces become a program structure. Syntax trees give
-later compiler passes a stable representation to inspect.
+Tree-sitter handles tokenizing and parsing together, but the underlying
+stages remain useful to understand. The theory helps explain why certain
+grammars are difficult to parse, how token classes are compiled to
+efficient matchers, and what tradeoffs different parsing algorithms make.
 
-The first tree is concrete. It stays close to the grammar and includes details
-that are important to editors, parser tests, and error recovery. Tree-sitter is
-built for that job: it produces concrete syntax trees, updates them
-incrementally as text changes, and still gives useful results when source text
-contains syntax errors.[^1]
+The chapter covers this ground in two parts. The first is lexical
+analysis: how a character stream becomes a token stream. Regular
+expressions describe token classes formally. Finite-state machines run
+them efficiently. The connection between the two — Thompson's construction
+and subset construction — is why lexer generators work.
 
-The second tree is abstract. It is owned by this compiler and stores the program
-shape that later phases care about: declarations, expressions, patterns, names,
-type annotation text, and source spans. This keeps the resolver, type checker,
-and IR lowering code from depending on tree-sitter node names or punctuation
-tokens.
+The second part is parsing. Context-free grammars name the structure a
+flat token sequence should have. Top-down parsers predict and expand from
+the start symbol; bottom-up parsers recognize and reduce toward it. Both
+families have practical tradeoffs in power, speed, and error recovery.
 
-This chapter covers this process in more detail, including:
-
-- lexing source text into tokens
-- parsing tokens into expression structure
-- using concrete and abstract syntax trees
-- reading the Gleam grammar through tree-sitter
+The chapter closes with syntax trees. A concrete syntax tree mirrors the
+grammar; an abstract syntax tree keeps the structure that later compiler
+phases need. This compiler maintains both. Tree-sitter produces the
+concrete tree. The compiler builds the abstract one.[^1]
 
 [^1]: Tree-sitter documentation, "Introduction": https://tree-sitter.github.io/tree-sitter/
