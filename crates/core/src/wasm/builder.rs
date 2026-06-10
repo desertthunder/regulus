@@ -22,6 +22,7 @@ pub(crate) struct Module {
     pub(crate) functions: Vec<Function>,
     pub(crate) tables: Vec<Table>,
     pub(crate) memories: Vec<Memory>,
+    pub(crate) globals: Vec<Global>,
     pub(crate) exports: Vec<Export>,
     pub(crate) data_segments: Vec<DataSegment>,
     pub(crate) custom_sections: Vec<CustomSection>,
@@ -53,6 +54,12 @@ impl Module {
     pub(crate) fn push_memory(&mut self, memory: Memory) -> MemoryId {
         let id = MemoryId((self.imported_memory_count() + self.memories.len()) as u32);
         self.memories.push(memory);
+        id
+    }
+
+    pub(crate) fn push_global(&mut self, global: Global) -> GlobalId {
+        let id = GlobalId(self.globals.len() as u32);
+        self.globals.push(global);
         id
     }
 
@@ -98,6 +105,9 @@ pub(crate) struct LocalId(pub(crate) u32);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct MemoryId(pub(crate) u32);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct GlobalId(pub(crate) u32);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct TableId(pub(crate) u32);
@@ -179,6 +189,13 @@ pub(crate) struct Local {
 pub(crate) struct Memory {
     pub(crate) minimum_pages: u32,
     pub(crate) maximum_pages: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Global {
+    pub(crate) type_: ValueType,
+    pub(crate) mutable: bool,
+    pub(crate) init: Vec<Instruction>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -280,6 +297,14 @@ pub(crate) enum Instruction {
         local: LocalId,
         type_: ValueType,
     },
+    GlobalGet {
+        global: GlobalId,
+        type_: ValueType,
+    },
+    GlobalSet {
+        global: GlobalId,
+        type_: ValueType,
+    },
     I32Const(i32),
     I64Const(i64),
     F32Const(u32),
@@ -288,7 +313,9 @@ pub(crate) enum Instruction {
     I32Eq,
     I32Ne,
     I32LtS,
+    I32LtU,
     I32GtS,
+    I32GtU,
     I32LeS,
     I32GeS,
     I64Eqz,
@@ -309,21 +336,28 @@ pub(crate) enum Instruction {
     I32And,
     I32Mul,
     I32DivS,
+    I32ShrU,
     I64Add,
     I64Sub,
     I64Mul,
     I64DivS,
     I64RemS,
+    I64ExtendI32U,
+    I64ReinterpretF64,
     F64Add,
     F64Sub,
     F64Mul,
     F64Div,
     I32Load(MemoryArg),
+    I32Load8U(MemoryArg),
     I32Store(MemoryArg),
+    I32Store8(MemoryArg),
     I64Load(MemoryArg),
     I64Store(MemoryArg),
     F64Load(MemoryArg),
     F64Store(MemoryArg),
+    MemorySize(MemoryId),
+    MemoryGrow(MemoryId),
 }
 
 impl Instruction {
@@ -356,27 +390,35 @@ impl Instruction {
             }
             I::Drop(type_) => StackEffect::new([*type_], []),
             I::Select(type_) => StackEffect::new([*type_, *type_, I32], [*type_]),
-            I::LocalGet { type_, .. } => StackEffect::new([], [*type_]),
-            I::LocalSet { type_, .. } => StackEffect::new([*type_], []),
+            I::LocalGet { type_, .. } | I::GlobalGet { type_, .. } => StackEffect::new([], [*type_]),
+            I::LocalSet { type_, .. } | I::GlobalSet { type_, .. } => StackEffect::new([*type_], []),
             I::LocalTee { type_, .. } => StackEffect::new([*type_], [*type_]),
             I::I32Const(_) => StackEffect::new([], [I32]),
             I::I64Const(_) => StackEffect::new([], [I64]),
             I::F32Const(_) => StackEffect::new([], [F32]),
             I::F64Const(_) => StackEffect::new([], [F64]),
             I::I32Eqz => StackEffect::new([I32], [I32]),
-            I::I32Eq | I::I32Ne | I::I32LtS | I::I32GtS | I::I32LeS | I::I32GeS => StackEffect::new([I32, I32], [I32]),
+            I::I32Eq | I::I32Ne | I::I32LtS | I::I32LtU | I::I32GtS | I::I32GtU | I::I32LeS | I::I32GeS => {
+                StackEffect::new([I32, I32], [I32])
+            }
             I::I64Eqz => StackEffect::new([I64], [I32]),
             I::I64Eq | I::I64Ne | I::I64LtS | I::I64GtS | I::I64LeS | I::I64GeS => StackEffect::new([I64, I64], [I32]),
             I::F64Eq | I::F64Ne | I::F64Lt | I::F64Gt | I::F64Le | I::F64Ge => StackEffect::new([F64, F64], [I32]),
-            I::I32Add | I::I32Sub | I::I32And | I::I32Mul | I::I32DivS => StackEffect::new([I32, I32], [I32]),
+            I::I32Add | I::I32Sub | I::I32And | I::I32Mul | I::I32DivS | I::I32ShrU => {
+                StackEffect::new([I32, I32], [I32])
+            }
             I::I64Add | I::I64Sub | I::I64Mul | I::I64DivS | I::I64RemS => StackEffect::new([I64, I64], [I64]),
+            I::I64ExtendI32U => StackEffect::new([I32], [I64]),
+            I::I64ReinterpretF64 => StackEffect::new([F64], [I64]),
             I::F64Add | I::F64Sub | I::F64Mul | I::F64Div => StackEffect::new([F64, F64], [F64]),
-            I::I32Load(_) => StackEffect::new([I32], [I32]),
-            I::I32Store(_) => StackEffect::new([I32, I32], []),
+            I::I32Load(_) | I::I32Load8U(_) => StackEffect::new([I32], [I32]),
+            I::I32Store(_) | I::I32Store8(_) => StackEffect::new([I32, I32], []),
             I::I64Load(_) => StackEffect::new([I32], [I64]),
             I::I64Store(_) => StackEffect::new([I32, I64], []),
             I::F64Load(_) => StackEffect::new([I32], [F64]),
             I::F64Store(_) => StackEffect::new([I32, F64], []),
+            I::MemorySize(_) => StackEffect::new([], [I32]),
+            I::MemoryGrow(_) => StackEffect::new([I32], [I32]),
         }
     }
 }
@@ -487,6 +529,9 @@ impl<'a> WatRenderer<'a> {
                 max_suffix(memory.maximum_pages)
             ));
         }
+        for global in &self.module.globals {
+            self.render_global(global);
+        }
         for function in &self.module.functions {
             self.render_function(function);
         }
@@ -530,6 +575,17 @@ impl<'a> WatRenderer<'a> {
                 table.element_type
             )),
         }
+    }
+
+    fn render_global(&mut self, global: &Global) {
+        let mutability = if global.mutable { "mut " } else { "" };
+        let init = global
+            .init
+            .iter()
+            .map(instruction_inline_wat)
+            .collect::<Vec<_>>()
+            .join(" ");
+        self.line(&format!("(global ({mutability}{}) {init})", global.type_));
     }
 
     fn render_function(&mut self, function: &Function) {
@@ -658,6 +714,8 @@ fn instruction_inline_wat(instruction: &Instruction) -> String {
         Instruction::LocalGet { local, .. } => format!("local.get {}", local.0),
         Instruction::LocalSet { local, .. } => format!("local.set {}", local.0),
         Instruction::LocalTee { local, .. } => format!("local.tee {}", local.0),
+        Instruction::GlobalGet { global, .. } => format!("global.get {}", global.0),
+        Instruction::GlobalSet { global, .. } => format!("global.set {}", global.0),
         Instruction::I32Const(value) => format!("i32.const {value}"),
         Instruction::I64Const(value) => format!("i64.const {value}"),
         Instruction::F32Const(value) => format!("f32.const {}", f32::from_bits(*value)),
@@ -666,7 +724,9 @@ fn instruction_inline_wat(instruction: &Instruction) -> String {
         Instruction::I32Eq => "i32.eq".into(),
         Instruction::I32Ne => "i32.ne".into(),
         Instruction::I32LtS => "i32.lt_s".into(),
+        Instruction::I32LtU => "i32.lt_u".into(),
         Instruction::I32GtS => "i32.gt_s".into(),
+        Instruction::I32GtU => "i32.gt_u".into(),
         Instruction::I32LeS => "i32.le_s".into(),
         Instruction::I32GeS => "i32.ge_s".into(),
         Instruction::I64Eqz => "i64.eqz".into(),
@@ -687,21 +747,28 @@ fn instruction_inline_wat(instruction: &Instruction) -> String {
         Instruction::I32And => "i32.and".into(),
         Instruction::I32Mul => "i32.mul".into(),
         Instruction::I32DivS => "i32.div_s".into(),
+        Instruction::I32ShrU => "i32.shr_u".into(),
         Instruction::I64Add => "i64.add".into(),
         Instruction::I64Sub => "i64.sub".into(),
         Instruction::I64Mul => "i64.mul".into(),
         Instruction::I64DivS => "i64.div_s".into(),
         Instruction::I64RemS => "i64.rem_s".into(),
+        Instruction::I64ExtendI32U => "i64.extend_i32_u".into(),
+        Instruction::I64ReinterpretF64 => "i64.reinterpret_f64".into(),
         Instruction::F64Add => "f64.add".into(),
         Instruction::F64Sub => "f64.sub".into(),
         Instruction::F64Mul => "f64.mul".into(),
         Instruction::F64Div => "f64.div".into(),
         Instruction::I32Load(arg) => memory_wat("i32.load", arg),
+        Instruction::I32Load8U(arg) => memory_wat("i32.load8_u", arg),
         Instruction::I32Store(arg) => memory_wat("i32.store", arg),
+        Instruction::I32Store8(arg) => memory_wat("i32.store8", arg),
         Instruction::I64Load(arg) => memory_wat("i64.load", arg),
         Instruction::I64Store(arg) => memory_wat("i64.store", arg),
         Instruction::F64Load(arg) => memory_wat("f64.load", arg),
         Instruction::F64Store(arg) => memory_wat("f64.store", arg),
+        Instruction::MemorySize(memory) => format!("memory.size {}", memory.0),
+        Instruction::MemoryGrow(memory) => format!("memory.grow {}", memory.0),
         Instruction::Block { .. } | Instruction::Loop { .. } | Instruction::If { .. } => unreachable!(),
     }
 }

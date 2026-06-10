@@ -3,8 +3,8 @@
 use std::collections::HashMap;
 
 use super::builder::{
-    BlockType, DataSegment, Export, ExportDesc, Function, FunctionId, FunctionType, Import, ImportDesc, Instruction,
-    Local, LocalId, Memory, MemoryArg, MemoryId, Module, TypeId, ValueType,
+    BlockType, DataSegment, Export, ExportDesc, Function, FunctionId, FunctionType, Global, GlobalId, Import,
+    ImportDesc, Instruction, Local, LocalId, Memory, MemoryArg, MemoryId, Module, TypeId, ValueType,
 };
 use super::{EmitOptions, WasmTarget};
 use crate::ast::LiteralKind;
@@ -21,19 +21,55 @@ pub(super) fn emit(module: &ir::Module, options: EmitOptions) -> Result<Option<M
     }
 }
 
+#[derive(Clone)]
+struct PatternSubject<'a> {
+    root: &'a ir::Expression,
+    path: Vec<u32>,
+}
+
+impl<'a> PatternSubject<'a> {
+    fn field(&self, offset: u32) -> Self {
+        let mut path = self.path.clone();
+        path.push(offset);
+        Self { root: self.root, path }
+    }
+
+    fn list_element(&self, index: usize) -> Self {
+        let mut path = self.path.clone();
+        path.extend(std::iter::repeat_n(16, index));
+        path.push(8);
+        Self { root: self.root, path }
+    }
+
+    fn list_tail(&self, elements: usize) -> Self {
+        let mut path = self.path.clone();
+        path.extend(std::iter::repeat_n(16, elements));
+        Self { root: self.root, path }
+    }
+}
+
 struct StructuredEmitter<'a> {
     source: &'a ir::Module,
     module: Module,
     signatures: HashMap<String, FunctionSignature>,
     function_ids: HashMap<String, FunctionId>,
     local_indices: HashMap<ir::LocalId, LocalId>,
+    local_types: HashMap<ir::LocalId, Type>,
     debug_imports: HashMap<DebugImport, FunctionId>,
     debug_locals: HashMap<DebugImport, LocalId>,
     scratch_local: Option<LocalId>,
+    alloc_local: Option<LocalId>,
+    alloc_end_local: Option<LocalId>,
+    alloc_pages_local: Option<LocalId>,
+    string_ptr_local: Option<LocalId>,
+    string_left_len_local: Option<LocalId>,
+    string_right_len_local: Option<LocalId>,
+    string_i_local: Option<LocalId>,
     options: EmitOptions,
     config: runtime::RuntimeConfig,
     next_static_offset: u32,
     memory: Option<MemoryId>,
+    heap_global: Option<GlobalId>,
     imported_functions: u32,
 }
 
@@ -86,13 +122,22 @@ impl<'a> StructuredEmitter<'a> {
             signatures: HashMap::new(),
             function_ids: HashMap::new(),
             local_indices: HashMap::new(),
+            local_types: HashMap::new(),
             debug_imports: HashMap::new(),
             debug_locals: HashMap::new(),
             scratch_local: None,
+            alloc_local: None,
+            alloc_end_local: None,
+            alloc_pages_local: None,
+            string_ptr_local: None,
+            string_left_len_local: None,
+            string_right_len_local: None,
+            string_i_local: None,
             options,
             config: runtime::RuntimeConfig::DEFAULT,
             next_static_offset: runtime::RuntimeConfig::DEFAULT.static_data_start,
             memory: None,
+            heap_global: None,
             imported_functions: 0,
         }
     }
@@ -248,8 +293,20 @@ impl<'a> StructuredEmitter<'a> {
             .expect("function signature should be registered")
             .clone();
         self.local_indices.clear();
+        self.local_types = function
+            .locals
+            .iter()
+            .map(|local| (local.id, local.type_.clone()))
+            .collect();
         self.debug_locals.clear();
         self.scratch_local = None;
+        self.alloc_local = None;
+        self.alloc_end_local = None;
+        self.alloc_pages_local = None;
+        self.string_ptr_local = None;
+        self.string_left_len_local = None;
+        self.string_right_len_local = None;
+        self.string_i_local = None;
 
         let mut structured = Function::new(signature.type_id);
         structured.name = Some(function.name.clone());
@@ -274,6 +331,45 @@ impl<'a> StructuredEmitter<'a> {
                 .push(Local { name: Some("__scratch".into()), type_: ValueType::I32 });
             self.scratch_local = Some(id);
         }
+        if needs_allocation(function) {
+            let id = LocalId((structured.params.len() + structured.locals.len()) as u32);
+            structured
+                .locals
+                .push(Local { name: Some("__alloc_ptr".into()), type_: ValueType::I32 });
+            self.alloc_local = Some(id);
+            let id = LocalId((structured.params.len() + structured.locals.len()) as u32);
+            structured
+                .locals
+                .push(Local { name: Some("__alloc_end".into()), type_: ValueType::I32 });
+            self.alloc_end_local = Some(id);
+            let id = LocalId((structured.params.len() + structured.locals.len()) as u32);
+            structured
+                .locals
+                .push(Local { name: Some("__alloc_pages".into()), type_: ValueType::I32 });
+            self.alloc_pages_local = Some(id);
+        }
+        if needs_string_concat(function) {
+            let id = LocalId((structured.params.len() + structured.locals.len()) as u32);
+            structured
+                .locals
+                .push(Local { name: Some("__string_ptr".into()), type_: ValueType::I32 });
+            self.string_ptr_local = Some(id);
+            let id = LocalId((structured.params.len() + structured.locals.len()) as u32);
+            structured
+                .locals
+                .push(Local { name: Some("__string_left_len".into()), type_: ValueType::I32 });
+            self.string_left_len_local = Some(id);
+            let id = LocalId((structured.params.len() + structured.locals.len()) as u32);
+            structured
+                .locals
+                .push(Local { name: Some("__string_right_len".into()), type_: ValueType::I32 });
+            self.string_right_len_local = Some(id);
+            let id = LocalId((structured.params.len() + structured.locals.len()) as u32);
+            structured
+                .locals
+                .push(Local { name: Some("__string_i".into()), type_: ValueType::I32 });
+            self.string_i_local = Some(id);
+        }
         for debug_import in needed_debug_imports(function) {
             let id = LocalId((structured.params.len() + structured.locals.len()) as u32);
             structured
@@ -282,6 +378,7 @@ impl<'a> StructuredEmitter<'a> {
             self.debug_locals.insert(debug_import, id);
         }
         structured.body = self.block(&function.body)?;
+        self.local_types.clear();
         Ok(structured)
     }
 
@@ -343,16 +440,19 @@ impl<'a> StructuredEmitter<'a> {
                 let object = runtime::record_object(self.config, self.next_static_offset, &fields);
                 self.static_pointer(object, out)
             }
-            ExpressionKind::Constructor(constructor) => {
-                let fields = self.static_values(&constructor.arguments)?;
-                let object = runtime::custom_object(
-                    self.config,
-                    self.next_static_offset,
-                    super::constructor_tag(&constructor.name),
-                    &fields,
-                );
-                self.static_pointer(object, out)
-            }
+            ExpressionKind::Constructor(constructor) => match self.static_values(&constructor.arguments) {
+                Ok(fields) => {
+                    let object = runtime::custom_object(
+                        self.config,
+                        self.next_static_offset,
+                        super::constructor_tag(&constructor.name),
+                        &fields,
+                    );
+                    self.static_pointer(object, out)
+                }
+                Err(StructuredError::Unsupported) => self.constructor_value(constructor, out),
+                Err(error) => Err(error),
+            },
             ExpressionKind::FunctionValue(function) => self.static_pointer(
                 runtime::closure_object(
                     self.config,
@@ -362,10 +462,12 @@ impl<'a> StructuredEmitter<'a> {
                 ),
                 out,
             ),
+            ExpressionKind::AnonymousFunction(function) => self.closure_allocation(function, out),
             ExpressionKind::FieldAccess { record, .. } => self.managed_field_load(record, 0, &expression.type_, out),
             ExpressionKind::TupleElement { tuple, index } => {
                 self.managed_field_load(tuple, *index, &expression.type_, out)
             }
+            ExpressionKind::ListCons { head, tail } => self.list_cons(head, tail, out),
             ExpressionKind::Memory(operation) => self.memory_operation(operation, out),
             ExpressionKind::IndirectCall(call) => self.indirect_call(call, out),
             ExpressionKind::BitArray(bit_array) => {
@@ -442,31 +544,38 @@ impl<'a> StructuredEmitter<'a> {
             }
             "__op_and" => self.short_circuit_bool(call, false, out)?,
             "__op_or" => self.short_circuit_bool(call, true, out)?,
+            "__op_string_concat" | "__stdlib_gleam_string_append" => self.string_concat(call, out)?,
             "__stdlib_gleam_float_negate" => {
                 out.push(Instruction::F64Const((-0.0f64).to_bits()));
                 self.expression(&call.arguments[0].value, out)?;
                 out.push(Instruction::F64Sub);
             }
             "__stdlib_gleam_float_max" | "__stdlib_gleam_float_min" => {
-                // Keep these in the legacy path until structured locals can
-                // preserve each argument without evaluating it twice.
+                // Keep these in the fallback WAT emitter until structured
+                // locals can preserve each argument without evaluating it twice.
                 return Err(StructuredError::Unsupported);
+            }
+            "__stdlib_gleam_string_length" => {
+                self.expression(&call.arguments[0].value, out)?;
+                out.push(Instruction::I32Load(mem_arg(self.ensure_memory(), 4, 2)));
+                out.push(Instruction::I64ExtendI32U);
+            }
+            "__stdlib_gleam_string_is_empty" => {
+                self.expression(&call.arguments[0].value, out)?;
+                out.push(Instruction::I32Load(mem_arg(self.ensure_memory(), 4, 2)));
+                out.push(Instruction::I32Eqz);
             }
             "__stdlib_gleam_function_identity" | "__stdlib_gleam_function_constant" => {
                 self.expression(&call.arguments[0].value, out)?;
             }
             "__stdlib_gleam_io_debug" => self.stdlib_io_debug(call, out)?,
             _ => {
-                let id = self
-                    .function_ids
-                    .get(&call.function)
-                    .copied()
-                    .ok_or(StructuredError::Unsupported)?;
                 let signature = self
                     .signatures
                     .get(&call.function)
                     .ok_or(StructuredError::Unsupported)?
                     .clone();
+                let id = self.function_id_structured(&call.function);
                 for argument in &call.arguments {
                     self.expression(&argument.value, out)?;
                 }
@@ -474,6 +583,302 @@ impl<'a> StructuredEmitter<'a> {
             }
         }
         Ok(())
+    }
+
+    fn allocate(&mut self, bytes: u32, out: &mut Vec<Instruction>) -> StructuredResult<()> {
+        let ptr = self.alloc_local.ok_or(StructuredError::Unsupported)?;
+        let end = self.alloc_end_local.ok_or(StructuredError::Unsupported)?;
+        let pages = self.alloc_pages_local.ok_or(StructuredError::Unsupported)?;
+        let heap = self.ensure_heap_global();
+        let memory = self.ensure_memory();
+
+        out.push(Instruction::GlobalGet { global: heap, type_: ValueType::I32 });
+        out.push(Instruction::LocalSet { local: ptr, type_: ValueType::I32 });
+        out.push(Instruction::GlobalGet { global: heap, type_: ValueType::I32 });
+        out.push(Instruction::I32Const(bytes as i32));
+        out.push(Instruction::I32Add);
+        out.push(Instruction::I32Const((self.config.layout.alignment - 1) as i32));
+        out.push(Instruction::I32Add);
+        out.push(Instruction::I32Const(-(self.config.layout.alignment as i32)));
+        out.push(Instruction::I32And);
+        out.push(Instruction::LocalSet { local: end, type_: ValueType::I32 });
+
+        out.push(Instruction::LocalGet { local: end, type_: ValueType::I32 });
+        out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
+        out.push(Instruction::I32LtU);
+        out.push(Instruction::If {
+            type_: BlockType::empty(),
+            then_body: vec![Instruction::Unreachable],
+            else_body: Vec::new(),
+        });
+
+        out.push(Instruction::LocalGet { local: end, type_: ValueType::I32 });
+        out.push(Instruction::MemorySize(memory));
+        out.push(Instruction::I32Const(65536));
+        out.push(Instruction::I32Mul);
+        out.push(Instruction::I32GtU);
+        out.push(Instruction::If {
+            type_: BlockType::empty(),
+            then_body: vec![
+                Instruction::LocalGet { local: end, type_: ValueType::I32 },
+                Instruction::MemorySize(memory),
+                Instruction::I32Const(65536),
+                Instruction::I32Mul,
+                Instruction::I32Sub,
+                Instruction::I32Const(65535),
+                Instruction::I32Add,
+                Instruction::I32Const(16),
+                Instruction::I32ShrU,
+                Instruction::LocalTee { local: pages, type_: ValueType::I32 },
+                Instruction::MemoryGrow(memory),
+                Instruction::I32Const(-1),
+                Instruction::I32Eq,
+                Instruction::If {
+                    type_: BlockType::empty(),
+                    then_body: vec![Instruction::Unreachable],
+                    else_body: Vec::new(),
+                },
+            ],
+            else_body: Vec::new(),
+        });
+
+        out.push(Instruction::LocalGet { local: end, type_: ValueType::I32 });
+        out.push(Instruction::GlobalSet { global: heap, type_: ValueType::I32 });
+        out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
+        Ok(())
+    }
+
+    fn allocate_dynamic(&mut self, out: &mut Vec<Instruction>) -> StructuredResult<()> {
+        let ptr = self.alloc_local.ok_or(StructuredError::Unsupported)?;
+        let end = self.alloc_end_local.ok_or(StructuredError::Unsupported)?;
+        let pages = self.alloc_pages_local.ok_or(StructuredError::Unsupported)?;
+        let heap = self.ensure_heap_global();
+        let memory = self.ensure_memory();
+        out.push(Instruction::GlobalGet { global: heap, type_: ValueType::I32 });
+        out.push(Instruction::LocalSet { local: ptr, type_: ValueType::I32 });
+        out.push(Instruction::GlobalGet { global: heap, type_: ValueType::I32 });
+        out.push(Instruction::I32Add);
+        out.push(Instruction::I32Const((self.config.layout.alignment - 1) as i32));
+        out.push(Instruction::I32Add);
+        out.push(Instruction::I32Const(-(self.config.layout.alignment as i32)));
+        out.push(Instruction::I32And);
+        out.push(Instruction::LocalSet { local: end, type_: ValueType::I32 });
+        out.push(Instruction::LocalGet { local: end, type_: ValueType::I32 });
+        out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
+        out.push(Instruction::I32LtU);
+        out.push(Instruction::If {
+            type_: BlockType::empty(),
+            then_body: vec![Instruction::Unreachable],
+            else_body: Vec::new(),
+        });
+        out.push(Instruction::LocalGet { local: end, type_: ValueType::I32 });
+        out.push(Instruction::MemorySize(memory));
+        out.push(Instruction::I32Const(65536));
+        out.push(Instruction::I32Mul);
+        out.push(Instruction::I32GtU);
+        out.push(Instruction::If {
+            type_: BlockType::empty(),
+            then_body: vec![
+                Instruction::LocalGet { local: end, type_: ValueType::I32 },
+                Instruction::MemorySize(memory),
+                Instruction::I32Const(65536),
+                Instruction::I32Mul,
+                Instruction::I32Sub,
+                Instruction::I32Const(65535),
+                Instruction::I32Add,
+                Instruction::I32Const(16),
+                Instruction::I32ShrU,
+                Instruction::LocalTee { local: pages, type_: ValueType::I32 },
+                Instruction::MemoryGrow(memory),
+                Instruction::I32Const(-1),
+                Instruction::I32Eq,
+                Instruction::If {
+                    type_: BlockType::empty(),
+                    then_body: vec![Instruction::Unreachable],
+                    else_body: Vec::new(),
+                },
+            ],
+            else_body: Vec::new(),
+        });
+        out.push(Instruction::LocalGet { local: end, type_: ValueType::I32 });
+        out.push(Instruction::GlobalSet { global: heap, type_: ValueType::I32 });
+        out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
+        Ok(())
+    }
+
+    fn string_concat(&mut self, call: &ir::DirectCall, out: &mut Vec<Instruction>) -> StructuredResult<()> {
+        let ptr = self.string_ptr_local.ok_or(StructuredError::Unsupported)?;
+        let left_len = self.string_left_len_local.ok_or(StructuredError::Unsupported)?;
+        let right_len = self.string_right_len_local.ok_or(StructuredError::Unsupported)?;
+        self.expression(&call.arguments[0].value, out)?;
+        out.push(Instruction::I32Load(mem_arg(self.ensure_memory(), 4, 2)));
+        out.push(Instruction::LocalSet { local: left_len, type_: ValueType::I32 });
+        self.expression(&call.arguments[1].value, out)?;
+        out.push(Instruction::I32Load(mem_arg(self.ensure_memory(), 4, 2)));
+        out.push(Instruction::LocalSet { local: right_len, type_: ValueType::I32 });
+        out.push(Instruction::I32Const(8));
+        out.push(Instruction::LocalGet { local: left_len, type_: ValueType::I32 });
+        out.push(Instruction::LocalGet { local: right_len, type_: ValueType::I32 });
+        out.push(Instruction::I32Add);
+        out.push(Instruction::I32Add);
+        self.allocate_dynamic(out)?;
+        out.push(Instruction::LocalTee { local: ptr, type_: ValueType::I32 });
+        out.push(Instruction::I32Const(u32::from(runtime::ObjectTag::String) as i32));
+        out.push(Instruction::I32Store(mem_arg(self.ensure_memory(), 0, 2)));
+        out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
+        out.push(Instruction::LocalGet { local: left_len, type_: ValueType::I32 });
+        out.push(Instruction::LocalGet { local: right_len, type_: ValueType::I32 });
+        out.push(Instruction::I32Add);
+        out.push(Instruction::I32Store(mem_arg(self.ensure_memory(), 4, 2)));
+        self.copy_string_bytes(&call.arguments[0].value, ptr, left_len, None, out)?;
+        self.copy_string_bytes(&call.arguments[1].value, ptr, right_len, Some(left_len), out)?;
+        out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
+        Ok(())
+    }
+
+    fn copy_string_bytes(
+        &mut self, source: &ir::Expression, dest: LocalId, len: LocalId, dest_extra: Option<LocalId>,
+        out: &mut Vec<Instruction>,
+    ) -> StructuredResult<()> {
+        let i = self.string_i_local.ok_or(StructuredError::Unsupported)?;
+        let memory = self.ensure_memory();
+        out.push(Instruction::I32Const(0));
+        out.push(Instruction::LocalSet { local: i, type_: ValueType::I32 });
+        let mut body = vec![
+            Instruction::LocalGet { local: i, type_: ValueType::I32 },
+            Instruction::LocalGet { local: len, type_: ValueType::I32 },
+            Instruction::I32GeS,
+            Instruction::BrIf { depth: 1, results: Vec::new() },
+            Instruction::LocalGet { local: dest, type_: ValueType::I32 },
+            Instruction::I32Const(8),
+            Instruction::I32Add,
+        ];
+        if let Some(extra) = dest_extra {
+            body.push(Instruction::LocalGet { local: extra, type_: ValueType::I32 });
+            body.push(Instruction::I32Add);
+        }
+        body.push(Instruction::LocalGet { local: i, type_: ValueType::I32 });
+        body.push(Instruction::I32Add);
+        self.expression(source, &mut body)?;
+        body.push(Instruction::I32Const(8));
+        body.push(Instruction::I32Add);
+        body.push(Instruction::LocalGet { local: i, type_: ValueType::I32 });
+        body.push(Instruction::I32Add);
+        body.push(Instruction::I32Load8U(mem_arg(memory, 0, 0)));
+        body.push(Instruction::I32Store8(mem_arg(memory, 0, 0)));
+        body.push(Instruction::LocalGet { local: i, type_: ValueType::I32 });
+        body.push(Instruction::I32Const(1));
+        body.push(Instruction::I32Add);
+        body.push(Instruction::LocalSet { local: i, type_: ValueType::I32 });
+        body.push(Instruction::Br { depth: 0, results: Vec::new() });
+        out.push(Instruction::Block {
+            type_: BlockType::empty(),
+            body: vec![Instruction::Loop { type_: BlockType::empty(), body }],
+        });
+        Ok(())
+    }
+
+    fn constructor_value(
+        &mut self, constructor: &ir::ConstructorValue, out: &mut Vec<Instruction>,
+    ) -> StructuredResult<()> {
+        let ptr = self.alloc_local.ok_or(StructuredError::Unsupported)?;
+        let size = self.config.layout.custom_size(constructor.arguments.len() as u32, 8);
+        self.allocate(size, out)?;
+        out.push(Instruction::LocalTee { local: ptr, type_: ValueType::I32 });
+        out.push(Instruction::I32Const(u32::from(runtime::ObjectTag::Custom) as i32));
+        out.push(Instruction::I32Store(mem_arg(self.ensure_memory(), 0, 2)));
+        out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
+        out.push(Instruction::I32Const(constructor.arguments.len() as i32));
+        out.push(Instruction::I32Store(mem_arg(self.ensure_memory(), 4, 2)));
+        out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
+        out.push(Instruction::I32Const(super::constructor_tag(&constructor.name) as i32));
+        out.push(Instruction::I32Store(mem_arg(self.ensure_memory(), 8, 2)));
+        for (index, argument) in constructor.arguments.iter().enumerate() {
+            out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
+            self.expression_slot_value(argument, out)?;
+            out.push(Instruction::I64Store(mem_arg(
+                self.ensure_memory(),
+                12 + index as u32 * 8,
+                3,
+            )));
+        }
+        out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
+        Ok(())
+    }
+
+    fn list_cons(
+        &mut self, head: &ir::Expression, tail: &ir::Expression, out: &mut Vec<Instruction>,
+    ) -> StructuredResult<()> {
+        let ptr = self.alloc_local.ok_or(StructuredError::Unsupported)?;
+        self.allocate(self.config.layout.list_cons_size(8), out)?;
+        out.push(Instruction::LocalTee { local: ptr, type_: ValueType::I32 });
+        out.push(Instruction::I32Const(u32::from(runtime::ObjectTag::ListCons) as i32));
+        out.push(Instruction::I32Store(mem_arg(self.ensure_memory(), 0, 2)));
+        out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
+        out.push(Instruction::I32Const(2));
+        out.push(Instruction::I32Store(mem_arg(self.ensure_memory(), 4, 2)));
+        out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
+        self.expression_slot_value(head, out)?;
+        out.push(Instruction::I64Store(mem_arg(self.ensure_memory(), 8, 3)));
+        out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
+        self.expression(tail, out)?;
+        out.push(Instruction::I32Store(mem_arg(self.ensure_memory(), 16, 2)));
+        out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
+        Ok(())
+    }
+
+    fn closure_allocation(
+        &mut self, function: &ir::AnonymousFunction, out: &mut Vec<Instruction>,
+    ) -> StructuredResult<()> {
+        let ptr = self.alloc_local.ok_or(StructuredError::Unsupported)?;
+        let size = self.config.layout.closure_size(function.captures.len() as u32);
+        self.allocate(size, out)?;
+        out.push(Instruction::LocalTee { local: ptr, type_: ValueType::I32 });
+        out.push(Instruction::I32Const(u32::from(runtime::ObjectTag::Closure) as i32));
+        out.push(Instruction::I32Store(mem_arg(self.ensure_memory(), 0, 2)));
+        out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
+        out.push(Instruction::I32Const(function.captures.len() as i32));
+        out.push(Instruction::I32Store(mem_arg(self.ensure_memory(), 4, 2)));
+        out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
+        out.push(Instruction::I32Const(self.function_id(&function.name) as i32));
+        out.push(Instruction::I32Store(mem_arg(
+            self.ensure_memory(),
+            u32::from(ClosureConstants::FunctionIdOffset),
+            2,
+        )));
+        for (index, capture) in function.captures.iter().enumerate() {
+            out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
+            out.push(Instruction::LocalGet {
+                local: self.local(capture.source, capture.span)?,
+                type_: value_type(&capture.type_, capture.span)?,
+            });
+            self.extend_slot_value(&capture.type_, out);
+            out.push(Instruction::I64Store(mem_arg(
+                self.ensure_memory(),
+                u32::from(ClosureConstants::CapturesOffset)
+                    + index as u32 * u32::from(ClosureConstants::CaptureSlotSize),
+                3,
+            )));
+        }
+        out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
+        Ok(())
+    }
+
+    fn expression_slot_value(
+        &mut self, expression: &ir::Expression, out: &mut Vec<Instruction>,
+    ) -> StructuredResult<()> {
+        self.expression(expression, out)?;
+        self.extend_slot_value(&expression.type_, out);
+        Ok(())
+    }
+
+    fn extend_slot_value(&mut self, type_: &Type, out: &mut Vec<Instruction>) {
+        match type_ {
+            Type::Float => out.push(Instruction::I64ReinterpretF64),
+            Type::Int => {}
+            Type::Nil => out.push(Instruction::I64Const(0)),
+            _ => out.push(Instruction::I64ExtendI32U),
+        }
     }
 
     fn binary_arguments(&mut self, call: &ir::DirectCall, out: &mut Vec<Instruction>) -> StructuredResult<()> {
@@ -676,43 +1081,50 @@ impl<'a> StructuredEmitter<'a> {
     fn pattern_test(
         &mut self, subject: &ir::Expression, pattern: &ir::IrPattern, out: &mut Vec<Instruction>,
     ) -> StructuredResult<()> {
+        self.pattern_test_subject(&PatternSubject { root: subject, path: Vec::new() }, pattern, out)
+    }
+
+    fn pattern_test_subject(
+        &mut self, subject: &PatternSubject<'_>, pattern: &ir::IrPattern, out: &mut Vec<Instruction>,
+    ) -> StructuredResult<()> {
         match pattern {
             ir::IrPattern::Discard | ir::IrPattern::Binding(_) => out.push(Instruction::I32Const(1)),
-            ir::IrPattern::Alias { pattern, .. } => self.pattern_test(subject, pattern, out)?,
-            ir::IrPattern::Literal(literal) => {
-                self.expression(subject, out)?;
-                let literal_expression = ir::Expression {
-                    type_: subject.type_.clone(),
-                    span: subject.span,
-                    kind: ExpressionKind::Literal(literal.clone()),
-                };
-                self.expression(&literal_expression, out)?;
-                out.push(match subject.type_ {
-                    Type::Int => Instruction::I64Eq,
-                    Type::Float => Instruction::F64Eq,
-                    Type::Bool => Instruction::I32Eq,
-                    Type::String => Instruction::I32Eq,
-                    Type::Nil => Instruction::I32Const(1),
-                    _ => return Err(StructuredError::Unsupported),
-                });
-            }
+            ir::IrPattern::Alias { pattern, .. } => self.pattern_test_subject(subject, pattern, out)?,
+            ir::IrPattern::Literal(literal) => self.pattern_literal_test(subject, literal, out)?,
             ir::IrPattern::Tuple(elements) => {
-                self.managed_tag_test(subject, runtime::ObjectTag::Tuple, Some(elements.len() as u32), out)?;
+                self.managed_tag_test_subject(subject, runtime::ObjectTag::Tuple, Some(elements.len() as u32), out)?;
+                for (index, element) in elements.iter().enumerate() {
+                    self.pattern_test_subject(&subject.field(8 + index as u32 * 8), element, out)?;
+                    out.push(Instruction::I32And);
+                }
             }
             ir::IrPattern::List { elements, .. } if elements.is_empty() => {
-                self.expression(subject, out)?;
+                self.subject_pointer(subject, out)?;
                 out.push(Instruction::I32Eqz);
             }
-            ir::IrPattern::List { .. } => {
-                self.managed_tag_test(subject, runtime::ObjectTag::ListCons, None, out)?;
+            ir::IrPattern::List { elements, .. } => {
+                for index in 0..elements.len() {
+                    self.managed_tag_test_subject(&subject.list_tail(index), runtime::ObjectTag::ListCons, None, out)?;
+                    if index > 0 {
+                        out.push(Instruction::I32And);
+                    }
+                }
+                for (index, element) in elements.iter().enumerate() {
+                    self.pattern_test_subject(&subject.list_element(index), element, out)?;
+                    out.push(Instruction::I32And);
+                }
             }
-            ir::IrPattern::Constructor { name, .. } => {
-                self.managed_tag_test(subject, runtime::ObjectTag::Custom, None, out)?;
-                self.expression(subject, out)?;
+            ir::IrPattern::Constructor { name, arguments } => {
+                self.managed_tag_test_subject(subject, runtime::ObjectTag::Custom, None, out)?;
+                self.subject_pointer(subject, out)?;
                 out.push(Instruction::I32Load(mem_arg(self.ensure_memory(), 8, 2)));
                 out.push(Instruction::I32Const(super::constructor_tag(name) as i32));
                 out.push(Instruction::I32Eq);
                 out.push(Instruction::I32And);
+                for (index, argument) in arguments.iter().enumerate() {
+                    self.pattern_test_subject(&subject.field(12 + index as u32 * 8), &argument.pattern, out)?;
+                    out.push(Instruction::I32And);
+                }
             }
             ir::IrPattern::BitString(_) => return Err(StructuredError::Unsupported),
         }
@@ -731,31 +1143,35 @@ impl<'a> StructuredEmitter<'a> {
     fn bind_pattern(
         &mut self, subject: &ir::Expression, pattern: &ir::IrPattern, out: &mut Vec<Instruction>,
     ) -> StructuredResult<()> {
+        self.bind_pattern_subject(&PatternSubject { root: subject, path: Vec::new() }, pattern, out)
+    }
+
+    fn bind_pattern_subject(
+        &mut self, subject: &PatternSubject<'_>, pattern: &ir::IrPattern, out: &mut Vec<Instruction>,
+    ) -> StructuredResult<()> {
         match pattern {
             ir::IrPattern::Discard | ir::IrPattern::Literal(_) => {}
-            ir::IrPattern::Binding(local) => self.bind_subject(subject, *local, out)?,
+            ir::IrPattern::Binding(local) => self.bind_subject_to_local(subject, *local, out)?,
             ir::IrPattern::Alias { pattern, local } => {
-                self.bind_pattern(subject, pattern, out)?;
-                self.bind_subject(subject, *local, out)?;
+                self.bind_pattern_subject(subject, pattern, out)?;
+                self.bind_subject_to_local(subject, *local, out)?;
             }
             ir::IrPattern::Tuple(elements) => {
                 for (index, element) in elements.iter().enumerate() {
-                    self.bind_managed_pattern_field(subject, element, 8 + index as u32 * 8, out)?;
+                    self.bind_pattern_subject(&subject.field(8 + index as u32 * 8), element, out)?;
                 }
             }
             ir::IrPattern::List { elements, tail } => {
-                if let Some(head) = elements.first() {
-                    self.bind_managed_pattern_field(subject, head, 8, out)?;
+                for (index, element) in elements.iter().enumerate() {
+                    self.bind_pattern_subject(&subject.list_element(index), element, out)?;
                 }
                 if let Some(local) = tail {
-                    self.expression(subject, out)?;
-                    out.push(Instruction::I32Load(mem_arg(self.ensure_memory(), 16, 2)));
-                    out.push(Instruction::LocalSet { local: self.local(*local, subject.span)?, type_: ValueType::I32 });
+                    self.bind_subject_to_local(&subject.list_tail(elements.len()), *local, out)?;
                 }
             }
             ir::IrPattern::Constructor { arguments, .. } => {
                 for (index, argument) in arguments.iter().enumerate() {
-                    self.bind_managed_pattern_field(subject, &argument.pattern, 12 + index as u32 * 8, out)?;
+                    self.bind_pattern_subject(&subject.field(12 + index as u32 * 8), &argument.pattern, out)?;
                 }
             }
             ir::IrPattern::BitString(_) => return Err(StructuredError::Unsupported),
@@ -763,33 +1179,87 @@ impl<'a> StructuredEmitter<'a> {
         Ok(())
     }
 
-    fn bind_subject(
-        &mut self, subject: &ir::Expression, local: ir::LocalId, out: &mut Vec<Instruction>,
+    fn bind_subject_to_local(
+        &mut self, subject: &PatternSubject<'_>, local: ir::LocalId, out: &mut Vec<Instruction>,
     ) -> StructuredResult<()> {
-        self.expression(subject, out)?;
-        out.push(Instruction::LocalSet {
-            local: self.local(local, subject.span)?,
-            type_: value_type(&subject.type_, subject.span)?,
+        let type_ = value_type(self.local_types.get(&local).unwrap_or(&Type::Int), subject.root.span)?;
+        if subject.path.is_empty() {
+            self.expression(subject.root, out)?;
+        } else {
+            self.slot_address(subject, out)?;
+            out.push(load_for_type(self.ensure_memory(), 0, type_));
+        }
+        out.push(Instruction::LocalSet { local: self.local(local, subject.root.span)?, type_ });
+        Ok(())
+    }
+
+    fn pattern_literal_test(
+        &mut self, subject: &PatternSubject<'_>, literal: &ir::Literal, out: &mut Vec<Instruction>,
+    ) -> StructuredResult<()> {
+        if subject.path.is_empty() {
+            self.expression(subject.root, out)?;
+        } else {
+            self.slot_address(subject, out)?;
+            out.push(match literal.kind {
+                LiteralKind::Int => Instruction::I64Load(mem_arg(self.ensure_memory(), 0, 3)),
+                LiteralKind::Float => Instruction::F64Load(mem_arg(self.ensure_memory(), 0, 3)),
+                LiteralKind::Bool | LiteralKind::String => Instruction::I32Load(mem_arg(self.ensure_memory(), 0, 2)),
+                LiteralKind::Nil => Instruction::I64Load(mem_arg(self.ensure_memory(), 0, 3)),
+            });
+        }
+        let literal_expression = ir::Expression {
+            type_: literal_type(literal),
+            span: subject.root.span,
+            kind: ExpressionKind::Literal(literal.clone()),
+        };
+        self.expression(&literal_expression, out)?;
+        out.push(match literal.kind {
+            LiteralKind::Int => Instruction::I64Eq,
+            LiteralKind::Float => Instruction::F64Eq,
+            LiteralKind::Bool | LiteralKind::String => Instruction::I32Eq,
+            LiteralKind::Nil => Instruction::I32Const(1),
         });
         Ok(())
     }
 
-    fn bind_managed_pattern_field(
-        &mut self, subject: &ir::Expression, pattern: &ir::IrPattern, offset: u32, out: &mut Vec<Instruction>,
+    fn managed_tag_test_subject(
+        &mut self, subject: &PatternSubject<'_>, tag: runtime::ObjectTag, size: Option<u32>, out: &mut Vec<Instruction>,
     ) -> StructuredResult<()> {
-        match pattern {
-            ir::IrPattern::Binding(local) => {
-                self.expression(subject, out)?;
-                let type_ = value_type(&local_type(*local, self.source), subject.span)?;
-                out.push(load_for_type(self.ensure_memory(), offset, type_));
-                out.push(Instruction::LocalSet { local: self.local(*local, subject.span)?, type_ });
-            }
-            ir::IrPattern::Alias { pattern, local } => {
-                self.bind_managed_pattern_field(subject, pattern, offset, out)?;
-                self.bind_subject(subject, *local, out)?;
-            }
-            _ => {}
+        self.subject_pointer(subject, out)?;
+        out.push(Instruction::I32Load(mem_arg(self.ensure_memory(), 0, 2)));
+        out.push(Instruction::I32Const(u32::from(tag) as i32));
+        out.push(Instruction::I32Eq);
+        if let Some(size) = size {
+            self.subject_pointer(subject, out)?;
+            out.push(Instruction::I32Load(mem_arg(self.ensure_memory(), 4, 2)));
+            out.push(Instruction::I32Const(size as i32));
+            out.push(Instruction::I32Eq);
+            out.push(Instruction::I32And);
         }
+        Ok(())
+    }
+
+    fn subject_pointer(&mut self, subject: &PatternSubject<'_>, out: &mut Vec<Instruction>) -> StructuredResult<()> {
+        if subject.path.is_empty() {
+            self.expression(subject.root, out)?;
+        } else {
+            self.slot_address(subject, out)?;
+            out.push(Instruction::I32Load(mem_arg(self.ensure_memory(), 0, 2)));
+        }
+        Ok(())
+    }
+
+    fn slot_address(&mut self, subject: &PatternSubject<'_>, out: &mut Vec<Instruction>) -> StructuredResult<()> {
+        let Some((last, parents)) = subject.path.split_last() else {
+            self.expression(subject.root, out)?;
+            return Ok(());
+        };
+        self.expression(subject.root, out)?;
+        for offset in parents {
+            out.push(Instruction::I32Load(mem_arg(self.ensure_memory(), *offset, 2)));
+        }
+        out.push(Instruction::I32Const(*last as i32));
+        out.push(Instruction::I32Add);
         Ok(())
     }
 
@@ -799,23 +1269,6 @@ impl<'a> StructuredEmitter<'a> {
         self.expression(object, out)?;
         let type_ = value_type(type_, object.span)?;
         out.push(load_for_type(self.ensure_memory(), 8 + index as u32 * 8, type_));
-        Ok(())
-    }
-
-    fn managed_tag_test(
-        &mut self, subject: &ir::Expression, tag: runtime::ObjectTag, size: Option<u32>, out: &mut Vec<Instruction>,
-    ) -> StructuredResult<()> {
-        self.expression(subject, out)?;
-        out.push(Instruction::I32Load(mem_arg(self.ensure_memory(), 0, 2)));
-        out.push(Instruction::I32Const(u32::from(tag) as i32));
-        out.push(Instruction::I32Eq);
-        if let Some(size) = size {
-            self.expression(subject, out)?;
-            out.push(Instruction::I32Load(mem_arg(self.ensure_memory(), 4, 2)));
-            out.push(Instruction::I32Const(size as i32));
-            out.push(Instruction::I32Eq);
-            out.push(Instruction::I32And);
-        }
         Ok(())
     }
 
@@ -938,7 +1391,11 @@ impl<'a> StructuredEmitter<'a> {
                     let string = literal.source.trim_matches('"');
                     Ok(self.push_static(runtime::string_object(self.config, self.next_static_offset, string)) as u64)
                 }
-                LiteralKind::Float => Err(StructuredError::Unsupported),
+                LiteralKind::Float => literal
+                    .source
+                    .parse::<f64>()
+                    .map(f64::to_bits)
+                    .map_err(|_| StructuredError::Unsupported),
             },
             ExpressionKind::Tuple(items) => {
                 let fields = self.static_values(items)?;
@@ -1019,6 +1476,19 @@ impl<'a> StructuredEmitter<'a> {
         memory
     }
 
+    fn ensure_heap_global(&mut self) -> GlobalId {
+        if let Some(global) = self.heap_global {
+            return global;
+        }
+        let global = self.module.push_global(Global {
+            type_: ValueType::I32,
+            mutable: true,
+            init: vec![Instruction::I32Const(self.config.heap_start as i32)],
+        });
+        self.heap_global = Some(global);
+        global
+    }
+
     fn function_id(&self, name: &str) -> u32 {
         self.source
             .functions
@@ -1041,6 +1511,16 @@ impl<'a> StructuredEmitter<'a> {
                     .with_label(Label::primary(span, "local used here")),
             ])
         })
+    }
+}
+
+fn literal_type(literal: &ir::Literal) -> Type {
+    match literal.kind {
+        LiteralKind::Int => Type::Int,
+        LiteralKind::Float => Type::Float,
+        LiteralKind::Bool => Type::Bool,
+        LiteralKind::String => Type::String,
+        LiteralKind::Nil => Type::Nil,
     }
 }
 
@@ -1089,18 +1569,16 @@ fn store_for_type(memory: MemoryId, offset: u32, type_: ValueType) -> Instructio
     }
 }
 
-fn local_type(local: ir::LocalId, module: &ir::Module) -> Type {
-    module
-        .functions
-        .iter()
-        .flat_map(|function| &function.locals)
-        .find(|candidate| candidate.id == local)
-        .map(|local| local.type_.clone())
-        .unwrap_or(Type::Int)
-}
-
 fn needs_scratch(function: &ir::Function) -> bool {
     block_needs_scratch(&function.body)
+}
+
+fn needs_allocation(function: &ir::Function) -> bool {
+    block_needs_allocation(&function.body)
+}
+
+fn needs_string_concat(function: &ir::Function) -> bool {
+    block_needs_string_concat(&function.body)
 }
 
 fn needed_debug_imports(function: &ir::Function) -> Vec<DebugImport> {
@@ -1175,6 +1653,38 @@ fn collect_expression_debug_imports(expression: &ir::Expression, imports: &mut V
     }
 }
 
+fn block_needs_string_concat(block: &ir::Block) -> bool {
+    block.instructions.iter().any(|instruction| match instruction {
+        ir::Instruction::Evaluate { expression, .. } | ir::Instruction::LocalSet { value: expression, .. } => {
+            expression_needs_string_concat(expression)
+        }
+        ir::Instruction::AssertMatch { value, .. } => expression_needs_string_concat(value),
+    }) || expression_needs_string_concat(&block.result)
+}
+
+fn expression_needs_string_concat(expression: &ir::Expression) -> bool {
+    matches!(&expression.kind, ExpressionKind::DirectCall(call) if matches!(call.function.as_str(), "__op_string_concat" | "__stdlib_gleam_string_append"))
+        || expression.children().any(expression_needs_string_concat)
+}
+
+fn block_needs_allocation(block: &ir::Block) -> bool {
+    block.instructions.iter().any(|instruction| match instruction {
+        ir::Instruction::Evaluate { expression, .. } | ir::Instruction::LocalSet { value: expression, .. } => {
+            expression_needs_allocation(expression)
+        }
+        ir::Instruction::AssertMatch { value, .. } => expression_needs_allocation(value),
+    }) || expression_needs_allocation(&block.result)
+}
+
+fn expression_needs_allocation(expression: &ir::Expression) -> bool {
+    matches!(
+        expression.kind,
+        ExpressionKind::AnonymousFunction(_) | ExpressionKind::ListCons { .. } | ExpressionKind::Memory(_)
+    ) || matches!(&expression.kind, ExpressionKind::DirectCall(call) if matches!(call.function.as_str(), "__op_string_concat" | "__stdlib_gleam_string_append"))
+        || matches!(&expression.kind, ExpressionKind::Constructor(constructor) if !constructor.arguments.iter().all(|arg| matches!(arg.kind, ExpressionKind::Literal(_) | ExpressionKind::Tuple(_) | ExpressionKind::List(_) | ExpressionKind::Record(_) | ExpressionKind::Constructor(_) | ExpressionKind::FunctionValue(_) | ExpressionKind::BitArray(_))))
+        || expression.children().any(expression_needs_allocation)
+}
+
 fn block_needs_scratch(block: &ir::Block) -> bool {
     block.instructions.iter().any(|instruction| match instruction {
         ir::Instruction::Evaluate { expression, .. } | ir::Instruction::LocalSet { value: expression, .. } => {
@@ -1201,6 +1711,6 @@ fn expression_needs_scratch(expression: &ir::Expression) -> bool {
         ExpressionKind::Pipeline(pipeline) => {
             expression_needs_scratch(&pipeline.input) || expression_needs_scratch(&pipeline.call)
         }
-        _ => false,
+        _ => expression.children().any(expression_needs_scratch),
     }
 }

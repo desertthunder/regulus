@@ -41,6 +41,12 @@ impl<'a> Validator<'a> {
         for export in &self.module.exports {
             self.validate_export(export);
         }
+        for global in &self.module.globals {
+            let mut context = FunctionContext::constant_expression();
+            if self.validate_sequence(&global.init, &mut context, vec![global.type_]) != Some(vec![global.type_]) {
+                self.error("global initializer must leave its global type on the stack");
+            }
+        }
         for segment in &self.module.data_segments {
             if self.memory_type(segment.memory).is_none() {
                 self.error(format!("unknown memory index {} in data segment", segment.memory.0));
@@ -318,8 +324,26 @@ impl<'a> Validator<'a> {
                     valid = false;
                 }
             },
+            Instruction::GlobalGet { global, type_ } | Instruction::GlobalSet { global, type_ } => {
+                match self.module.globals.get(global.0 as usize) {
+                    Some(actual) if actual.type_ == *type_ => {}
+                    Some(actual) => {
+                        self.error(format!(
+                            "global {} has type {:?}, instruction uses {type_:?}",
+                            global.0, actual.type_
+                        ));
+                        valid = false;
+                    }
+                    None => {
+                        self.error(format!("instruction references unknown global index {}", global.0));
+                        valid = false;
+                    }
+                }
+            }
             Instruction::I32Load(arg)
+            | Instruction::I32Load8U(arg)
             | Instruction::I32Store(arg)
+            | Instruction::I32Store8(arg)
             | Instruction::I64Load(arg)
             | Instruction::I64Store(arg)
             | Instruction::F64Load(arg)
@@ -329,6 +353,15 @@ impl<'a> Validator<'a> {
                 self.error(format!(
                     "memory instruction references unknown memory index {}",
                     arg.memory.0
+                ));
+                valid = false;
+            }
+            Instruction::MemorySize(memory) | Instruction::MemoryGrow(memory)
+                if self.memory_type(*memory).is_none() =>
+            {
+                self.error(format!(
+                    "memory instruction references unknown memory index {}",
+                    memory.0
                 ));
                 valid = false;
             }

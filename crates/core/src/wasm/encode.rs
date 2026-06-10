@@ -71,6 +71,14 @@ pub(super) fn encode_instruction(instruction: &Instruction, out: &mut Vec<u8>, m
             out.push(0x22);
             encode_u32(local.0, out);
         }
+        Instruction::GlobalGet { global, .. } => {
+            out.push(0x23);
+            encode_u32(global.0, out);
+        }
+        Instruction::GlobalSet { global, .. } => {
+            out.push(0x24);
+            encode_u32(global.0, out);
+        }
         Instruction::I32Const(value) => {
             out.push(0x41);
             encode_i32(*value, out);
@@ -91,7 +99,9 @@ pub(super) fn encode_instruction(instruction: &Instruction, out: &mut Vec<u8>, m
         Instruction::I32Eq => out.push(0x46),
         Instruction::I32Ne => out.push(0x47),
         Instruction::I32LtS => out.push(0x48),
+        Instruction::I32LtU => out.push(0x49),
         Instruction::I32GtS => out.push(0x4a),
+        Instruction::I32GtU => out.push(0x4b),
         Instruction::I32LeS => out.push(0x4c),
         Instruction::I32GeS => out.push(0x4e),
         Instruction::I64Eqz => out.push(0x50),
@@ -112,21 +122,34 @@ pub(super) fn encode_instruction(instruction: &Instruction, out: &mut Vec<u8>, m
         Instruction::I32And => out.push(0x71),
         Instruction::I32Mul => out.push(0x6c),
         Instruction::I32DivS => out.push(0x6d),
+        Instruction::I32ShrU => out.push(0x76),
         Instruction::I64Add => out.push(0x7c),
         Instruction::I64Sub => out.push(0x7d),
         Instruction::I64Mul => out.push(0x7e),
         Instruction::I64DivS => out.push(0x7f),
         Instruction::I64RemS => out.push(0x81),
+        Instruction::I64ExtendI32U => out.push(0xad),
+        Instruction::I64ReinterpretF64 => out.push(0xbd),
         Instruction::F64Add => out.push(0xa0),
         Instruction::F64Sub => out.push(0xa1),
         Instruction::F64Mul => out.push(0xa2),
         Instruction::F64Div => out.push(0xa3),
         Instruction::I32Load(arg) => encode_memory_instruction(0x28, arg, out),
+        Instruction::I32Load8U(arg) => encode_memory_instruction(0x2d, arg, out),
         Instruction::I64Load(arg) => encode_memory_instruction(0x29, arg, out),
         Instruction::F64Load(arg) => encode_memory_instruction(0x2b, arg, out),
         Instruction::I32Store(arg) => encode_memory_instruction(0x36, arg, out),
+        Instruction::I32Store8(arg) => encode_memory_instruction(0x3a, arg, out),
         Instruction::I64Store(arg) => encode_memory_instruction(0x37, arg, out),
         Instruction::F64Store(arg) => encode_memory_instruction(0x39, arg, out),
+        Instruction::MemorySize(memory) => {
+            out.push(0x3f);
+            encode_u32(memory.0, out);
+        }
+        Instruction::MemoryGrow(memory) => {
+            out.push(0x40);
+            encode_u32(memory.0, out);
+        }
     }
 }
 

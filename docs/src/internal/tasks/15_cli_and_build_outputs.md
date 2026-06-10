@@ -66,6 +66,12 @@ Make the CLI compile projects and produce useful artifacts.
 - [x] Keep fragment dependency metadata explicit after the split, with tests
       proving unused domain fragments are not emitted.
 - [x] Add deterministic WAT snapshots generated from structured Wasm.
+- [ ] Delete the fallback WAT emitter after porting the following to structured codegen:
+  - [ ] string export adapters
+  - [ ] bit-string pattern matching
+  - [ ] record updates
+  - [ ] dynamic decode helpers
+  - [ ] stdlib/runtime helper intrinsics
 - [x] Add tests that backend validation reports source-spanned diagnostics
       before byte emission for stack, signature, local, and target-adapter
       mistakes.

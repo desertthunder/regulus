@@ -25,6 +25,7 @@ impl<'a> BinaryEmitter<'a> {
         self.section(&mut out, 3, self.function_section());
         self.section(&mut out, 4, self.table_section());
         self.section(&mut out, 5, self.memory_section());
+        self.section(&mut out, 6, self.global_section());
         self.section(&mut out, 7, self.export_section());
         self.section(&mut out, 10, self.code_section());
         self.section(&mut out, 11, self.data_section());
@@ -123,6 +124,23 @@ impl<'a> BinaryEmitter<'a> {
         encode_u32(self.module.memories.len() as u32, &mut out);
         for memory in &self.module.memories {
             encode_limits(memory.minimum_pages, memory.maximum_pages, &mut out);
+        }
+        out
+    }
+
+    fn global_section(&self) -> Vec<u8> {
+        if self.module.globals.is_empty() {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        encode_u32(self.module.globals.len() as u32, &mut out);
+        for global in &self.module.globals {
+            out.push(u8::from(global.type_));
+            out.push(u8::from(global.mutable));
+            for instruction in &global.init {
+                encode_instruction(instruction, &mut out, self.module);
+            }
+            out.push(0x0b);
         }
         out
     }

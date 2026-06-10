@@ -2476,8 +2476,11 @@ fn local_name(local: &ir::Local) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ast::LiteralKind;
+    use crate::ir::ExpressionKind;
     use crate::runtime::ObjectTag;
     use crate::source::{SourceFile, SourceFileId, Span};
+    use crate::types::Type;
     use crate::{ast, ir, parse, resolve, types};
     use wasmtime::{Caller, Engine, Instance, Linker, Module, Store};
 
@@ -2640,6 +2643,95 @@ mod tests {
   (data (memory 0) (offset i32.const 1024) "\u{3}\0\0\0\u{2}\0\0\0\u{1}\0\0\0\0\0\0\0\u{2}\0\0\0\0\0\0\0")
 )
 "#);
+    }
+
+    #[test]
+    fn structured_codegen_runs_string_length_intrinsics() {
+        let wasm = compile_wasm(
+            r#"import gleam/string
+
+pub fn text_len() -> Int { string.length("abc") }
+pub fn text_empty() -> Bool { string.is_empty("") }
+"#,
+        );
+
+        assert!(!wasm.wat.contains("$__string_len"), "{}", wasm.wat);
+
+        let engine = Engine::default();
+        let module = Module::new(&engine, &wasm.bytes).expect("compile wasm module");
+        let mut store = Store::new(&engine, ());
+        let instance = Instance::new(&mut store, &module, &[]).expect("instantiate module");
+        let text_len = instance
+            .get_typed_func::<(), i64>(&mut store, "text_len")
+            .expect("get text_len");
+        assert_eq!(text_len.call(&mut store, ()).expect("call text_len"), 3);
+        let text_empty = instance
+            .get_typed_func::<(), i32>(&mut store, "text_empty")
+            .expect("get text_empty");
+        assert_eq!(text_empty.call(&mut store, ()).expect("call text_empty"), 1);
+    }
+
+    #[test]
+    fn structured_codegen_runs_higher_order_allocation() {
+        let wasm = compile_wasm(
+            r#"import gleam/list
+
+pub fn mapped_head() -> Int {
+  case list.map([1], fn(x) { x + 1 }) {
+    [x] -> x
+    _ -> 0
+  }
+}
+"#,
+        );
+
+        assert!(wasm.wat.contains("(global (mut i32)"), "{}", wasm.wat);
+        assert!(!wasm.wat.contains("$__list_cons"), "{}", wasm.wat);
+        assert!(!wasm.wat.contains("$__closure_new"), "{}", wasm.wat);
+
+        let engine = Engine::default();
+        let module = Module::new(&engine, &wasm.bytes).expect("compile wasm module");
+        let mut store = Store::new(&engine, ());
+        let instance = Instance::new(&mut store, &module, &[]).expect("instantiate module");
+        let function = instance
+            .get_typed_func::<(), i64>(&mut store, "mapped_head")
+            .expect("get export");
+        assert_eq!(function.call(&mut store, ()).expect("call export"), 2);
+    }
+
+    #[test]
+    fn structured_codegen_runs_nested_managed_patterns() {
+        let wasm = compile_wasm(
+            r#"import gleam/option.{Some}
+
+pub fn nested_list() -> Int {
+  case [[1]] {
+    [[x]] -> x
+    _ -> 0
+  }
+}
+
+pub fn nested_option() -> Int {
+  case Some(Some(2)) {
+    Some(Some(x)) -> x
+    _ -> 0
+  }
+}
+"#,
+        );
+
+        assert!(!wasm.wat.contains("$__list_cons"), "{}", wasm.wat);
+
+        let engine = Engine::default();
+        let module = Module::new(&engine, &wasm.bytes).expect("compile wasm module");
+        let mut store = Store::new(&engine, ());
+        let instance = Instance::new(&mut store, &module, &[]).expect("instantiate module");
+        for (name, expected) in [("nested_list", 1), ("nested_option", 2)] {
+            let function = instance
+                .get_typed_func::<(), i64>(&mut store, name)
+                .expect("get export");
+            assert_eq!(function.call(&mut store, ()).expect("call export"), expected, "{name}");
+        }
     }
 
     fn invalid_structured_module(span: Span, body: Vec<builder::Instruction>) -> builder::Module {
