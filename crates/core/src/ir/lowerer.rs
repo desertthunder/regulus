@@ -5,7 +5,7 @@ use crate::ast::{self, Declaration as AstDeclaration, Expression as AstExpressio
 use crate::diagnostic::{Diagnostic, DiagnosticCode, Diagnostics, Label};
 use crate::labels::{FunctionLabelMap, call_argument_order, function_label_map, use_callback_placement};
 use crate::resolve::ReferenceTarget;
-use crate::stdlib::{MemberStrategy, STDLIB_IO_HOST_MODULE, StdlibRegistry};
+use crate::stdlib::{MemberStrategy, StdlibRegistry};
 use crate::types::{ConstructorInfo, TypedModule};
 use bit_slices::{ast_bit_array_literal, bit_array_literal, bit_string_pattern_segments};
 
@@ -136,7 +136,7 @@ impl Lowerer {
 
     fn validate_concrete_runtime_types(&mut self) {
         for function in self.module.functions.clone() {
-            if type_has_generic(&function.type_) {
+            if function.type_.has_generic() {
                 self.diagnostics.push(
                     Diagnostic::new(
                         DiagnosticCode::LoweringError,
@@ -150,7 +150,7 @@ impl Lowerer {
             }
         }
         for expression in self.module.expressions.clone() {
-            if type_has_generic(&expression.type_) {
+            if expression.type_.has_generic() {
                 self.diagnostics.push(
                     Diagnostic::new(
                         DiagnosticCode::LoweringError,
@@ -930,7 +930,7 @@ impl Lowerer {
                     arguments: self.lower_ordered_call_arguments(context, call)?,
                     abi: call_abi(
                         &function_type,
-                        stdlib_boundary(stdlib_call.strategy, &stdlib_call.member),
+                        CallBoundary::stdlib(stdlib_call.strategy, &stdlib_call.member),
                     ),
                 }),
             });
@@ -1146,7 +1146,7 @@ impl Lowerer {
     }
 
     fn lower_stdlib_host_imports(&self, ast: &ast::Module) -> Vec<Function> {
-        let used_host_calls = used_stdlib_host_calls(ast);
+        let used_host_calls = ast.used_stdlib_host_calls();
         let mut imports = Vec::new();
         for import in &ast.imports {
             let Some(module) = StdlibRegistry::new().module(&import.module.text).cloned() else {
@@ -1181,10 +1181,7 @@ impl Lowerer {
                     params: locals.clone(),
                     locals,
                     return_type: *return_type,
-                    abi: call_abi(
-                        &type_,
-                        CallBoundary::HostImport { module: STDLIB_IO_HOST_MODULE.into(), name: member.name.into() },
-                    ),
+                    abi: call_abi(&type_, CallBoundary::stdlib(member.strategy, member.name)),
                     body: Block {
                         instructions: Vec::new(),
                         result: Box::new(self.nil_expression(import.span)),
@@ -1260,23 +1257,18 @@ fn stdlib_lowered_name(module: &str, member: &str) -> String {
     format!("__stdlib_{}_{}", module.replace('/', "_"), member)
 }
 
-// TODO: make this a "static" method/constructor
-fn stdlib_boundary(strategy: MemberStrategy, member: &str) -> CallBoundary {
-    match strategy {
-        MemberStrategy::HostImport => {
-            CallBoundary::HostImport { module: STDLIB_IO_HOST_MODULE.into(), name: member.into() }
-        }
-        _ => CallBoundary::Internal,
-    }
+trait UsedStdlibHostCalls {
+    fn used_stdlib_host_calls(&self) -> HashSet<(String, String)>;
 }
 
-/// TODO: This could be an instance method on [ast::Module]
-fn used_stdlib_host_calls(module: &ast::Module) -> HashSet<(String, String)> {
-    let mut calls = HashSet::new();
-    for declaration in &module.declarations {
-        collect_stdlib_host_calls_in_declaration(module, declaration, &mut calls);
+impl UsedStdlibHostCalls for ast::Module {
+    fn used_stdlib_host_calls(&self) -> HashSet<(String, String)> {
+        let mut calls = HashSet::new();
+        for declaration in &self.declarations {
+            collect_stdlib_host_calls_in_declaration(self, declaration, &mut calls);
+        }
+        calls
     }
-    calls
 }
 
 fn collect_stdlib_host_calls_in_declaration(
@@ -1471,19 +1463,6 @@ fn substitute_type_generics(type_: &Type, substitutions: &HashMap<String, Type>)
             return_type: Box::new(substitute_type_generics(return_type, substitutions)),
         },
         Type::Int | Type::Float | Type::String | Type::BitArray | Type::Bool | Type::Nil => type_.clone(),
-    }
-}
-
-// TODO: instance method
-fn type_has_generic(type_: &Type) -> bool {
-    match type_ {
-        Type::Generic(_) => true,
-        Type::Tuple(items) => items.iter().any(type_has_generic),
-        Type::List(item) => type_has_generic(item),
-        Type::Record { fields, .. } => fields.iter().any(|field| type_has_generic(&field.type_)),
-        Type::Custom { args, .. } | Type::Opaque { args, .. } => args.iter().any(type_has_generic),
-        Type::Function { params, return_type } => params.iter().any(type_has_generic) || type_has_generic(return_type),
-        Type::Int | Type::Float | Type::String | Type::BitArray | Type::Bool | Type::Nil => false,
     }
 }
 

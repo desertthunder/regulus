@@ -61,6 +61,20 @@ impl From<&LiteralKind> for Type {
     }
 }
 
+impl Type {
+    pub fn has_generic(&self) -> bool {
+        match self {
+            Self::Generic(_) => true,
+            Self::Tuple(items) => items.iter().any(Self::has_generic),
+            Self::List(item) => item.has_generic(),
+            Self::Record { fields, .. } => fields.iter().any(|field| field.type_.has_generic()),
+            Self::Custom { args, .. } | Self::Opaque { args, .. } => args.iter().any(Self::has_generic),
+            Self::Function { params, return_type } => params.iter().any(Self::has_generic) || return_type.has_generic(),
+            _ => false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FieldInfo {
     pub name: String,

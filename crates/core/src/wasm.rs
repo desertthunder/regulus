@@ -1,5 +1,8 @@
+mod binary;
 mod builder;
+mod encode;
 mod helpers;
+mod validator;
 
 use std::{
     collections::{HashMap, HashSet},
@@ -333,23 +336,23 @@ impl Emitter {
         }
 
         let previous_current = self.current.clone();
-        if block_contains_indirect_call(&function.body) {
+        if function.body.contains_indirect_call() {
             writeln!(self.functions, "    (local $__callee i32)").expect("write WAT");
             self.current.scratch = Some("__callee".into());
         }
-        if block_contains_anonymous_function(&function.body) {
+        if function.body.contains_anonymous_function() {
             writeln!(self.functions, "    (local $__capture_slots i32)").expect("write WAT");
             self.current.capture_slots = Some("__capture_slots".into());
         }
-        if block_contains_record_update(&function.body) || block_contains_constructor(&function.body) {
+        if function.body.contains_record_update() || function.body.contains_constructor() {
             writeln!(self.functions, "    (local $__record_update_slots i32)").expect("write WAT");
             self.current.record_update_slots = Some("__record_update_slots".into());
         }
-        if block_contains_record_update(&function.body) {
+        if function.body.contains_record_update() {
             writeln!(self.functions, "    (local $__record_update_source i32)").expect("write WAT");
             self.current.record_update_source = Some("__record_update_source".into());
         }
-        let debug_locals = block_debug_local_types(&function.body);
+        let debug_locals = DebugLocalTypes::from(&function.body);
         if debug_locals.i32 {
             writeln!(self.functions, "    (local $__debug_i32 i32)").expect("write WAT");
             self.current.debug_i32 = Some("__debug_i32".into());
@@ -1774,19 +1777,15 @@ struct DebugLocalTypes {
     f64: bool,
 }
 
-fn block_debug_local_types(block: &ir::Block) -> DebugLocalTypes {
-    let mut locals = DebugLocalTypes::default();
-    for instruction in &block.instructions {
-        match instruction {
-            Instruction::Evaluate { expression, .. }
-            | Instruction::LocalSet { value: expression, .. }
-            | Instruction::AssertMatch { value: expression, .. } => {
-                expression_debug_local_types(expression, &mut locals)
-            }
+impl From<&ir::Block> for DebugLocalTypes {
+    fn from(block: &ir::Block) -> Self {
+        let mut locals = Self::default();
+        for instruction in &block.instructions {
+            expression_debug_local_types(instruction.expression(), &mut locals);
         }
+        expression_debug_local_types(&block.result, &mut locals);
+        locals
     }
-    expression_debug_local_types(&block.result, &mut locals);
-    locals
 }
 
 fn expression_debug_local_types(expression: &ir::Expression, locals: &mut DebugLocalTypes) {
@@ -1885,288 +1884,6 @@ fn expression_debug_local_types(expression: &ir::Expression, locals: &mut DebugL
         | ExpressionKind::FunctionValue(_)
         | ExpressionKind::AnonymousFunction(_)
         | ExpressionKind::Failure(_) => {}
-    }
-}
-
-fn block_contains_indirect_call(block: &ir::Block) -> bool {
-    block.instructions.iter().any(|instruction| match instruction {
-        Instruction::Evaluate { expression, .. }
-        | Instruction::LocalSet { value: expression, .. }
-        | Instruction::AssertMatch { value: expression, .. } => expression_contains_indirect_call(expression),
-    }) || expression_contains_indirect_call(&block.result)
-}
-
-fn block_contains_anonymous_function(block: &ir::Block) -> bool {
-    block.instructions.iter().any(|instruction| match instruction {
-        Instruction::Evaluate { expression, .. }
-        | Instruction::LocalSet { value: expression, .. }
-        | Instruction::AssertMatch { value: expression, .. } => expression_contains_anonymous_function(expression),
-    }) || expression_contains_anonymous_function(&block.result)
-}
-
-fn block_contains_constructor(block: &ir::Block) -> bool {
-    block.instructions.iter().any(|instruction| match instruction {
-        Instruction::Evaluate { expression, .. }
-        | Instruction::LocalSet { value: expression, .. }
-        | Instruction::AssertMatch { value: expression, .. } => expression_contains_constructor(expression),
-    }) || expression_contains_constructor(&block.result)
-}
-
-fn expression_contains_constructor(expression: &ir::Expression) -> bool {
-    match &expression.kind {
-        ExpressionKind::Constructor(_) => true,
-        ExpressionKind::DirectCall(call) => call
-            .arguments
-            .iter()
-            .any(|argument| expression_contains_constructor(&argument.value)),
-        ExpressionKind::IndirectCall(call) => {
-            expression_contains_constructor(&call.callee)
-                || call
-                    .arguments
-                    .iter()
-                    .any(|argument| expression_contains_constructor(&argument.value))
-        }
-        ExpressionKind::Branch(branch) => {
-            branch.subjects.iter().any(expression_contains_constructor)
-                || branch.clauses.iter().any(|clause| {
-                    clause.guard.as_ref().is_some_and(expression_contains_constructor)
-                        || expression_contains_constructor(&clause.body)
-                })
-        }
-        ExpressionKind::Tuple(items) | ExpressionKind::List(items) => items.iter().any(expression_contains_constructor),
-        ExpressionKind::BitArrayConcat { left, right }
-        | ExpressionKind::Compare { left, right, .. }
-        | ExpressionKind::RuntimeEquality { left, right } => {
-            expression_contains_constructor(left) || expression_contains_constructor(right)
-        }
-        ExpressionKind::BitStringDeconstruct { bit_array, .. }
-        | ExpressionKind::FieldAccess { record: bit_array, .. }
-        | ExpressionKind::TupleElement { tuple: bit_array, .. }
-        | ExpressionKind::ListDeconstruct { list: bit_array, .. } => expression_contains_constructor(bit_array),
-        ExpressionKind::Record(record) => record
-            .fields
-            .iter()
-            .any(|field| expression_contains_constructor(&field.value)),
-        ExpressionKind::RecordUpdate { record, fields, .. } => {
-            expression_contains_constructor(record)
-                || fields
-                    .iter()
-                    .filter_map(|field| field.value.as_ref())
-                    .any(expression_contains_constructor)
-        }
-        ExpressionKind::ListCons { head, tail } => {
-            expression_contains_constructor(head) || expression_contains_constructor(tail)
-        }
-        ExpressionKind::Memory(operation) => match operation {
-            ir::MemoryOperation::Allocate { bytes } => expression_contains_constructor(bytes),
-            ir::MemoryOperation::Load { address, .. } => expression_contains_constructor(address),
-            ir::MemoryOperation::Store { address, value } => {
-                expression_contains_constructor(address) || expression_contains_constructor(value)
-            }
-        },
-        ExpressionKind::Pipeline(pipeline) => {
-            expression_contains_constructor(&pipeline.input) || expression_contains_constructor(&pipeline.call)
-        }
-        ExpressionKind::Use(use_) => {
-            expression_contains_constructor(&use_.callback) || expression_contains_constructor(&use_.call)
-        }
-        _ => false,
-    }
-}
-
-fn block_contains_record_update(block: &ir::Block) -> bool {
-    block.instructions.iter().any(|instruction| match instruction {
-        Instruction::Evaluate { expression, .. }
-        | Instruction::LocalSet { value: expression, .. }
-        | Instruction::AssertMatch { value: expression, .. } => expression_contains_record_update(expression),
-    }) || expression_contains_record_update(&block.result)
-}
-
-fn expression_contains_record_update(expression: &ir::Expression) -> bool {
-    match &expression.kind {
-        ExpressionKind::RecordUpdate { .. } => true,
-        ExpressionKind::DirectCall(call) => call
-            .arguments
-            .iter()
-            .any(|argument| expression_contains_record_update(&argument.value)),
-        ExpressionKind::IndirectCall(call) => {
-            expression_contains_record_update(&call.callee)
-                || call
-                    .arguments
-                    .iter()
-                    .any(|argument| expression_contains_record_update(&argument.value))
-        }
-        ExpressionKind::Branch(branch) => {
-            branch.subjects.iter().any(expression_contains_record_update)
-                || branch.clauses.iter().any(|clause| {
-                    clause.guard.as_ref().is_some_and(expression_contains_record_update)
-                        || expression_contains_record_update(&clause.body)
-                })
-        }
-        ExpressionKind::Tuple(items) | ExpressionKind::List(items) => {
-            items.iter().any(expression_contains_record_update)
-        }
-        ExpressionKind::BitArrayConcat { left, right }
-        | ExpressionKind::Compare { left, right, .. }
-        | ExpressionKind::RuntimeEquality { left, right } => {
-            expression_contains_record_update(left) || expression_contains_record_update(right)
-        }
-        ExpressionKind::BitStringDeconstruct { bit_array, .. }
-        | ExpressionKind::FieldAccess { record: bit_array, .. }
-        | ExpressionKind::TupleElement { tuple: bit_array, .. }
-        | ExpressionKind::ListDeconstruct { list: bit_array, .. } => expression_contains_record_update(bit_array),
-        ExpressionKind::Record(record) => record
-            .fields
-            .iter()
-            .any(|field| expression_contains_record_update(&field.value)),
-        ExpressionKind::Constructor(constructor) => constructor.arguments.iter().any(expression_contains_record_update),
-        ExpressionKind::ListCons { head, tail } => {
-            expression_contains_record_update(head) || expression_contains_record_update(tail)
-        }
-        ExpressionKind::Memory(operation) => match operation {
-            ir::MemoryOperation::Allocate { bytes } => expression_contains_record_update(bytes),
-            ir::MemoryOperation::Load { address, .. } => expression_contains_record_update(address),
-            ir::MemoryOperation::Store { address, value } => {
-                expression_contains_record_update(address) || expression_contains_record_update(value)
-            }
-        },
-        ExpressionKind::Pipeline(pipeline) => {
-            expression_contains_record_update(&pipeline.input) || expression_contains_record_update(&pipeline.call)
-        }
-        ExpressionKind::Use(use_) => {
-            expression_contains_record_update(&use_.callback) || expression_contains_record_update(&use_.call)
-        }
-        _ => false,
-    }
-}
-
-fn expression_contains_anonymous_function(expression: &ir::Expression) -> bool {
-    match &expression.kind {
-        ExpressionKind::AnonymousFunction(_) => true,
-        ExpressionKind::DirectCall(call) => call
-            .arguments
-            .iter()
-            .any(|argument| expression_contains_anonymous_function(&argument.value)),
-        ExpressionKind::IndirectCall(call) => {
-            expression_contains_anonymous_function(&call.callee)
-                || call
-                    .arguments
-                    .iter()
-                    .any(|argument| expression_contains_anonymous_function(&argument.value))
-        }
-        ExpressionKind::Branch(branch) => {
-            branch.subjects.iter().any(expression_contains_anonymous_function)
-                || branch.clauses.iter().any(|clause| {
-                    clause
-                        .guard
-                        .as_ref()
-                        .is_some_and(expression_contains_anonymous_function)
-                        || expression_contains_anonymous_function(&clause.body)
-                })
-        }
-        ExpressionKind::Tuple(items) | ExpressionKind::List(items) => {
-            items.iter().any(expression_contains_anonymous_function)
-        }
-        ExpressionKind::BitArrayConcat { left, right }
-        | ExpressionKind::Compare { left, right, .. }
-        | ExpressionKind::RuntimeEquality { left, right } => {
-            expression_contains_anonymous_function(left) || expression_contains_anonymous_function(right)
-        }
-        ExpressionKind::BitStringDeconstruct { bit_array, .. }
-        | ExpressionKind::FieldAccess { record: bit_array, .. }
-        | ExpressionKind::TupleElement { tuple: bit_array, .. }
-        | ExpressionKind::ListDeconstruct { list: bit_array, .. } => expression_contains_anonymous_function(bit_array),
-        ExpressionKind::Record(record) => record
-            .fields
-            .iter()
-            .any(|field| expression_contains_anonymous_function(&field.value)),
-        ExpressionKind::Constructor(constructor) => {
-            constructor.arguments.iter().any(expression_contains_anonymous_function)
-        }
-        ExpressionKind::RecordUpdate { record, fields, .. } => {
-            expression_contains_anonymous_function(record)
-                || fields
-                    .iter()
-                    .filter_map(|field| field.value.as_ref())
-                    .any(expression_contains_anonymous_function)
-        }
-        ExpressionKind::ListCons { head, tail } => {
-            expression_contains_anonymous_function(head) || expression_contains_anonymous_function(tail)
-        }
-        ExpressionKind::Memory(operation) => match operation {
-            ir::MemoryOperation::Allocate { bytes } => expression_contains_anonymous_function(bytes),
-            ir::MemoryOperation::Load { address, .. } => expression_contains_anonymous_function(address),
-            ir::MemoryOperation::Store { address, value } => {
-                expression_contains_anonymous_function(address) || expression_contains_anonymous_function(value)
-            }
-        },
-        ExpressionKind::Pipeline(pipeline) => {
-            expression_contains_anonymous_function(&pipeline.input)
-                || expression_contains_anonymous_function(&pipeline.call)
-        }
-        ExpressionKind::Use(use_) => {
-            expression_contains_anonymous_function(&use_.callback) || expression_contains_anonymous_function(&use_.call)
-        }
-        _ => false,
-    }
-}
-
-fn expression_contains_indirect_call(expression: &ir::Expression) -> bool {
-    match &expression.kind {
-        ExpressionKind::IndirectCall(_) => true,
-        ExpressionKind::DirectCall(call) => call
-            .arguments
-            .iter()
-            .any(|argument| expression_contains_indirect_call(&argument.value)),
-        ExpressionKind::Branch(branch) => {
-            branch.subjects.iter().any(expression_contains_indirect_call)
-                || branch.clauses.iter().any(|clause| {
-                    clause.guard.as_ref().is_some_and(expression_contains_indirect_call)
-                        || expression_contains_indirect_call(&clause.body)
-                })
-        }
-        ExpressionKind::Tuple(items) | ExpressionKind::List(items) => {
-            items.iter().any(expression_contains_indirect_call)
-        }
-        ExpressionKind::BitArrayConcat { left, right }
-        | ExpressionKind::Compare { left, right, .. }
-        | ExpressionKind::RuntimeEquality { left, right } => {
-            expression_contains_indirect_call(left) || expression_contains_indirect_call(right)
-        }
-        ExpressionKind::BitStringDeconstruct { bit_array, .. }
-        | ExpressionKind::FieldAccess { record: bit_array, .. }
-        | ExpressionKind::TupleElement { tuple: bit_array, .. }
-        | ExpressionKind::ListDeconstruct { list: bit_array, .. } => expression_contains_indirect_call(bit_array),
-        ExpressionKind::Record(record) => record
-            .fields
-            .iter()
-            .any(|field| expression_contains_indirect_call(&field.value)),
-        ExpressionKind::Constructor(constructor) => constructor.arguments.iter().any(expression_contains_indirect_call),
-        ExpressionKind::RecordUpdate { record, fields, .. } => {
-            expression_contains_indirect_call(record)
-                || fields
-                    .iter()
-                    .filter_map(|field| field.value.as_ref())
-                    .any(expression_contains_indirect_call)
-        }
-        ExpressionKind::ListCons { head, tail } => {
-            expression_contains_indirect_call(head) || expression_contains_indirect_call(tail)
-        }
-        ExpressionKind::Memory(operation) => match operation {
-            ir::MemoryOperation::Allocate { bytes } => expression_contains_indirect_call(bytes),
-            ir::MemoryOperation::Load { address, .. } => expression_contains_indirect_call(address),
-            ir::MemoryOperation::Store { address, value } => {
-                expression_contains_indirect_call(address) || expression_contains_indirect_call(value)
-            }
-        },
-        ExpressionKind::Literal(_)
-        | ExpressionKind::LocalGet(_)
-        | ExpressionKind::FunctionValue(_)
-        | ExpressionKind::AnonymousFunction(_)
-        | ExpressionKind::Pipeline(_)
-        | ExpressionKind::Use(_)
-        | ExpressionKind::BitArray(_)
-        | ExpressionKind::Failure(_) => false,
     }
 }
 

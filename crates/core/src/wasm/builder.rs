@@ -5,6 +5,13 @@
 
 #![allow(dead_code)]
 
+use std::fmt;
+
+use super::{
+    binary::BinaryEmitter,
+    validator::{ValidationResult, Validator},
+};
+
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(crate) struct Module {
     pub(crate) types: Vec<FunctionType>,
@@ -41,21 +48,35 @@ impl Module {
     }
 
     pub(crate) fn push_memory(&mut self, memory: Memory) -> MemoryId {
-        let id = MemoryId(self.memories.len() as u32);
+        let id = MemoryId((self.imported_memory_count() + self.memories.len()) as u32);
         self.memories.push(memory);
         id
     }
 
     pub(crate) fn push_table(&mut self, table: Table) -> TableId {
-        let id = TableId(self.tables.len() as u32);
+        let id = TableId((self.imported_table_count() + self.tables.len()) as u32);
         self.tables.push(table);
         id
     }
 
-    fn imported_function_count(&self) -> usize {
+    pub(super) fn imported_function_count(&self) -> usize {
         self.imports
             .iter()
             .filter(|import| matches!(import.desc, ImportDesc::Function(_)))
+            .count()
+    }
+
+    pub(super) fn imported_memory_count(&self) -> usize {
+        self.imports
+            .iter()
+            .filter(|import| matches!(import.desc, ImportDesc::Memory(_)))
+            .count()
+    }
+
+    pub(super) fn imported_table_count(&self) -> usize {
+        self.imports
+            .iter()
+            .filter(|import| matches!(import.desc, ImportDesc::Table(_)))
             .count()
     }
 }
@@ -101,6 +122,19 @@ pub(crate) enum ValueType {
     F64,
     FuncRef,
     ExternRef,
+}
+
+impl fmt::Display for ValueType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::I32 => "i32",
+            Self::I64 => "i64",
+            Self::F32 => "f32",
+            Self::F64 => "f64",
+            Self::FuncRef => "funcref",
+            Self::ExternRef => "externref",
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -155,6 +189,15 @@ pub(crate) struct Table {
 pub(crate) enum ReferenceType {
     FuncRef,
     ExternRef,
+}
+
+impl fmt::Display for ReferenceType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::FuncRef => "funcref",
+            Self::ExternRef => "externref",
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -379,6 +422,304 @@ pub(crate) enum ControlEffect {
     Unreachable,
 }
 
+impl Module {
+    pub(crate) fn validate(&self) -> ValidationResult<()> {
+        Validator::new(self).validate()
+    }
+
+    pub(crate) fn to_wasm_bytes(&self) -> ValidationResult<Vec<u8>> {
+        self.validate()?;
+        Ok(BinaryEmitter::new(self).emit())
+    }
+
+    pub(crate) fn to_wat(&self) -> ValidationResult<String> {
+        self.validate()?;
+        Ok(WatRenderer::new(self).render())
+    }
+}
+
+struct WatRenderer<'a> {
+    module: &'a Module,
+    wat: String,
+    indent: usize,
+}
+
+impl<'a> WatRenderer<'a> {
+    fn new(module: &'a Module) -> Self {
+        Self { module, wat: String::new(), indent: 0 }
+    }
+
+    fn render(mut self) -> String {
+        self.line("(module");
+        self.indent += 1;
+        for type_ in &self.module.types {
+            self.line(&format!(
+                "(type (func{}{}))",
+                params_wat(&type_.params),
+                results_wat(&type_.results)
+            ));
+        }
+        for import in &self.module.imports {
+            self.render_import(import);
+        }
+        for table in &self.module.tables {
+            self.line(&format!(
+                "(table {}{} {})",
+                table.minimum,
+                max_suffix(table.maximum),
+                table.element_type
+            ));
+        }
+        for memory in &self.module.memories {
+            self.line(&format!(
+                "(memory {}{})",
+                memory.minimum_pages,
+                max_suffix(memory.maximum_pages)
+            ));
+        }
+        for function in &self.module.functions {
+            self.render_function(function);
+        }
+        for export in &self.module.exports {
+            self.render_export(export);
+        }
+        for segment in &self.module.data_segments {
+            self.render_data_segment(segment);
+        }
+        self.indent -= 1;
+        self.line(")");
+        self.wat
+    }
+
+    fn render_import(&mut self, import: &Import) {
+        match &import.desc {
+            ImportDesc::Function(type_id) => {
+                let type_ = &self.module.types[type_id.0 as usize];
+                self.line(&format!(
+                    "(import {:?} {:?} (func (type {}){}{}))",
+                    import.module,
+                    import.name,
+                    type_id.0,
+                    params_wat(&type_.params),
+                    results_wat(&type_.results)
+                ));
+            }
+            ImportDesc::Memory(memory) => self.line(&format!(
+                "(import {:?} {:?} (memory {}{}))",
+                import.module,
+                import.name,
+                memory.minimum_pages,
+                max_suffix(memory.maximum_pages)
+            )),
+            ImportDesc::Table(table) => self.line(&format!(
+                "(import {:?} {:?} (table {}{} {}))",
+                import.module,
+                import.name,
+                table.minimum,
+                max_suffix(table.maximum),
+                table.element_type
+            )),
+        }
+    }
+
+    fn render_function(&mut self, function: &Function) {
+        let type_ = &self.module.types[function.type_id.0 as usize];
+        let name = function
+            .name
+            .as_deref()
+            .map(wat_id)
+            .map(|name| format!(" {name}"))
+            .unwrap_or_default();
+        self.line(&format!(
+            "(func{name} (type {}){}{}",
+            function.type_id.0,
+            params_wat(&type_.params),
+            results_wat(&type_.results)
+        ));
+        self.indent += 1;
+        for local in &function.locals {
+            self.line(&format!("(local {})", local.type_));
+        }
+        for instruction in &function.body {
+            self.render_instruction(instruction);
+        }
+        self.indent -= 1;
+        self.line(")");
+    }
+
+    fn render_export(&mut self, export: &Export) {
+        let desc = match export.desc {
+            ExportDesc::Function(id) => format!("func {}", id.0),
+            ExportDesc::Memory(id) => format!("memory {}", id.0),
+            ExportDesc::Table(id) => format!("table {}", id.0),
+        };
+        self.line(&format!("(export {:?} ({desc}))", export.name));
+    }
+
+    fn render_data_segment(&mut self, segment: &DataSegment) {
+        let offset = segment
+            .offset
+            .iter()
+            .map(instruction_inline_wat)
+            .collect::<Vec<_>>()
+            .join(" ");
+        self.line(&format!(
+            "(data (memory {}) (offset {offset}) {:?})",
+            segment.memory.0,
+            String::from_utf8_lossy(&segment.bytes)
+        ));
+    }
+
+    fn render_instruction(&mut self, instruction: &Instruction) {
+        match instruction {
+            Instruction::Block { type_, body } => {
+                self.line(&format!(
+                    "block{}{}",
+                    params_wat(&type_.params),
+                    results_wat(&type_.results)
+                ));
+                self.indent += 1;
+                for instruction in body {
+                    self.render_instruction(instruction);
+                }
+                self.indent -= 1;
+                self.line("end");
+            }
+            Instruction::Loop { type_, body } => {
+                self.line(&format!(
+                    "loop{}{}",
+                    params_wat(&type_.params),
+                    results_wat(&type_.results)
+                ));
+                self.indent += 1;
+                for instruction in body {
+                    self.render_instruction(instruction);
+                }
+                self.indent -= 1;
+                self.line("end");
+            }
+            Instruction::If { type_, then_body, else_body } => {
+                self.line(&format!(
+                    "if{}{}",
+                    params_wat(&type_.params),
+                    results_wat(&type_.results)
+                ));
+                self.indent += 1;
+                for instruction in then_body {
+                    self.render_instruction(instruction);
+                }
+                if !else_body.is_empty() {
+                    self.indent -= 1;
+                    self.line("else");
+                    self.indent += 1;
+                    for instruction in else_body {
+                        self.render_instruction(instruction);
+                    }
+                }
+                self.indent -= 1;
+                self.line("end");
+            }
+            _ => self.line(&instruction_inline_wat(instruction)),
+        }
+    }
+
+    fn line(&mut self, text: &str) {
+        for _ in 0..self.indent {
+            self.wat.push_str("  ");
+        }
+        self.wat.push_str(text);
+        self.wat.push('\n');
+    }
+}
+
+fn instruction_inline_wat(instruction: &Instruction) -> String {
+    match instruction {
+        Instruction::Unreachable => "unreachable".into(),
+        Instruction::Nop => "nop".into(),
+        Instruction::Br { depth, .. } => format!("br {depth}"),
+        Instruction::BrIf { depth, .. } => format!("br_if {depth}"),
+        Instruction::Return { .. } => "return".into(),
+        Instruction::Call { function, .. } => format!("call {}", function.0),
+        Instruction::CallIndirect { table, type_id, .. } => {
+            format!("call_indirect (type {}) (table {})", type_id.0, table.0)
+        }
+        Instruction::Drop(_) => "drop".into(),
+        Instruction::Select(_) => "select".into(),
+        Instruction::LocalGet { local, .. } => format!("local.get {}", local.0),
+        Instruction::LocalSet { local, .. } => format!("local.set {}", local.0),
+        Instruction::LocalTee { local, .. } => format!("local.tee {}", local.0),
+        Instruction::I32Const(value) => format!("i32.const {value}"),
+        Instruction::I64Const(value) => format!("i64.const {value}"),
+        Instruction::F32Const(value) => format!("f32.const {}", f32::from_bits(*value)),
+        Instruction::F64Const(value) => format!("f64.const {}", f64::from_bits(*value)),
+        Instruction::I32Eqz => "i32.eqz".into(),
+        Instruction::I32Eq => "i32.eq".into(),
+        Instruction::I32Ne => "i32.ne".into(),
+        Instruction::I32LtS => "i32.lt_s".into(),
+        Instruction::I32GtS => "i32.gt_s".into(),
+        Instruction::I32LeS => "i32.le_s".into(),
+        Instruction::I32GeS => "i32.ge_s".into(),
+        Instruction::I64Eqz => "i64.eqz".into(),
+        Instruction::I64Eq => "i64.eq".into(),
+        Instruction::F64Eq => "f64.eq".into(),
+        Instruction::F64Ne => "f64.ne".into(),
+        Instruction::F64Lt => "f64.lt".into(),
+        Instruction::F64Gt => "f64.gt".into(),
+        Instruction::F64Le => "f64.le".into(),
+        Instruction::F64Ge => "f64.ge".into(),
+        Instruction::I32Add => "i32.add".into(),
+        Instruction::I32Sub => "i32.sub".into(),
+        Instruction::I32Mul => "i32.mul".into(),
+        Instruction::I32DivS => "i32.div_s".into(),
+        Instruction::I64Add => "i64.add".into(),
+        Instruction::I64Sub => "i64.sub".into(),
+        Instruction::I64Mul => "i64.mul".into(),
+        Instruction::I64DivS => "i64.div_s".into(),
+        Instruction::F64Add => "f64.add".into(),
+        Instruction::F64Sub => "f64.sub".into(),
+        Instruction::F64Mul => "f64.mul".into(),
+        Instruction::F64Div => "f64.div".into(),
+        Instruction::I32Load(arg) => memory_wat("i32.load", arg),
+        Instruction::I32Store(arg) => memory_wat("i32.store", arg),
+        Instruction::I64Load(arg) => memory_wat("i64.load", arg),
+        Instruction::I64Store(arg) => memory_wat("i64.store", arg),
+        Instruction::F64Load(arg) => memory_wat("f64.load", arg),
+        Instruction::F64Store(arg) => memory_wat("f64.store", arg),
+        Instruction::Block { .. } | Instruction::Loop { .. } | Instruction::If { .. } => unreachable!(),
+    }
+}
+
+fn memory_wat(opcode: &str, arg: &MemoryArg) -> String {
+    format!("{opcode} offset={} align={}", arg.offset, 1_u32 << arg.align)
+}
+
+fn params_wat(types: &[ValueType]) -> String {
+    types
+        .iter()
+        .map(|type_| format!(" (param {type_})"))
+        .collect::<String>()
+}
+
+fn results_wat(types: &[ValueType]) -> String {
+    types
+        .iter()
+        .map(|type_| format!(" (result {type_})"))
+        .collect::<String>()
+}
+
+fn max_suffix(maximum: Option<u32>) -> String {
+    maximum.map(|maximum| format!(" {maximum}")).unwrap_or_default()
+}
+
+fn wat_id(name: &str) -> String {
+    let mut out = String::from("$");
+    out.extend(
+        name.chars()
+            .map(|char| if char.is_ascii_alphanumeric() || char == '_' { char } else { '_' }),
+    );
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -408,5 +749,116 @@ mod tests {
         let branch_effect = Instruction::BrIf { depth: 0, results: vec![ValueType::I32] }.stack_effect();
         assert_eq!(branch_effect.consumes, vec![ValueType::I32, ValueType::I32]);
         assert_eq!(branch_effect.produces, vec![ValueType::I32]);
+    }
+
+    #[test]
+    fn validates_stack_locals_branches_and_call_signatures() {
+        let mut module = Module::new();
+        let host_type = module.push_type(FunctionType::new([ValueType::I32], [ValueType::I32]));
+        let void_type = module.push_type(FunctionType::new([], []));
+        module.push_import(Import { module: "env".into(), name: "host".into(), desc: ImportDesc::Function(host_type) });
+        let mut function = Function::new(void_type);
+        function.body = vec![
+            Instruction::LocalGet { local: LocalId(99), type_: ValueType::I32 },
+            Instruction::Call { function: FunctionId(0), type_: FunctionType::new([], []) },
+            Instruction::Block {
+                type_: BlockType::new([], [ValueType::I32]),
+                body: vec![Instruction::Br { depth: 0, results: vec![] }],
+            },
+        ];
+        module.push_function(function);
+
+        let errors = module.validate().expect_err("module should not validate");
+        let messages = errors
+            .into_iter()
+            .map(|error| error.message)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(messages.contains("unknown local index"), "{messages}");
+        assert!(messages.contains("call to function 0 has signature"), "{messages}");
+        assert!(messages.contains("branch depth 0 has results"), "{messages}");
+    }
+
+    #[test]
+    fn emits_valid_wasm_bytes_directly_from_structured_module() {
+        let module = add_module();
+        let bytes = module
+            .to_wasm_bytes()
+            .expect("structured module should validate and emit");
+        assert_eq!(&bytes[..8], b"\0asm\x01\0\0\0");
+
+        let engine = wasmtime::Engine::default();
+        let wasm = wasmtime::Module::from_binary(&engine, &bytes).expect("direct bytes should be valid wasm");
+        let mut store = wasmtime::Store::new(&engine, ());
+        let instance = wasmtime::Instance::new(&mut store, &wasm, &[]).expect("module should instantiate");
+        let add = instance
+            .get_typed_func::<(i32, i32), i32>(&mut store, "add")
+            .expect("add export should exist");
+        assert_eq!(add.call(&mut store, (20, 22)).expect("add call should succeed"), 42);
+    }
+
+    #[test]
+    fn renders_wat_from_structured_module() {
+        let module = add_module();
+        let wat = module.to_wat().expect("structured module should render to wat");
+        assert!(wat.contains("(type (func (param i32) (param i32) (result i32)))"));
+        assert!(wat.contains("i32.add"));
+        assert!(wat.contains("(export \"add\" (func 0))"));
+        wat::parse_str(&wat).expect("rendered wat should assemble");
+    }
+
+    #[test]
+    fn emits_type_indexed_block_signatures() {
+        let mut module = Module::new();
+        let type_id = module.push_type(FunctionType::new([ValueType::I32], [ValueType::I32]));
+        let mut function = Function::new(type_id);
+        function.params = vec![Local { name: None, type_: ValueType::I32 }];
+        function.body = vec![
+            Instruction::LocalGet { local: LocalId(0), type_: ValueType::I32 },
+            Instruction::Block {
+                type_: BlockType::new([ValueType::I32], [ValueType::I32]),
+                body: vec![Instruction::I32Const(1), Instruction::I32Add],
+            },
+        ];
+        let function_id = module.push_function(function);
+        module
+            .exports
+            .push(Export { name: "inc".into(), desc: ExportDesc::Function(function_id) });
+        wat::parse_str(module.to_wat().expect("typed block module should render"))
+            .expect("typed block wat should assemble");
+
+        let engine = wasmtime::Engine::default();
+        let wasm = wasmtime::Module::from_binary(
+            &engine,
+            &module.to_wasm_bytes().expect("typed block module should emit"),
+        )
+        .expect("typed block bytes should be valid wasm");
+        let mut store = wasmtime::Store::new(&engine, ());
+        let instance = wasmtime::Instance::new(&mut store, &wasm, &[]).expect("module should instantiate");
+        let inc = instance
+            .get_typed_func::<i32, i32>(&mut store, "inc")
+            .expect("inc export should exist");
+        assert_eq!(inc.call(&mut store, 41).expect("inc call should succeed"), 42);
+    }
+
+    fn add_module() -> Module {
+        let mut module = Module::new();
+        let type_id = module.push_type(FunctionType::new([ValueType::I32, ValueType::I32], [ValueType::I32]));
+        let mut function = Function::new(type_id);
+        function.name = Some("add".into());
+        function.params = vec![
+            Local { name: Some("left".into()), type_: ValueType::I32 },
+            Local { name: Some("right".into()), type_: ValueType::I32 },
+        ];
+        function.body = vec![
+            Instruction::LocalGet { local: LocalId(0), type_: ValueType::I32 },
+            Instruction::LocalGet { local: LocalId(1), type_: ValueType::I32 },
+            Instruction::I32Add,
+        ];
+        let function_id = module.push_function(function);
+        module
+            .exports
+            .push(Export { name: "add".into(), desc: ExportDesc::Function(function_id) });
+        module
     }
 }

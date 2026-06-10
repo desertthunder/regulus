@@ -7,6 +7,7 @@ use crate::{
     diagnostic::Diagnostics,
     resolve::SymbolKind,
     source::Span,
+    stdlib,
     types::{Type, TypedModule},
 };
 
@@ -352,6 +353,17 @@ pub enum CallBoundary {
     HostImport { module: String, name: String },
 }
 
+impl CallBoundary {
+    pub fn stdlib(strategy: stdlib::MemberStrategy, member: &str) -> Self {
+        match strategy {
+            stdlib::MemberStrategy::HostImport => {
+                Self::HostImport { module: stdlib::STDLIB_IO_HOST_MODULE.into(), name: member.into() }
+            }
+            _ => Self::Internal,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Local {
     pub id: LocalId,
@@ -365,6 +377,31 @@ pub struct Block {
     pub instructions: Vec<Instruction>,
     pub result: Box<Expression>,
     pub span: Span,
+}
+
+impl Block {
+    pub fn contains_indirect_call(&self) -> bool {
+        self.contains_expression(Expression::contains_indirect_call)
+    }
+
+    pub fn contains_anonymous_function(&self) -> bool {
+        self.contains_expression(Expression::contains_anonymous_function)
+    }
+
+    pub fn contains_constructor(&self) -> bool {
+        self.contains_expression(Expression::contains_constructor)
+    }
+
+    pub fn contains_record_update(&self) -> bool {
+        self.contains_expression(Expression::contains_record_update)
+    }
+
+    fn contains_expression(&self, predicate: impl Fn(&Expression) -> bool) -> bool {
+        self.instructions
+            .iter()
+            .any(|instruction| predicate(instruction.expression()))
+            || predicate(&self.result)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -384,6 +421,15 @@ pub enum Instruction {
         failure: FailurePath,
         span: Span,
     },
+}
+
+impl Instruction {
+    pub fn expression(&self) -> &Expression {
+        match self {
+            Self::Evaluate { expression, .. } => expression,
+            Self::LocalSet { value, .. } | Self::AssertMatch { value, .. } => value,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -406,6 +452,105 @@ pub struct Expression {
     pub type_: Type,
     pub span: Span,
     pub kind: ExpressionKind,
+}
+
+impl Expression {
+    pub fn contains_indirect_call(&self) -> bool {
+        matches!(self.kind, ExpressionKind::IndirectCall(_)) || self.children().any(Self::contains_indirect_call)
+    }
+
+    pub fn contains_anonymous_function(&self) -> bool {
+        matches!(self.kind, ExpressionKind::AnonymousFunction(_))
+            || self.children().any(Self::contains_anonymous_function)
+    }
+
+    pub fn contains_constructor(&self) -> bool {
+        matches!(self.kind, ExpressionKind::Constructor(_)) || self.children().any(Self::contains_constructor)
+    }
+
+    pub fn contains_record_update(&self) -> bool {
+        matches!(self.kind, ExpressionKind::RecordUpdate { .. }) || self.children().any(Self::contains_record_update)
+    }
+
+    pub fn children(&self) -> ExpressionChildren<'_> {
+        let mut children = Vec::new();
+        match &self.kind {
+            ExpressionKind::DirectCall(call) => children.extend(call.arguments.iter().map(|argument| &argument.value)),
+            ExpressionKind::IndirectCall(call) => {
+                children.push(call.callee.as_ref());
+                children.extend(call.arguments.iter().map(|argument| &argument.value));
+            }
+            ExpressionKind::Pipeline(pipeline) => {
+                children.push(pipeline.input.as_ref());
+                children.push(pipeline.call.as_ref());
+            }
+            ExpressionKind::Use(use_) => {
+                children.push(use_.callback.as_ref());
+                children.push(use_.call.as_ref());
+            }
+            ExpressionKind::Branch(branch) => {
+                children.extend(branch.subjects.iter());
+                for clause in &branch.clauses {
+                    if let Some(guard) = &clause.guard {
+                        children.push(guard);
+                    }
+                    children.push(clause.body.as_ref());
+                }
+            }
+            ExpressionKind::Tuple(items) | ExpressionKind::List(items) => children.extend(items.iter()),
+            ExpressionKind::BitArrayConcat { left, right }
+            | ExpressionKind::Compare { left, right, .. }
+            | ExpressionKind::RuntimeEquality { left, right } => {
+                children.push(left.as_ref());
+                children.push(right.as_ref());
+            }
+            ExpressionKind::BitStringDeconstruct { bit_array, .. }
+            | ExpressionKind::FieldAccess { record: bit_array, .. }
+            | ExpressionKind::TupleElement { tuple: bit_array, .. }
+            | ExpressionKind::ListDeconstruct { list: bit_array, .. } => children.push(bit_array.as_ref()),
+            ExpressionKind::Record(record) => children.extend(record.fields.iter().map(|field| &field.value)),
+            ExpressionKind::Constructor(constructor) => children.extend(constructor.arguments.iter()),
+            ExpressionKind::RecordUpdate { record, fields, .. } => {
+                children.push(record.as_ref());
+                children.extend(fields.iter().filter_map(|field| field.value.as_ref()));
+            }
+            ExpressionKind::ListCons { head, tail } => {
+                children.push(head.as_ref());
+                children.push(tail.as_ref());
+            }
+            ExpressionKind::Memory(operation) => match operation {
+                MemoryOperation::Allocate { bytes } | MemoryOperation::Load { address: bytes, .. } => {
+                    children.push(bytes.as_ref())
+                }
+                MemoryOperation::Store { address, value } => {
+                    children.push(address.as_ref());
+                    children.push(value.as_ref());
+                }
+            },
+            ExpressionKind::Literal(_)
+            | ExpressionKind::LocalGet(_)
+            | ExpressionKind::FunctionValue(_)
+            | ExpressionKind::AnonymousFunction(_)
+            | ExpressionKind::BitArray(_)
+            | ExpressionKind::Failure(_) => {}
+        }
+        ExpressionChildren { children, index: 0 }
+    }
+}
+
+pub struct ExpressionChildren<'a> {
+    children: Vec<&'a Expression>,
+    index: usize,
+}
+
+impl<'a> Iterator for ExpressionChildren<'a> {
+    type Item = &'a Expression;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let child = self.children.get(self.index).copied();
+        self.index += usize::from(child.is_some());
+        child
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
