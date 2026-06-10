@@ -34,6 +34,12 @@ impl From<ClosureConstants> for u32 {
     }
 }
 
+impl From<ClosureConstants> for usize {
+    fn from(value: ClosureConstants) -> Self {
+        u32::from(value) as Self
+    }
+}
+
 /// Output from a full compile pipeline run.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompileOutput {
@@ -63,7 +69,7 @@ pub fn compile_source_with_options(source: SourceFile, options: CompileOptions) 
     let resolved = resolve::resolve(ast)?;
     let typed = types::check(resolved)?;
     let ir = ir::lower(typed)?;
-    let wasm = wasm::emit_with_options(&ir, options.target.into())?;
+    let wasm = ir.emit_wasm_with_options(options.target.into())?;
 
     Ok(CompileOutput { wasm })
 }

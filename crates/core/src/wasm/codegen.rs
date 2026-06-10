@@ -98,6 +98,7 @@ impl<'a> StructuredEmitter<'a> {
     }
 
     fn module(mut self, source: &ir::Module) -> StructuredResult<Module> {
+        self.module.source_span = source.functions.first().map(|function| function.span);
         for function in &source.functions {
             if matches!(function.abi.boundary, ir::CallBoundary::ModuleExport) && function.return_type == Type::String {
                 return Err(StructuredError::Unsupported);
@@ -368,7 +369,7 @@ impl<'a> StructuredEmitter<'a> {
             ExpressionKind::Memory(operation) => self.memory_operation(operation, out),
             ExpressionKind::IndirectCall(call) => self.indirect_call(call, out),
             ExpressionKind::BitArray(bit_array) => {
-                let bytes = super::bit_array_bytes(bit_array);
+                let bytes = bit_array.bytes();
                 self.static_pointer(
                     runtime::bit_array_object(self.config, self.next_static_offset, &bytes, bit_array.bit_len),
                     out,

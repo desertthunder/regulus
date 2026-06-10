@@ -1511,7 +1511,7 @@ impl FunctionContext {
 mod tests {
     use super::*;
     use crate::source::{SourceFile, SourceFileId};
-    use crate::{ast, parse, resolve, types, wasm};
+    use crate::{ast, parse, resolve, types};
 
     fn lower_source(source: &str) -> Module {
         let source = SourceFile::new(SourceFileId(0), source);
@@ -1628,7 +1628,7 @@ mod tests {
     #[test]
     fn emits_managed_constructor_ir_to_wat() {
         let module = lower_source("type Box { Box }\nfn main() { Box }");
-        let wat = wasm::emit_wat(&module).expect("emit managed constructor");
+        let wat = module.emit_wat().expect("emit managed constructor");
 
         assert!(wat.contains("(memory 1)"));
         assert!(wat.contains("(data (memory 0)"));

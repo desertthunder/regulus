@@ -95,7 +95,7 @@ fn compile_with_dumps(
     let resolved = compiler_core::resolve::resolve(ast.clone())?;
     let typed = compiler_core::types::check(resolved.clone())?;
     let ir = compiler_core::ir::lower(typed.clone())?;
-    let wasm = compiler_core::wasm::emit_with_options(&ir, target.into())?;
+    let wasm = ir.emit_wasm_with_options(target.into())?;
     Ok(CompiledModule { ast, resolved, typed, ir, wasm })
 }
 

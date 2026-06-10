@@ -9,16 +9,13 @@ mod encode;
 mod fragments;
 mod validator;
 
-use std::{
-    collections::{HashMap, HashSet},
-    fmt::Write,
-};
+use std::collections::{HashMap, HashSet};
+use std::fmt::Write;
 
 use crate::diagnostic::{Diagnostic, DiagnosticCode, Diagnostics, Label};
 use crate::ir::{self, ExpressionKind, Instruction};
-use crate::{
-    ClosureConstants, ast::LiteralKind, runtime, stdlib::STDLIB_IO_HOST_MODULE, target::CompileTarget, types::Type,
-};
+use crate::runtime;
+use crate::{ClosureConstants, ast::LiteralKind, stdlib::STDLIB_IO_HOST_MODULE, target::CompileTarget, types::Type};
 
 /// WebAssembly output from the backend.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30,6 +27,12 @@ pub struct WasmModule {
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct EmitOptions {
     pub target: WasmTarget,
+}
+
+impl EmitOptions {
+    pub fn new(target: WasmTarget) -> Self {
+        Self { target }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -75,132 +78,133 @@ impl WasmTarget {
     }
 }
 
-pub fn emit(module: &ir::Module) -> Result<WasmModule, Diagnostics> {
-    emit_with_options(module, EmitOptions::default())
-}
-
-pub fn emit_with_options(module: &ir::Module, options: EmitOptions) -> Result<WasmModule, Diagnostics> {
-    if let Some(module) = codegen::emit(module, options)? {
-        let wat = structured_wat(&module)?;
-        let bytes = structured_bytes(&module)?;
-        return Ok(WasmModule { wat, bytes });
+impl ir::Module {
+    pub fn emit_wasm(&self) -> Result<WasmModule, Diagnostics> {
+        self.emit_wasm_with_options(EmitOptions::default())
     }
 
-    let wat = emit_wat_with_options(module, options)?;
-    let bytes = wat::parse_str(&wat).map_err(|error| {
-        vec![Diagnostic::new(
-            DiagnosticCode::WasmError,
-            format!("could not assemble WAT: {error}"),
-        )]
-    })?;
-
-    Ok(WasmModule { wat, bytes })
-}
-
-pub fn emit_wat(module: &ir::Module) -> Result<String, Diagnostics> {
-    emit_wat_with_options(module, EmitOptions::default())
-}
-
-pub fn emit_wat_with_options(module: &ir::Module, options: EmitOptions) -> Result<String, Diagnostics> {
-    if let Some(module) = codegen::emit(module, options)? {
-        return structured_wat(&module);
-    }
-
-    let mut emitter = Emitter {
-        imports: String::new(),
-        functions: String::new(),
-        diagnostics: Vec::new(),
-        data: Vec::new(),
-        config: runtime::RuntimeConfig::DEFAULT,
-        next_static_offset: runtime::RuntimeConfig::DEFAULT.static_data_start,
-        uses_runtime: false,
-        function_ids: module
-            .functions
-            .iter()
-            .enumerate()
-            .map(|(id, function)| (function.name.clone(), id as u32))
-            .collect(),
-        function_order: module.functions.iter().map(|function| function.name.clone()).collect(),
-        function_signatures: module
-            .functions
-            .iter()
-            .map(|function| {
-                (
-                    function.name.clone(),
-                    (
-                        function
-                            .params
-                            .iter()
-                            .skip(function.closure_captures.len())
-                            .map(|param| param.type_.clone())
-                            .collect(),
-                        function.return_type.clone(),
-                    ),
-                )
-            })
-            .collect(),
-        closure_captures: module
-            .functions
-            .iter()
-            .map(|function| (function.name.clone(), function.closure_captures.clone()))
-            .collect(),
-        current: CurrentEmission::default(),
-        debug_imports: HashSet::new(),
-        options,
-    };
-
-    for constant in &module.constants {
-        emitter.constant(constant);
-    }
-
-    for function in &module.functions {
-        match &function.abi.boundary {
-            ir::CallBoundary::HostImport { .. } | ir::CallBoundary::ModuleImport { .. } => {
-                emitter.import_function(function);
-            }
-            ir::CallBoundary::Internal | ir::CallBoundary::ModuleExport => emitter.function(function),
+    pub fn emit_wasm_with_options(&self, options: EmitOptions) -> Result<WasmModule, Diagnostics> {
+        if let Some(module) = codegen::emit(self, options)? {
+            let wat = module.structured_wat()?;
+            let bytes = module.structured_bytes()?;
+            return Ok(WasmModule { wat, bytes });
         }
+
+        let wat = self.emit_wat_with_options(options)?;
+        let bytes = wat::parse_str(&wat).map_err(|error| {
+            vec![Diagnostic::new(
+                DiagnosticCode::WasmError,
+                format!("could not assemble WAT: {error}"),
+            )]
+        })?;
+
+        Ok(WasmModule { wat, bytes })
     }
 
-    if !emitter.diagnostics.is_empty() {
-        return Err(emitter.diagnostics);
+    pub fn emit_wat(&self) -> Result<String, Diagnostics> {
+        self.emit_wat_with_options(EmitOptions::default())
     }
 
-    let mut wat = String::from("(module\n");
-    wat.push_str(&emitter.imports);
-    if emitter.uses_runtime {
-        let helper_roots = runtime_helper_roots(&emitter.functions);
-        wat.push_str(&runtime_prelude(emitter.config, &helper_roots));
-    }
+    pub fn emit_wat_with_options(&self, options: EmitOptions) -> Result<String, Diagnostics> {
+        if let Some(module) = codegen::emit(self, options)? {
+            return module.structured_wat();
+        }
 
-    wat.push_str(&emitter.functions);
+        let mut emitter = Emitter::new(
+            self.functions
+                .iter()
+                .enumerate()
+                .map(|(id, function)| (function.name.clone(), id as u32))
+                .collect(),
+            self.functions.iter().map(|function| function.name.clone()).collect(),
+            self.functions
+                .iter()
+                .map(|function| {
+                    (
+                        function.name.clone(),
+                        (
+                            function
+                                .params
+                                .iter()
+                                .skip(function.closure_captures.len())
+                                .map(|param| param.type_.clone())
+                                .collect(),
+                            function.return_type.clone(),
+                        ),
+                    )
+                })
+                .collect(),
+            self.functions
+                .iter()
+                .map(|function| (function.name.clone(), function.closure_captures.clone()))
+                .collect(),
+            options,
+        );
 
-    for object in emitter.data {
-        writeln!(
-            wat,
-            "  (data (i32.const {}) \"{}\")",
-            object.offset,
-            wat_bytes(&object.bytes)
-        )
-        .expect("write WAT");
+        for constant in &self.constants {
+            emitter.constant(constant);
+        }
+
+        for function in &self.functions {
+            match &function.abi.boundary {
+                ir::CallBoundary::HostImport { .. } | ir::CallBoundary::ModuleImport { .. } => {
+                    emitter.import_function(function);
+                }
+                ir::CallBoundary::Internal | ir::CallBoundary::ModuleExport => emitter.function(function),
+            }
+        }
+
+        if !emitter.diagnostics.is_empty() {
+            return Err(emitter.diagnostics);
+        }
+
+        let mut wat = String::from("(module\n");
+        wat.push_str(&emitter.imports);
+        if emitter.uses_runtime {
+            let helper_roots = runtime_helper_roots(&emitter.functions);
+            wat.push_str(&emitter.config.runtime_prelude(&helper_roots));
+        }
+
+        wat.push_str(&emitter.functions);
+
+        for object in emitter.data {
+            writeln!(
+                wat,
+                "  (data (i32.const {}) \"{}\")",
+                object.offset,
+                wat_bytes(&object.bytes)
+            )
+            .expect("write WAT");
+        }
+        wat.push_str(")\n");
+        Ok(wat)
     }
-    wat.push_str(")\n");
-    Ok(wat)
 }
 
-fn structured_wat(module: &builder::Module) -> Result<String, Diagnostics> {
-    module.to_wat().map_err(structured_validation_diagnostics)
-}
+impl builder::Module {
+    fn structured_wat(&self) -> Result<String, Diagnostics> {
+        self.to_wat()
+            .map_err(|errors| self.structured_validation_diagnostics(errors))
+    }
 
-fn structured_bytes(module: &builder::Module) -> Result<Vec<u8>, Diagnostics> {
-    module.to_wasm_bytes().map_err(structured_validation_diagnostics)
-}
+    fn structured_bytes(&self) -> Result<Vec<u8>, Diagnostics> {
+        self.to_wasm_bytes()
+            .map_err(|errors| self.structured_validation_diagnostics(errors))
+    }
 
-fn structured_validation_diagnostics(errors: Vec<validator::ValidationError>) -> Diagnostics {
-    errors
-        .into_iter()
-        .map(|error| Diagnostic::new(DiagnosticCode::WasmError, error.message))
-        .collect()
+    fn structured_validation_diagnostics(&self, errors: Vec<validator::ValidationError>) -> Diagnostics {
+        errors
+            .into_iter()
+            .map(|error| {
+                let diagnostic = Diagnostic::new(DiagnosticCode::WasmError, error.message);
+                if let Some(span) = self.source_span {
+                    diagnostic.with_label(Label::primary(span, "Wasm generated for this source"))
+                } else {
+                    diagnostic
+                }
+            })
+            .collect()
+    }
 }
 
 #[derive(Clone, Default)]
@@ -231,40 +235,42 @@ struct Emitter {
     options: EmitOptions,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct ConcreteHostImport {
-    module: String,
-    name: String,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-enum DebugImport {
-    Bool,
-    Value,
-    I64,
-    F64,
-}
-
-impl DebugImport {
-    fn name(self) -> &'static str {
-        match self {
-            Self::Bool => "debug_bool",
-            Self::Value => "debug_value",
-            Self::I64 => "debug_i64",
-            Self::F64 => "debug_f64",
-        }
-    }
-
-    fn wasm_type(self) -> &'static str {
-        match self {
-            Self::Bool | Self::Value => "i32",
-            Self::I64 => "i64",
-            Self::F64 => "f64",
+impl Default for Emitter {
+    fn default() -> Self {
+        Self {
+            imports: String::new(),
+            functions: String::new(),
+            diagnostics: Diagnostics::new(),
+            data: Vec::new(),
+            config: runtime::RuntimeConfig::default(),
+            next_static_offset: runtime::RuntimeConfig::DEFAULT.static_data_start,
+            uses_runtime: false,
+            function_ids: HashMap::new(),
+            function_order: Vec::new(),
+            function_signatures: HashMap::new(),
+            closure_captures: HashMap::new(),
+            current: CurrentEmission::default(),
+            debug_imports: HashSet::new(),
+            options: EmitOptions::default(),
         }
     }
 }
 
 impl Emitter {
+    pub fn new(
+        ids: HashMap<String, u32>, order: Vec<String>, sigs: HashMap<String, (Vec<Type>, Type)>,
+        captures: HashMap<String, Vec<Type>>, opts: EmitOptions,
+    ) -> Self {
+        Self {
+            function_ids: ids,
+            function_order: order,
+            function_signatures: sigs,
+            closure_captures: captures,
+            options: opts,
+            ..Default::default()
+        }
+    }
+
     fn constant(&mut self, constant: &ir::Constant) {
         if let ir::ConstantValue::Literal(ir::Literal { kind: LiteralKind::String, source }) = &constant.value {
             self.static_string(source);
@@ -316,11 +322,11 @@ impl Emitter {
         )
         .expect("write WAT");
         for param in &function.params {
-            if let Some(type_) = wasm_type(&param.type_) {
+            if let Some(type_) = param.type_.wasm_type() {
                 write!(self.imports, " (param {type_})").expect("write WAT");
             }
         }
-        if let Some(return_type) = wasm_type(&function.return_type) {
+        if let Some(return_type) = function.return_type.wasm_type() {
             write!(self.imports, " (result {return_type})").expect("write WAT");
         }
         self.imports.push_str("))\n");
@@ -331,7 +337,7 @@ impl Emitter {
             return;
         }
 
-        let return_type = match wasm_type(&function.return_type) {
+        let return_type = match function.return_type.wasm_type() {
             Some(return_type) => return_type,
             None if function.return_type == Type::Nil => "",
             None => {
@@ -346,7 +352,7 @@ impl Emitter {
         }
 
         for param in &function.params {
-            match wasm_type(&param.type_) {
+            match param.type_.wasm_type() {
                 Some(type_) => write!(self.functions, " (param ${} {type_})", local_name(param)).expect("write WAT"),
                 None => self.unsupported_type(&param.type_, param.span),
             }
@@ -358,7 +364,7 @@ impl Emitter {
         self.functions.push('\n');
 
         for local in function.locals.iter().skip(function.params.len()) {
-            match wasm_type(&local.type_) {
+            match local.type_.wasm_type() {
                 Some(type_) => {
                     writeln!(self.functions, "    (local ${} {type_})", local_name(local)).expect("write WAT")
                 }
@@ -435,7 +441,7 @@ impl Emitter {
             match instruction {
                 Instruction::Evaluate { expression, .. } => {
                     self.expression(expression);
-                    if wasm_type(&expression.type_).is_some() {
+                    if expression.type_.wasm_type().is_some() {
                         writeln!(self.functions, "    drop").expect("write WAT");
                     }
                 }
@@ -859,19 +865,13 @@ impl Emitter {
                 self.expression(left);
                 self.expression(right);
                 match left.type_ {
-                    Type::Int => {
-                        writeln!(self.functions, "    {}", comparison_instruction(op, "i64")).expect("write WAT")
-                    }
-                    Type::Float => {
-                        writeln!(self.functions, "    {}", comparison_instruction(op, "f64")).expect("write WAT")
-                    }
-                    Type::Bool => {
-                        writeln!(self.functions, "    {}", comparison_instruction(op, "i32")).expect("write WAT")
-                    }
+                    Type::Int => writeln!(self.functions, "    {}", op.instruction("i64")).expect("write WAT"),
+                    Type::Float => writeln!(self.functions, "    {}", op.instruction("f64")).expect("write WAT"),
+                    Type::Bool => writeln!(self.functions, "    {}", op.instruction("i32")).expect("write WAT"),
                     Type::String => {
                         writeln!(self.functions, "    call $__string_compare").expect("write WAT");
                         writeln!(self.functions, "    i32.const 0").expect("write WAT");
-                        writeln!(self.functions, "    {}", comparison_instruction(op, "i32")).expect("write WAT");
+                        writeln!(self.functions, "    {}", op.instruction("i32")).expect("write WAT");
                         self.uses_runtime = true;
                     }
                     _ => self.diagnostics.push(
@@ -935,7 +935,7 @@ impl Emitter {
             writeln!(self.functions, "    i32.const 0").expect("write WAT");
             return;
         };
-        let byte_len = function.captures.len() * closure_constant_usize(ClosureConstants::CaptureSlotSize);
+        let byte_len = function.captures.len() * usize::from(ClosureConstants::CaptureSlotSize);
         writeln!(self.functions, "    i32.const {byte_len}").expect("write WAT");
         writeln!(self.functions, "    call $__alloc").expect("write WAT");
         writeln!(self.functions, "    local.set ${slots}").expect("write WAT");
@@ -944,7 +944,7 @@ impl Emitter {
             writeln!(
                 self.functions,
                 "    i32.const {}",
-                index * closure_constant_usize(ClosureConstants::CaptureSlotSize)
+                index * usize::from(ClosureConstants::CaptureSlotSize)
             )
             .expect("write WAT");
             writeln!(self.functions, "    i32.add").expect("write WAT");
@@ -977,7 +977,7 @@ impl Emitter {
             .abi
             .return_
             .as_ref()
-            .and_then(|value| wasm_type(&value.type_))
+            .and_then(|value| value.type_.wasm_type())
             .unwrap_or("");
         self.indirect_call_branch(call, 0, result_type, &scratch);
     }
@@ -1020,8 +1020,8 @@ impl Emitter {
                 writeln!(
                     self.functions,
                     "    i32.const {}",
-                    closure_constant_usize(ClosureConstants::CapturesOffset)
-                        + index * closure_constant_usize(ClosureConstants::CaptureSlotSize)
+                    usize::from(ClosureConstants::CapturesOffset)
+                        + index * usize::from(ClosureConstants::CaptureSlotSize)
                 )
                 .expect("write WAT");
                 writeln!(self.functions, "    i32.add").expect("write WAT");
@@ -1061,7 +1061,7 @@ impl Emitter {
         if branch
             .subjects
             .iter()
-            .any(|subject| wasm_type(&subject.type_).is_none())
+            .any(|subject| subject.type_.wasm_type().is_none())
         {
             self.diagnostics.push(
                 Diagnostic::new(DiagnosticCode::WasmError, "branch subject type is not supported")
@@ -1074,7 +1074,7 @@ impl Emitter {
     }
 
     fn branch_clause(&mut self, branch: &ir::Branch, index: usize, type_: &Type, span: crate::source::Span) {
-        let result_type = wasm_type(type_).unwrap_or("");
+        let result_type = type_.wasm_type().unwrap_or("");
         let Some(clause) = branch.clauses.get(index) else {
             self.failure(&branch.fallthrough);
             return;
@@ -1635,7 +1635,7 @@ impl Emitter {
     }
 
     fn static_bit_array(&mut self, bit_array: &ir::BitArrayLiteral) -> u32 {
-        let bytes = bit_array_bytes(bit_array);
+        let bytes = bit_array.bytes();
         self.push_static(runtime::bit_array_object(
             self.config,
             self.next_static_offset,
@@ -1651,12 +1651,12 @@ impl Emitter {
 
         let mut supported = true;
         for param in &function.params {
-            if !is_supported_host_abi_type(&param.type_) {
+            if !param.type_.is_supported_host_abi_type() {
                 self.unsupported_abi_type(&param.type_, param.span, &function.name);
                 supported = false;
             }
         }
-        if !matches!(function.return_type, Type::Nil) && !is_supported_host_abi_type(&function.return_type) {
+        if !matches!(function.return_type, Type::Nil) && !function.return_type.is_supported_host_abi_type() {
             self.unsupported_abi_type(&function.return_type, function.span, &function.name);
             supported = false;
         }
@@ -1720,8 +1720,43 @@ impl Emitter {
     }
 }
 
-fn runtime_prelude(config: runtime::RuntimeConfig, helper_roots: &HashSet<String>) -> String {
-    RuntimePrelude::new(config, helper_roots).into()
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ConcreteHostImport {
+    module: String,
+    name: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum DebugImport {
+    Bool,
+    Value,
+    I64,
+    F64,
+}
+
+impl DebugImport {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Bool => "debug_bool",
+            Self::Value => "debug_value",
+            Self::I64 => "debug_i64",
+            Self::F64 => "debug_f64",
+        }
+    }
+
+    fn wasm_type(self) -> &'static str {
+        match self {
+            Self::Bool | Self::Value => "i32",
+            Self::I64 => "i64",
+            Self::F64 => "f64",
+        }
+    }
+}
+
+impl runtime::RuntimeConfig {
+    fn runtime_prelude(self, helper_roots: &HashSet<String>) -> String {
+        RuntimePrelude::new(self, helper_roots).into()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1738,7 +1773,7 @@ struct RuntimePrelude {
 
 impl RuntimePrelude {
     fn new(config: runtime::RuntimeConfig, helper_roots: &HashSet<String>) -> Self {
-        let mut prelude = Self { wat: String::new(), fragments: runtime_helper_fragments(config) };
+        let mut prelude = Self { wat: String::new(), fragments: config.runtime_helper_fragments() };
         prelude.memory(config);
         prelude.helpers(helper_roots);
         prelude.check();
@@ -1823,53 +1858,55 @@ fn runtime_helper_roots(wat: &str) -> HashSet<String> {
         .collect()
 }
 
-fn runtime_helper_fragments(config: runtime::RuntimeConfig) -> Vec<RuntimeHelperFragment> {
-    let alloc_helper = fragments::allocation::ALLOC_HELPER
-        .replace("{alignment_mask}", &(config.layout.alignment - 1).to_string())
-        .replace("{alignment}", &config.layout.alignment.to_string())
-        .replace("{allocation_failure_offset}", "64");
-    let managed_value_helpers = fragments::managed_values::MANAGED_VALUE_HELPERS
-        .replace(
-            "{closure_capture_slot_size}",
-            &u32::from(ClosureConstants::CaptureSlotSize).to_string(),
-        )
-        .replace(
-            "{closure_function_id_offset}",
-            &u32::from(ClosureConstants::FunctionIdOffset).to_string(),
-        )
-        .replace(
-            "{closure_captures_offset}",
-            &u32::from(ClosureConstants::CapturesOffset).to_string(),
-        );
-    let blocks = [
-        alloc_helper.as_str(),
-        fragments::panic::PANIC_HELPERS,
-        fragments::copy::COPY_HELPERS,
-        fragments::strings::STRING_HELPERS,
-        fragments::bit_arrays::BIT_ARRAY_HELPERS,
-        fragments::lists::LIST_HELPERS,
-        managed_value_helpers.as_str(),
-        fragments::dictionaries::DICTIONARY_HELPERS,
-        fragments::equality_ordering::EQUALITY_AND_ORDERING_HELPERS,
-        fragments::debug::DEBUG_HELPERS,
-        fragments::host_adapters::HOST_ADAPTER_HELPERS,
-    ];
-    let mut fragments = blocks
-        .into_iter()
-        .flat_map(runtime_helper_fragments_from_block)
-        .collect::<Vec<_>>();
-    if let Some(fragment) = fragments
-        .iter_mut()
-        .find(|fragment| fragment.name == "__float_to_string")
-    {
-        fragment.deps.insert("__float_to_string_dot_data".into());
-    }
-    for name in ["__alloc", "__allocation_fail", "__panic", "__match_fail", "__assert"] {
-        if let Some(fragment) = fragments.iter_mut().find(|fragment| fragment.name == name) {
-            fragment.deps.insert("__last_panic".into());
+impl runtime::RuntimeConfig {
+    fn runtime_helper_fragments(self) -> Vec<RuntimeHelperFragment> {
+        let alloc_helper = fragments::allocation::ALLOC_HELPER
+            .replace("{alignment_mask}", &(self.layout.alignment - 1).to_string())
+            .replace("{alignment}", &self.layout.alignment.to_string())
+            .replace("{allocation_failure_offset}", "64");
+        let managed_value_helpers = fragments::managed_values::MANAGED_VALUE_HELPERS
+            .replace(
+                "{closure_capture_slot_size}",
+                &u32::from(ClosureConstants::CaptureSlotSize).to_string(),
+            )
+            .replace(
+                "{closure_function_id_offset}",
+                &u32::from(ClosureConstants::FunctionIdOffset).to_string(),
+            )
+            .replace(
+                "{closure_captures_offset}",
+                &u32::from(ClosureConstants::CapturesOffset).to_string(),
+            );
+        let blocks = [
+            alloc_helper.as_str(),
+            fragments::panic::PANIC_HELPERS,
+            fragments::copy::COPY_HELPERS,
+            fragments::strings::STRING_HELPERS,
+            fragments::bit_arrays::BIT_ARRAY_HELPERS,
+            fragments::lists::LIST_HELPERS,
+            managed_value_helpers.as_str(),
+            fragments::dictionaries::DICTIONARY_HELPERS,
+            fragments::equality_ordering::EQUALITY_AND_ORDERING_HELPERS,
+            fragments::debug::DEBUG_HELPERS,
+            fragments::host_adapters::HOST_ADAPTER_HELPERS,
+        ];
+        let mut fragments = blocks
+            .into_iter()
+            .flat_map(runtime_helper_fragments_from_block)
+            .collect::<Vec<_>>();
+        if let Some(fragment) = fragments
+            .iter_mut()
+            .find(|fragment| fragment.name == "__float_to_string")
+        {
+            fragment.deps.insert("__float_to_string_dot_data".into());
         }
+        for name in ["__alloc", "__allocation_fail", "__panic", "__match_fail", "__assert"] {
+            if let Some(fragment) = fragments.iter_mut().find(|fragment| fragment.name == name) {
+                fragment.deps.insert("__last_panic".into());
+            }
+        }
+        fragments
     }
-    fragments
 }
 
 fn runtime_helper_fragments_from_block(block: &str) -> Vec<RuntimeHelperFragment> {
@@ -1918,10 +1955,6 @@ fn paren_delta(line: &str) -> i32 {
         ')' => depth - 1,
         _ => depth,
     })
-}
-
-fn closure_constant_usize(value: ClosureConstants) -> usize {
-    u32::from(value) as usize
 }
 
 #[derive(Default)]
@@ -2062,21 +2095,23 @@ fn float_operator_instruction(function: &str) -> &'static str {
     }
 }
 
-fn comparison_instruction(op: ir::ComparisonOp, prefix: &str) -> &'static str {
-    match (prefix, op) {
-        ("i64", ir::ComparisonOp::Less) => "i64.lt_s",
-        ("i64", ir::ComparisonOp::LessEqual) => "i64.le_s",
-        ("i64", ir::ComparisonOp::Greater) => "i64.gt_s",
-        ("i64", ir::ComparisonOp::GreaterEqual) => "i64.ge_s",
-        ("i32", ir::ComparisonOp::Less) => "i32.lt_s",
-        ("i32", ir::ComparisonOp::LessEqual) => "i32.le_s",
-        ("i32", ir::ComparisonOp::Greater) => "i32.gt_s",
-        ("i32", ir::ComparisonOp::GreaterEqual) => "i32.ge_s",
-        ("f64", ir::ComparisonOp::Less) => "f64.lt",
-        ("f64", ir::ComparisonOp::LessEqual) => "f64.le",
-        ("f64", ir::ComparisonOp::Greater) => "f64.gt",
-        ("f64", ir::ComparisonOp::GreaterEqual) => "f64.ge",
-        _ => unreachable!("unknown comparison instruction"),
+impl ir::ComparisonOp {
+    fn instruction(self, prefix: &str) -> &'static str {
+        match (prefix, self) {
+            ("i64", Self::Less) => "i64.lt_s",
+            ("i64", Self::LessEqual) => "i64.le_s",
+            ("i64", Self::Greater) => "i64.gt_s",
+            ("i64", Self::GreaterEqual) => "i64.ge_s",
+            ("i32", Self::Less) => "i32.lt_s",
+            ("i32", Self::LessEqual) => "i32.le_s",
+            ("i32", Self::Greater) => "i32.gt_s",
+            ("i32", Self::GreaterEqual) => "i32.ge_s",
+            ("f64", Self::Less) => "f64.lt",
+            ("f64", Self::LessEqual) => "f64.le",
+            ("f64", Self::Greater) => "f64.gt",
+            ("f64", Self::GreaterEqual) => "f64.ge",
+            _ => unreachable!("unknown comparison instruction"),
+        }
     }
 }
 
@@ -2086,52 +2121,56 @@ fn constructor_tag(name: &str) -> u32 {
     })
 }
 
-fn bit_array_bytes(bit_array: &ir::BitArrayLiteral) -> Vec<u8> {
-    let mut bytes = vec![0; runtime::bit_array_payload_len(bit_array.bit_len) as usize];
-    let mut offset = 0;
-    for segment in &bit_array.segments {
-        for bit_index in 0..segment.bit_size {
-            let source_shift = segment.bit_size - bit_index - 1;
-            let bit = if source_shift < u64::BITS { (segment.value >> source_shift) & 1 } else { 0 };
-            if bit == 1 {
-                let byte = &mut bytes[(offset / 8) as usize];
-                let target_shift = 7 - offset % 8;
-                *byte |= 1 << target_shift;
+impl ir::BitArrayLiteral {
+    fn bytes(&self) -> Vec<u8> {
+        let mut bytes = vec![0; runtime::bit_array_payload_len(self.bit_len) as usize];
+        let mut offset = 0;
+        for segment in &self.segments {
+            for bit_index in 0..segment.bit_size {
+                let source_shift = segment.bit_size - bit_index - 1;
+                let bit = if source_shift < u64::BITS { (segment.value >> source_shift) & 1 } else { 0 };
+                if bit == 1 {
+                    let byte = &mut bytes[(offset / 8) as usize];
+                    let target_shift = 7 - offset % 8;
+                    *byte |= 1 << target_shift;
+                }
+                offset += 1;
             }
-            offset += 1;
         }
+        bytes
     }
-    bytes
 }
 
-fn is_supported_host_abi_type(type_: &Type) -> bool {
-    matches!(
-        type_,
-        Type::Int
-            | Type::Float
-            | Type::Bool
-            | Type::String
-            | Type::BitArray
-            | Type::Tuple(_)
-            | Type::List(_)
-            | Type::Record { .. }
-            | Type::Custom { .. }
-            | Type::Function { .. }
-    )
-}
+impl Type {
+    fn is_supported_host_abi_type(&self) -> bool {
+        matches!(
+            self,
+            Self::Int
+                | Self::Float
+                | Self::Bool
+                | Self::String
+                | Self::BitArray
+                | Self::Tuple(_)
+                | Self::List(_)
+                | Self::Record { .. }
+                | Self::Custom { .. }
+                | Self::Function { .. }
+        )
+    }
 
-fn wasm_type(type_: &Type) -> Option<&'static str> {
-    match type_ {
-        Type::Int => Some("i64"),
-        Type::Float => Some("f64"),
-        Type::Bool | Type::String | Type::BitArray => Some("i32"),
-        Type::Tuple(_)
-        | Type::List(_)
-        | Type::Record { .. }
-        | Type::Custom { .. }
-        | Type::Opaque { .. }
-        | Type::Function { .. } => Some("i32"),
-        Type::Nil | Type::Generic(_) => None,
+    fn wasm_type(&self) -> Option<&'static str> {
+        match self {
+            Self::Int => Some("i64"),
+            Self::Float => Some("f64"),
+            Self::Bool | Self::String | Self::BitArray => Some("i32"),
+            Self::Tuple(_)
+            | Self::List(_)
+            | Self::Record { .. }
+            | Self::Custom { .. }
+            | Self::Opaque { .. }
+            | Self::Function { .. } => Some("i32"),
+            Self::Nil | Self::Generic(_) => None,
+        }
     }
 }
 
@@ -2158,7 +2197,7 @@ mod tests {
         let resolved = resolve::resolve(ast).expect("resolve names");
         let typed = types::check(resolved).expect("type check source");
         let ir = ir::lower(typed).expect("lower source");
-        emit(&ir).expect("emit wasm")
+        ir.emit_wasm().expect("emit wasm")
     }
 
     fn compile_wasm_target(source: &str, target: CompileTarget) -> Result<WasmModule, Diagnostics> {
@@ -2295,10 +2334,108 @@ mod tests {
     }
 
     #[test]
+    fn renders_deterministic_structured_wat_for_managed_values() {
+        let wasm = compile_wasm("pub fn pair() { #(1, 2) }");
+
+        insta::assert_snapshot!(wasm.wat, @r#"
+(module
+  (type (func (result i32)))
+  (memory 1)
+  (func $pair (type 0) (result i32)
+    i32.const 1024
+  )
+  (export "pair" (func 0))
+  (export "memory" (memory 0))
+  (data (memory 0) (offset i32.const 1024) "\u{3}\0\0\0\u{2}\0\0\0\u{1}\0\0\0\0\0\0\0\u{2}\0\0\0\0\0\0\0")
+)
+"#);
+    }
+
+    fn invalid_structured_module(span: Span, body: Vec<builder::Instruction>) -> builder::Module {
+        let mut module = builder::Module::new();
+        module.source_span = Some(span);
+        let type_id = module.push_type(builder::FunctionType::new([], [builder::ValueType::I64]));
+        let mut function = builder::Function::new(type_id);
+        function.body = body;
+        module.push_function(function);
+        module
+    }
+
+    fn assert_source_spanned_wasm_error(module: builder::Module, expected: &str, span: Span) {
+        let errors = module
+            .structured_wat()
+            .expect_err("invalid module should fail before byte emission");
+        assert!(
+            errors.iter().any(|diagnostic| diagnostic.message.contains(expected)),
+            "{errors:?}"
+        );
+        assert!(
+            errors
+                .iter()
+                .any(|diagnostic| diagnostic.labels.iter().any(|label| label.span == span)),
+            "{errors:?}"
+        );
+    }
+
+    #[test]
+    fn backend_validation_reports_source_spanned_stack_diagnostics() {
+        let span = Span::new(SourceFileId(0), 5, 9);
+        let module = invalid_structured_module(span, vec![builder::Instruction::I32Const(1)]);
+
+        assert_source_spanned_wasm_error(module, "leaves stack", span);
+    }
+
+    #[test]
+    fn backend_validation_reports_source_spanned_signature_diagnostics() {
+        let span = Span::new(SourceFileId(0), 10, 14);
+        let mut module = invalid_structured_module(
+            span,
+            vec![builder::Instruction::Call {
+                function: builder::FunctionId(0),
+                type_: builder::FunctionType::new([], [builder::ValueType::I32]),
+            }],
+        );
+        module.functions[0].body.push(builder::Instruction::I64Const(0));
+
+        assert_source_spanned_wasm_error(module, "call to function 0 has signature", span);
+    }
+
+    #[test]
+    fn backend_validation_reports_source_spanned_local_diagnostics() {
+        let span = Span::new(SourceFileId(0), 15, 20);
+        let module = invalid_structured_module(
+            span,
+            vec![builder::Instruction::LocalGet { local: builder::LocalId(9), type_: builder::ValueType::I64 }],
+        );
+
+        assert_source_spanned_wasm_error(module, "unknown local index", span);
+    }
+
+    #[test]
+    fn backend_validation_reports_source_spanned_target_adapter_diagnostics() {
+        let module = host_import_module(Span::new(SourceFileId(0), 21, 30));
+        let errors = module
+            .emit_wat_with_options(EmitOptions::new(WasmTarget::Browser))
+            .expect_err("unsupported target import");
+
+        assert!(
+            errors
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains("target Browser expects `browser`"))
+        );
+        assert!(errors.iter().any(|diagnostic| {
+            diagnostic
+                .labels
+                .iter()
+                .any(|label| label.span == Span::new(SourceFileId(0), 21, 30))
+        }));
+    }
+
+    #[test]
     fn emits_host_import_before_exported_function() {
         let module = host_import_module(Span::new(SourceFileId(0), 0, 0));
 
-        insta::assert_snapshot!(emit_wat(&module).expect("emit wat"), @r#"
+        insta::assert_snapshot!(module.emit_wat().expect("emit wat"), @r#"
 (module
   (type (func (param i64) (result i64)))
   (type (func (result i64)))
@@ -2314,7 +2451,9 @@ mod tests {
 
     #[test]
     fn runs_host_import_in_wasmtime() {
-        let wasm = emit(&host_import_module(Span::new(SourceFileId(0), 0, 0))).expect("emit wasm");
+        let wasm = host_import_module(Span::new(SourceFileId(0), 0, 0))
+            .emit_wasm()
+            .expect("emit wasm");
         let engine = Engine::default();
         let module = Module::new(&engine, &wasm.bytes).expect("compile wasm module");
         let mut store = Store::new(&engine, ());
@@ -2352,7 +2491,8 @@ mod tests {
     fn rejects_host_imports_for_the_wrong_target_before_assembly() {
         let span = Span::new(SourceFileId(0), 0, 0);
         let module = host_import_module(span);
-        let diagnostics = emit_wat_with_options(&module, EmitOptions { target: WasmTarget::Browser })
+        let diagnostics = module
+            .emit_wat_with_options(EmitOptions::new(WasmTarget::Browser))
             .expect_err("unsupported target import");
 
         assert!(
@@ -2389,7 +2529,7 @@ mod tests {
             },
             span,
         };
-        let diagnostics = emit_wat(&ir_module(vec![function], span)).expect_err("unsupported ABI");
+        let diagnostics = ir_module(vec![function], span).emit_wat().expect_err("unsupported ABI");
 
         assert!(
             diagnostics
@@ -2427,7 +2567,9 @@ mod tests {
             },
             span,
         };
-        let diagnostics = emit_wat(&ir_module(vec![function], span)).expect_err("residual use should fail");
+        let diagnostics = ir_module(vec![function], span)
+            .emit_wat()
+            .expect_err("residual use should fail");
 
         assert!(
             diagnostics
@@ -3718,7 +3860,8 @@ pub fn same() { "hi" == "hi" }
 
     fn runtime_helper_instance_with_memory(extra_wat: &str, memory_wat: &str) -> (Engine, Store<()>, Instance) {
         let roots = runtime_helper_roots(extra_wat);
-        let prelude = runtime_prelude(runtime::RuntimeConfig::DEFAULT, &roots)
+        let prelude = runtime::RuntimeConfig::DEFAULT
+            .runtime_prelude(&roots)
             .replace("  (memory (export \"memory\") 1)", memory_wat);
         let wat = format!("(module\n{prelude}{extra_wat})\n");
         let bytes = wat::parse_str(&wat).expect("parse runtime helper wat");

@@ -66,6 +66,12 @@ impl RuntimeConfig {
     pub const DEFAULT: Self = Self { layout: Layout::DEFAULT, static_data_start: 1024, heap_start: 4096 };
 }
 
+impl Default for RuntimeConfig {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ObjectTag {
     String,

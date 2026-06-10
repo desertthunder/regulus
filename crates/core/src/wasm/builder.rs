@@ -7,6 +7,8 @@
 
 use std::fmt;
 
+use crate::source::Span;
+
 use super::{
     binary::BinaryEmitter,
     validator::{ValidationResult, Validator},
@@ -14,6 +16,7 @@ use super::{
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(crate) struct Module {
+    pub(crate) source_span: Option<Span>,
     pub(crate) types: Vec<FunctionType>,
     pub(crate) imports: Vec<Import>,
     pub(crate) functions: Vec<Function>,
