@@ -81,13 +81,13 @@ Support useful standard library modules and host calls.
 
 ### Higher-order intrinsics and runtime callbacks
 
-- [ ] Define one closure-callback ABI for compiler intrinsics, runtime helpers,
+- [x] Define one closure-callback ABI for compiler intrinsics, runtime helpers,
       and compiler-generated adapters.
-- [ ] Lower intrinsics that invoke user closures through IR or generated
+- [x] Lower intrinsics that invoke user closures through IR or generated
       closure adapters, not bespoke WAT callback code.
-- [ ] Reuse ordinary closure capture layout, indirect-call dispatch, type
+- [x] Reuse ordinary closure capture layout, indirect-call dispatch, type
       checks, and result ABI for intrinsic callbacks.
-- [ ] Support callback-taking stdlib functions such as `list.map`,
+- [x] Support callback-taking stdlib functions such as `list.map`,
       `list.fold`, `result.map`, `option.map`, `function.compose`, and
       `function.flip` through the shared mechanism.
 - [ ] Add diagnostics for unsupported callback parameter, return, capture, or

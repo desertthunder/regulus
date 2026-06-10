@@ -160,19 +160,9 @@ browser-host profile with a distinct adapter contract.
 ## Higher-order intrinsics and runtime callbacks
 
 Compiler/runtime intrinsics must support the same closure semantics as ordinary
-Gleam code. This includes passing closures into stdlib functions, storing them
-inside managed values, invoking captured closures from compiler-generated
-helper code, and preserving argument and return ABI rules.
-
-Plain runtime WAT helpers should not invent a second closure calling convention.
-Any intrinsic that needs to call a user function must either lower to IR that
-uses normal indirect-call dispatch, or call through a compiler-generated closure
-adapter with the same capture layout and type checks as ordinary closures.
-
-This applies beyond dynamic decoding. Higher-order stdlib members such as
-`list.map`, `list.fold`, `result.map`, `option.map`, `function.compose`,
-`function.flip`, and future host adapters must use this shared mechanism rather
-than bespoke per-helper callback code.
+Gleam code. The shared callback ABI, lowering rule, reuse requirements, and
+callback-taking stdlib members are defined in
+[Closures and intrinsic callbacks](../development/closures.md).
 
 Unsupported callback shapes should be rejected before WAT assembly with a
 source-spanned diagnostic naming the intrinsic, closure type, and ABI shape.

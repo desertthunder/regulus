@@ -230,6 +230,7 @@ struct Emitter {
     function_order: Vec<String>,
     function_signatures: HashMap<String, (Vec<Type>, Type)>,
     closure_captures: HashMap<String, Vec<Type>>,
+    local_types: HashMap<ir::LocalId, Type>,
     current: CurrentEmission,
     debug_imports: HashSet<DebugImport>,
     options: EmitOptions,
@@ -249,10 +250,38 @@ impl Default for Emitter {
             function_order: Vec::new(),
             function_signatures: HashMap::new(),
             closure_captures: HashMap::new(),
+            local_types: HashMap::new(),
             current: CurrentEmission::default(),
             debug_imports: HashSet::new(),
             options: EmitOptions::default(),
         }
+    }
+}
+
+#[derive(Clone)]
+struct PatternSubject<'a> {
+    root: &'a ir::Expression,
+    path: Vec<usize>,
+}
+
+impl<'a> PatternSubject<'a> {
+    fn field(&self, offset: usize) -> Self {
+        let mut path = self.path.clone();
+        path.push(offset);
+        Self { root: self.root, path }
+    }
+
+    fn list_element(&self, index: usize) -> Self {
+        let mut path = self.path.clone();
+        path.extend(std::iter::repeat_n(16, index));
+        path.push(8);
+        Self { root: self.root, path }
+    }
+
+    fn list_tail(&self, elements: usize) -> Self {
+        let mut path = self.path.clone();
+        path.extend(std::iter::repeat_n(16, elements));
+        Self { root: self.root, path }
     }
 }
 
@@ -337,6 +366,12 @@ impl Emitter {
             return;
         }
 
+        self.local_types = function
+            .locals
+            .iter()
+            .map(|local| (local.id, local.type_.clone()))
+            .collect();
+
         let return_type = match function.return_type.wasm_type() {
             Some(return_type) => return_type,
             None if function.return_type == Type::Nil => "",
@@ -405,6 +440,7 @@ impl Emitter {
 
         self.block(&function.body);
         self.current = previous_current;
+        self.local_types.clear();
         self.functions.push_str("  )\n");
         self.export_adapters(function);
     }
@@ -507,7 +543,7 @@ impl Emitter {
             }
             ExpressionKind::AnonymousFunction(function) => self.closure_allocation(function, expression.span),
             ExpressionKind::ListCons { head, tail } => {
-                self.expression(head);
+                self.expression_slot_bits(head, &head.type_);
                 self.expression(tail);
                 writeln!(self.functions, "    call $__list_cons").expect("write WAT");
                 self.uses_runtime = true;
@@ -1276,105 +1312,202 @@ impl Emitter {
     }
 
     fn bind_pattern_values(&mut self, subject: &ir::Expression, pattern: &ir::IrPattern) {
+        self.bind_pattern_subject(&PatternSubject { root: subject, path: Vec::new() }, pattern);
+    }
+
+    fn bind_pattern_subject(&mut self, subject: &PatternSubject<'_>, pattern: &ir::IrPattern) {
         match pattern {
-            ir::IrPattern::Binding(local) => {
-                self.expression(subject);
-                writeln!(self.functions, "    local.set ${}", local.0).expect("write WAT");
-            }
+            ir::IrPattern::Binding(local) => self.bind_subject_to_local(subject, *local),
             ir::IrPattern::Alias { pattern, local } => {
-                self.bind_pattern_values(subject, pattern);
-                self.expression(subject);
-                writeln!(self.functions, "    local.set ${}", local.0).expect("write WAT");
+                self.bind_pattern_subject(subject, pattern);
+                self.bind_subject_to_local(subject, *local);
             }
             ir::IrPattern::Tuple(elements) => {
                 for (index, element) in elements.iter().enumerate() {
-                    self.bind_managed_pattern_field(subject, element, 8 + index * 8);
+                    self.bind_pattern_subject(&subject.field(8 + index * 8), element);
                 }
             }
             ir::IrPattern::List { elements, tail } => {
-                if let Some(head) = elements.first() {
-                    self.bind_managed_pattern_field(subject, head, 8);
+                for (index, element) in elements.iter().enumerate() {
+                    self.bind_pattern_subject(&subject.list_element(index), element);
                 }
                 if let Some(local) = tail {
-                    self.expression(subject);
-                    writeln!(self.functions, "    i32.const 16").expect("write WAT");
-                    writeln!(self.functions, "    i32.add").expect("write WAT");
-                    writeln!(self.functions, "    i32.load").expect("write WAT");
-                    writeln!(self.functions, "    local.set ${}", local.0).expect("write WAT");
+                    self.bind_subject_to_local(&subject.list_tail(elements.len()), *local);
                 }
             }
             ir::IrPattern::Constructor { arguments, .. } => {
                 for (index, argument) in arguments.iter().enumerate() {
-                    self.bind_managed_pattern_field(subject, &argument.pattern, 12 + index * 8);
+                    self.bind_pattern_subject(&subject.field(12 + index * 8), &argument.pattern);
                 }
             }
             ir::IrPattern::Discard | ir::IrPattern::Literal(_) => {}
-            ir::IrPattern::BitString(segments) => self.bind_bit_string_pattern(subject, segments),
+            ir::IrPattern::BitString(segments) if subject.path.is_empty() => {
+                self.bind_bit_string_pattern(subject.root, segments)
+            }
+            ir::IrPattern::BitString(_) => {}
         }
     }
 
-    fn bind_managed_pattern_field(&mut self, subject: &ir::Expression, pattern: &ir::IrPattern, offset: usize) {
-        match pattern {
-            ir::IrPattern::Binding(local) => {
-                self.expression(subject);
-                writeln!(self.functions, "    i32.const {offset}").expect("write WAT");
-                writeln!(self.functions, "    i32.add").expect("write WAT");
-                writeln!(self.functions, "    i64.load").expect("write WAT");
-                writeln!(self.functions, "    local.set ${}", local.0).expect("write WAT");
-            }
-            ir::IrPattern::Alias { pattern, local } => {
-                self.bind_managed_pattern_field(subject, pattern, offset);
-                self.expression(subject);
-                writeln!(self.functions, "    local.set ${}", local.0).expect("write WAT");
-            }
-            _ => {}
+    fn bind_subject_to_local(&mut self, subject: &PatternSubject<'_>, local: ir::LocalId) {
+        if subject.path.is_empty() {
+            self.expression(subject.root);
+        } else {
+            self.slot_address(subject);
+            self.load_slot_for_local(local);
+        }
+        writeln!(self.functions, "    local.set ${}", local.0).expect("write WAT");
+    }
+
+    fn load_slot_for_local(&mut self, local: ir::LocalId) {
+        match self.local_types.get(&local).unwrap_or(&Type::Int) {
+            Type::Int => writeln!(self.functions, "    i64.load").expect("write WAT"),
+            Type::Float => writeln!(self.functions, "    f64.load").expect("write WAT"),
+            Type::Nil => writeln!(self.functions, "    i32.const 0").expect("write WAT"),
+            _ => writeln!(self.functions, "    i32.load").expect("write WAT"),
         }
     }
 
     fn pattern_test(&mut self, subject: &ir::Expression, pattern: &ir::IrPattern, span: crate::source::Span) {
+        self.pattern_test_subject(&PatternSubject { root: subject, path: Vec::new() }, pattern, span);
+    }
+
+    fn pattern_test_subject(
+        &mut self, subject: &PatternSubject<'_>, pattern: &ir::IrPattern, span: crate::source::Span,
+    ) {
         match pattern {
             ir::IrPattern::Discard | ir::IrPattern::Binding(_) => {
                 writeln!(self.functions, "    i32.const 1").expect("write WAT");
             }
-            ir::IrPattern::Alias { pattern, .. } => self.pattern_test(subject, pattern, span),
-            ir::IrPattern::Literal(literal) => {
-                self.expression(subject);
-                self.literal(literal);
-                match subject.type_ {
-                    Type::Int => writeln!(self.functions, "    i64.eq").expect("write WAT"),
-                    Type::Float => writeln!(self.functions, "    f64.eq").expect("write WAT"),
-                    Type::Bool => writeln!(self.functions, "    i32.eq").expect("write WAT"),
-                    Type::String => {
-                        writeln!(self.functions, "    call $__equal_value").expect("write WAT");
-                        self.uses_runtime = true;
-                    }
-                    Type::Nil => writeln!(self.functions, "    i32.const 1").expect("write WAT"),
-                    _ => self.diagnostics.push(
-                        Diagnostic::new(DiagnosticCode::WasmError, "pattern type is not supported")
-                            .with_label(Label::primary(span, "unsupported pattern here")),
-                    ),
+            ir::IrPattern::Alias { pattern, .. } => self.pattern_test_subject(subject, pattern, span),
+            ir::IrPattern::Literal(literal) => self.pattern_literal_test(subject, literal, span),
+            ir::IrPattern::Tuple(elements) => {
+                self.managed_tag_test_subject(subject, runtime::ObjectTag::Tuple, Some(elements.len() as u32));
+                for (index, element) in elements.iter().enumerate() {
+                    self.pattern_test_subject(&subject.field(8 + index * 8), element, span);
+                    writeln!(self.functions, "    i32.and").expect("write WAT");
                 }
             }
-            ir::IrPattern::Tuple(elements) => {
-                self.managed_tag_test(subject, runtime::ObjectTag::Tuple, Some(elements.len() as u32))
-            }
             ir::IrPattern::List { elements, .. } if elements.is_empty() => {
-                self.expression(subject);
+                self.subject_pointer(subject);
                 writeln!(self.functions, "    i32.eqz").expect("write WAT");
             }
-            ir::IrPattern::List { .. } => self.managed_tag_test(subject, runtime::ObjectTag::ListCons, None),
-            ir::IrPattern::Constructor { name, .. } => {
-                self.managed_tag_test(subject, runtime::ObjectTag::Custom, None);
-                self.expression(subject);
+            ir::IrPattern::List { elements, .. } => {
+                for index in 0..elements.len() {
+                    self.managed_tag_test_subject(&subject.list_tail(index), runtime::ObjectTag::ListCons, None);
+                    if index > 0 {
+                        writeln!(self.functions, "    i32.and").expect("write WAT");
+                    }
+                }
+                for (index, element) in elements.iter().enumerate() {
+                    self.pattern_test_subject(&subject.list_element(index), element, span);
+                    writeln!(self.functions, "    i32.and").expect("write WAT");
+                }
+            }
+            ir::IrPattern::Constructor { name, arguments } => {
+                self.managed_tag_test_subject(subject, runtime::ObjectTag::Custom, None);
+                self.subject_pointer(subject);
                 writeln!(self.functions, "    i32.const 8").expect("write WAT");
                 writeln!(self.functions, "    i32.add").expect("write WAT");
                 writeln!(self.functions, "    i32.load").expect("write WAT");
                 writeln!(self.functions, "    i32.const {}", constructor_tag(name)).expect("write WAT");
                 writeln!(self.functions, "    i32.eq").expect("write WAT");
                 writeln!(self.functions, "    i32.and").expect("write WAT");
+                for (index, argument) in arguments.iter().enumerate() {
+                    self.pattern_test_subject(&subject.field(12 + index * 8), &argument.pattern, span);
+                    writeln!(self.functions, "    i32.and").expect("write WAT");
+                }
             }
-            ir::IrPattern::BitString(segments) => self.bit_string_pattern_test(subject, segments, span),
+            ir::IrPattern::BitString(segments) if subject.path.is_empty() => {
+                self.bit_string_pattern_test(subject.root, segments, span)
+            }
+            ir::IrPattern::BitString(_) => {
+                self.diagnostics.push(
+                    Diagnostic::new(DiagnosticCode::WasmError, "nested bit-string pattern is not supported")
+                        .with_label(Label::primary(span, "unsupported pattern here")),
+                );
+                writeln!(self.functions, "    i32.const 0").expect("write WAT");
+            }
         }
+    }
+
+    fn pattern_literal_test(&mut self, subject: &PatternSubject<'_>, literal: &ir::Literal, span: crate::source::Span) {
+        if subject.path.is_empty() {
+            self.expression(subject.root);
+        } else {
+            self.slot_address(subject);
+            self.load_slot_for_literal(literal);
+        }
+        self.literal(literal);
+        match literal.kind {
+            LiteralKind::Int => writeln!(self.functions, "    i64.eq").expect("write WAT"),
+            LiteralKind::Float => writeln!(self.functions, "    f64.eq").expect("write WAT"),
+            LiteralKind::Bool => writeln!(self.functions, "    i32.eq").expect("write WAT"),
+            LiteralKind::String => {
+                writeln!(self.functions, "    call $__equal_value").expect("write WAT");
+                self.uses_runtime = true;
+            }
+            LiteralKind::Nil => writeln!(self.functions, "    i32.const 1").expect("write WAT"),
+        }
+        if matches!(literal.kind, LiteralKind::Nil) && !subject.path.is_empty() {
+            self.diagnostics.push(
+                Diagnostic::new(
+                    DiagnosticCode::WasmError,
+                    "nil literal pattern in managed slot is not supported",
+                )
+                .with_label(Label::primary(span, "unsupported pattern here")),
+            );
+        }
+    }
+
+    fn load_slot_for_literal(&mut self, literal: &ir::Literal) {
+        match literal.kind {
+            LiteralKind::Int => writeln!(self.functions, "    i64.load").expect("write WAT"),
+            LiteralKind::Float => writeln!(self.functions, "    f64.load").expect("write WAT"),
+            LiteralKind::Bool | LiteralKind::String => writeln!(self.functions, "    i32.load").expect("write WAT"),
+            LiteralKind::Nil => writeln!(self.functions, "    i64.load").expect("write WAT"),
+        }
+    }
+
+    fn managed_tag_test_subject(&mut self, subject: &PatternSubject<'_>, tag: runtime::ObjectTag, size: Option<u32>) {
+        self.subject_pointer(subject);
+        writeln!(self.functions, "    i32.const 0").expect("write WAT");
+        writeln!(self.functions, "    i32.add").expect("write WAT");
+        writeln!(self.functions, "    i32.load").expect("write WAT");
+        writeln!(self.functions, "    i32.const {}", u32::from(tag)).expect("write WAT");
+        writeln!(self.functions, "    i32.eq").expect("write WAT");
+        if let Some(size) = size {
+            self.subject_pointer(subject);
+            writeln!(self.functions, "    i32.const 4").expect("write WAT");
+            writeln!(self.functions, "    i32.add").expect("write WAT");
+            writeln!(self.functions, "    i32.load").expect("write WAT");
+            writeln!(self.functions, "    i32.const {size}").expect("write WAT");
+            writeln!(self.functions, "    i32.eq").expect("write WAT");
+            writeln!(self.functions, "    i32.and").expect("write WAT");
+        }
+    }
+
+    fn subject_pointer(&mut self, subject: &PatternSubject<'_>) {
+        if subject.path.is_empty() {
+            self.expression(subject.root);
+            return;
+        }
+        self.slot_address(subject);
+        writeln!(self.functions, "    i32.load").expect("write WAT");
+    }
+
+    fn slot_address(&mut self, subject: &PatternSubject<'_>) {
+        let Some((last, parents)) = subject.path.split_last() else {
+            self.expression(subject.root);
+            return;
+        };
+        self.expression(subject.root);
+        for offset in parents {
+            writeln!(self.functions, "    i32.const {offset}").expect("write WAT");
+            writeln!(self.functions, "    i32.add").expect("write WAT");
+            writeln!(self.functions, "    i32.load").expect("write WAT");
+        }
+        writeln!(self.functions, "    i32.const {last}").expect("write WAT");
+        writeln!(self.functions, "    i32.add").expect("write WAT");
     }
 
     fn bit_string_pattern_test(
@@ -1632,6 +1765,16 @@ impl Emitter {
         }
     }
 
+    fn expression_slot_bits(&mut self, expression: &ir::Expression, type_: &Type) {
+        match type_ {
+            Type::Float => {
+                self.expression(expression);
+                writeln!(self.functions, "    i64.reinterpret_f64").expect("write WAT");
+            }
+            _ => self.expression_slot_value(expression, type_),
+        }
+    }
+
     fn source_slot_value(&mut self, source: &str, offset: usize, type_: &Type) {
         match type_ {
             Type::Nil => writeln!(self.functions, "    i64.const 0").expect("write WAT"),
@@ -1702,7 +1845,7 @@ impl Emitter {
                 LiteralKind::Bool => Some(if literal.source == "True" { 1 } else { 0 }),
                 LiteralKind::Nil => Some(0),
                 LiteralKind::String => Some(self.static_string(&literal.source) as u64),
-                LiteralKind::Float => None,
+                LiteralKind::Float => literal.source.parse::<f64>().ok().map(f64::to_bits),
             },
             ExpressionKind::BitArray(bit_array) => Some(self.static_bit_array(bit_array) as u64),
             ExpressionKind::Tuple(items) => Some(self.static_tuple(items) as u64),
@@ -3614,6 +3757,126 @@ pub fn decoded_int() -> Int {
             .expect("get decoded_int export");
 
         assert_eq!(decoded_int.call(&mut store, ()).expect("call decoded_int"), 42);
+    }
+
+    #[test]
+    fn runs_higher_order_stdlib_intrinsics() {
+        let wasm = compile_wasm(
+            r#"import gleam/function
+import gleam/list
+import gleam/option.{Some}
+import gleam/result.{Ok, Error}
+import gleam/string
+
+pub fn mapped_head() -> Int {
+  case list.map([1], fn(x) { x + 1 }) {
+    [x] -> x
+    _ -> 0
+  }
+}
+
+pub fn folded() -> Int {
+  list.fold([1, 2, 3], 0, fn(acc, x) { acc + x })
+}
+
+pub fn option_mapped() -> Int {
+  case option.map(Some(4), fn(x) { x + 3 }) {
+    Some(x) -> x
+    _ -> 0
+  }
+}
+
+pub fn result_mapped() -> Int {
+  case result.map(Ok(4), fn(x) { x + 5 }) {
+    Ok(x) -> x
+    Error(e) -> e
+  }
+}
+
+pub fn composed() -> Int {
+  let add1 = fn(x) { x + 1 }
+  let double = fn(x) { x * 2 }
+  let f = function.compose(add1, double)
+  f(4)
+}
+
+pub fn flipped() -> Int {
+  let sub = fn(a, b) { a - b }
+  let f = function.flip(sub)
+  f(3, 10)
+}
+
+pub fn string_mapped_length() -> Int {
+  case list.map(["a"], fn(x) { x <> "bc" }) {
+    [x] -> string.length(x)
+    _ -> 0
+  }
+}
+
+pub fn option_string_length() -> Int {
+  case option.map(Some("a"), fn(x) { x <> "bc" }) {
+    Some(x) -> string.length(x)
+    _ -> 0
+  }
+}
+
+pub fn result_string_length() -> Int {
+  case result.map(Ok("a"), fn(x) { x <> "bc" }) {
+    Ok(x) -> string.length(x)
+    Error(e) -> string.length(e)
+  }
+}
+
+pub fn nested_list_string_length() -> Int {
+  case list.map([["a"]], fn(xs) { xs }) {
+    [[x]] -> string.length(x)
+    _ -> 0
+  }
+}
+
+pub fn nested_option_string_length() -> Int {
+  case option.map(Some("a"), fn(x) { Some(x) }) {
+    Some(Some(x)) -> string.length(x)
+    _ -> 0
+  }
+}
+
+pub fn float_mapped_value() -> Float {
+  case list.map([1.0], fn(x) { x +. 1.5 }) {
+    [x] -> x
+    _ -> 0.0
+  }
+}
+"#,
+        );
+
+        let engine = Engine::default();
+        let module = Module::new(&engine, &wasm.bytes).expect("compile wasm module");
+        let mut store = Store::new(&engine, ());
+        let instance = Instance::new(&mut store, &module, &[]).expect("instantiate module");
+        for (name, expected) in [
+            ("mapped_head", 2),
+            ("folded", 6),
+            ("option_mapped", 7),
+            ("result_mapped", 9),
+            ("composed", 9),
+            ("flipped", 7),
+            ("string_mapped_length", 3),
+            ("option_string_length", 3),
+            ("result_string_length", 3),
+            ("nested_list_string_length", 1),
+            ("nested_option_string_length", 1),
+        ] {
+            let function = instance
+                .get_typed_func::<(), i64>(&mut store, name)
+                .expect("get export");
+            assert_eq!(function.call(&mut store, ()).expect("call export"), expected, "{name}");
+        }
+
+        let float_mapped = instance
+            .get_typed_func::<(), f64>(&mut store, "float_mapped_value")
+            .expect("get float_mapped_value export");
+        assert_eq!(float_mapped.call(&mut store, ()).expect("call export"), 2.5);
     }
 
     #[test]

@@ -922,6 +922,10 @@ impl Lowerer {
 
     fn lower_call(&mut self, context: &mut FunctionContext, call: &ast::Call) -> Option<Expression> {
         if let Some(stdlib_call) = stdlib_call(&self.module.resolved.ast, &call.function) {
+            if let Some(expression) = self.lower_higher_order_stdlib_call(context, call, &stdlib_call) {
+                return Some(expression);
+            }
+
             if !matches!(
                 stdlib_call.strategy,
                 MemberStrategy::Intrinsic | MemberStrategy::HostImport
@@ -992,6 +996,523 @@ impl Lowerer {
                 abi: call_abi(&callee_type, CallBoundary::Internal),
             }),
         })
+    }
+
+    fn lower_higher_order_stdlib_call(
+        &mut self, context: &mut FunctionContext, call: &ast::Call, stdlib_call: &StdlibCall,
+    ) -> Option<Expression> {
+        match (stdlib_call.module.as_str(), stdlib_call.member.as_str()) {
+            ("gleam/list", "map") => self.lower_list_map(context, call),
+            ("gleam/list", "fold") => self.lower_list_fold(context, call),
+            ("gleam/result", "map") => self.lower_result_map(context, call),
+            ("gleam/option", "map") => self.lower_option_map(context, call),
+            ("gleam/function", "compose") => self.lower_function_compose(context, call),
+            ("gleam/function", "flip") => self.lower_function_flip(context, call),
+            _ => None,
+        }
+    }
+
+    fn lower_list_map(&mut self, context: &mut FunctionContext, call: &ast::Call) -> Option<Expression> {
+        let arguments = self.lower_ordered_call_arguments(context, call)?;
+        let list_type = arguments[0].value.type_.clone();
+        let callback_type = arguments[1].value.type_.clone();
+        let Type::List(input_type) = list_type.clone() else { return None };
+        let Type::Function { params: _, return_type } = callback_type.clone() else { return None };
+        let output_type = *return_type;
+        let adapter = self.list_map_adapter(&input_type, &output_type, &callback_type, call.span);
+        let return_type = list(output_type);
+        Some(Expression {
+            type_: return_type.clone(),
+            span: call.span,
+            kind: ExpressionKind::DirectCall(DirectCall {
+                function: adapter,
+                arguments,
+                abi: call_abi(
+                    &Type::Function { params: vec![list_type, callback_type], return_type: Box::new(return_type) },
+                    CallBoundary::Internal,
+                ),
+            }),
+        })
+    }
+
+    fn lower_list_fold(&mut self, context: &mut FunctionContext, call: &ast::Call) -> Option<Expression> {
+        let arguments = self.lower_ordered_call_arguments(context, call)?;
+        let list_type = arguments[0].value.type_.clone();
+        let acc_type = arguments[1].value.type_.clone();
+        let callback_type = arguments[2].value.type_.clone();
+        let Type::List(input_type) = list_type.clone() else { return None };
+        let adapter = self.list_fold_adapter(
+            (*input_type).clone(),
+            acc_type.clone(),
+            callback_type.clone(),
+            call.span,
+        );
+        Some(Expression {
+            type_: acc_type.clone(),
+            span: call.span,
+            kind: ExpressionKind::DirectCall(DirectCall {
+                function: adapter,
+                arguments,
+                abi: call_abi(
+                    &Type::Function {
+                        params: vec![list_type, acc_type.clone(), callback_type],
+                        return_type: Box::new(acc_type),
+                    },
+                    CallBoundary::Internal,
+                ),
+            }),
+        })
+    }
+
+    fn lower_option_map(&mut self, context: &mut FunctionContext, call: &ast::Call) -> Option<Expression> {
+        let arguments = self.lower_ordered_call_arguments(context, call)?;
+        let option_type = arguments[0].value.type_.clone();
+        let callback_type = arguments[1].value.type_.clone();
+        let Type::Custom { name, args } = option_type.clone() else { return None };
+        if name != "Option" || args.len() != 1 {
+            return None;
+        }
+        let Type::Function { return_type, .. } = callback_type.clone() else { return None };
+        let return_type = option(*return_type);
+        let adapter = self.option_map_adapter(args[0].clone(), return_type.clone(), callback_type.clone(), call.span);
+        Some(Expression {
+            type_: return_type.clone(),
+            span: call.span,
+            kind: ExpressionKind::DirectCall(DirectCall {
+                function: adapter,
+                arguments,
+                abi: call_abi(
+                    &Type::Function { params: vec![option_type, callback_type], return_type: Box::new(return_type) },
+                    CallBoundary::Internal,
+                ),
+            }),
+        })
+    }
+
+    fn lower_result_map(&mut self, context: &mut FunctionContext, call: &ast::Call) -> Option<Expression> {
+        let arguments = self.lower_ordered_call_arguments(context, call)?;
+        let result_type = arguments[0].value.type_.clone();
+        let callback_type = arguments[1].value.type_.clone();
+        let Type::Custom { name, args } = result_type.clone() else { return None };
+        if name != "Result" || args.len() != 2 {
+            return None;
+        }
+        let Type::Function { return_type, .. } = callback_type.clone() else { return None };
+        let return_type = result(*return_type, args[1].clone());
+        let adapter = self.result_map_adapter(
+            args[0].clone(),
+            args[1].clone(),
+            return_type.clone(),
+            callback_type.clone(),
+            call.span,
+        );
+        Some(Expression {
+            type_: return_type.clone(),
+            span: call.span,
+            kind: ExpressionKind::DirectCall(DirectCall {
+                function: adapter,
+                arguments,
+                abi: call_abi(
+                    &Type::Function { params: vec![result_type, callback_type], return_type: Box::new(return_type) },
+                    CallBoundary::Internal,
+                ),
+            }),
+        })
+    }
+
+    fn lower_function_compose(&mut self, context: &mut FunctionContext, call: &ast::Call) -> Option<Expression> {
+        let arguments = self.lower_ordered_call_arguments(context, call)?;
+        let composed_type = self.typed_expression_type(call.span)?;
+        let Type::Function { params, return_type } = composed_type.clone() else { return None };
+        let input_type = params.first()?.clone();
+        let outer_local_count = context.locals.len();
+        context.push_scope();
+        let input = self.synthetic_local(context, "compose_input", input_type, call.span);
+        let g_call = Expression {
+            type_: match &arguments[1].value.type_ {
+                Type::Function { return_type, .. } => *return_type.clone(),
+                _ => return None,
+            },
+            span: call.span,
+            kind: ExpressionKind::IndirectCall(IndirectCall {
+                callee: Box::new(arguments[1].value.clone()),
+                arguments: vec![CallArgument { label: None, value: local_get(&input), span: call.span }],
+                abi: call_abi(&arguments[1].value.type_, CallBoundary::Internal),
+            }),
+        };
+        let body = Block {
+            instructions: Vec::new(),
+            result: Box::new(Expression {
+                type_: *return_type,
+                span: call.span,
+                kind: ExpressionKind::IndirectCall(IndirectCall {
+                    callee: Box::new(arguments[0].value.clone()),
+                    arguments: vec![CallArgument { label: None, value: g_call, span: call.span }],
+                    abi: call_abi(&arguments[0].value.type_, CallBoundary::Internal),
+                }),
+            }),
+            span: call.span,
+        };
+        context.pop_scope();
+        Some(closure::lower_synthetic_anonymous_function(
+            self,
+            context,
+            call.span,
+            outer_local_count,
+            vec![input],
+            body,
+            &composed_type,
+        ))
+    }
+
+    fn lower_function_flip(&mut self, context: &mut FunctionContext, call: &ast::Call) -> Option<Expression> {
+        let arguments = self.lower_ordered_call_arguments(context, call)?;
+        let flipped_type = self.typed_expression_type(call.span)?;
+        let Type::Function { params, return_type } = flipped_type.clone() else { return None };
+        if params.len() != 2 {
+            return None;
+        }
+        let outer_local_count = context.locals.len();
+        context.push_scope();
+        let first = self.synthetic_local(context, "flip_first", params[0].clone(), call.span);
+        let second = self.synthetic_local(context, "flip_second", params[1].clone(), call.span);
+        let body = Block {
+            instructions: Vec::new(),
+            result: Box::new(Expression {
+                type_: *return_type,
+                span: call.span,
+                kind: ExpressionKind::IndirectCall(IndirectCall {
+                    callee: Box::new(arguments[0].value.clone()),
+                    arguments: vec![
+                        CallArgument { label: None, value: local_get(&second), span: call.span },
+                        CallArgument { label: None, value: local_get(&first), span: call.span },
+                    ],
+                    abi: call_abi(&arguments[0].value.type_, CallBoundary::Internal),
+                }),
+            }),
+            span: call.span,
+        };
+        context.pop_scope();
+        Some(closure::lower_synthetic_anonymous_function(
+            self,
+            context,
+            call.span,
+            outer_local_count,
+            vec![first, second],
+            body,
+            &flipped_type,
+        ))
+    }
+
+    fn list_map_adapter(&mut self, input_type: &Type, output_type: &Type, callback_type: &Type, span: Span) -> String {
+        let name = self.next_anonymous_name();
+        let list_type = list(input_type.clone());
+        let return_type = list(output_type.clone());
+        let list_param = synthetic_param(0, "list", list_type.clone(), span);
+        let callback_param = synthetic_param(1, "callback", callback_type.clone(), span);
+        let head = synthetic_param(2, "head", input_type.clone(), span);
+        let tail = synthetic_param(3, "tail", list_type.clone(), span);
+        let mapped = Expression {
+            type_: output_type.clone(),
+            span,
+            kind: ExpressionKind::IndirectCall(IndirectCall {
+                callee: Box::new(local_get(&callback_param)),
+                arguments: vec![CallArgument { label: None, value: local_get(&head), span }],
+                abi: call_abi(callback_type, CallBoundary::Internal),
+            }),
+        };
+        let recurse = Expression {
+            type_: return_type.clone(),
+            span,
+            kind: ExpressionKind::DirectCall(DirectCall {
+                function: name.clone(),
+                arguments: vec![
+                    CallArgument { label: None, value: local_get(&tail), span },
+                    CallArgument { label: None, value: local_get(&callback_param), span },
+                ],
+                abi: call_abi(
+                    &Type::Function {
+                        params: vec![list_type.clone(), (*callback_type).clone()],
+                        return_type: Box::new(return_type.clone()),
+                    },
+                    CallBoundary::Internal,
+                ),
+            }),
+        };
+        let body = branch_function_body(
+            span,
+            &return_type,
+            local_get(&list_param),
+            vec![
+                (
+                    IrPattern::List { elements: Vec::new(), tail: None },
+                    Expression { type_: return_type.clone(), span, kind: ExpressionKind::List(Vec::new()) },
+                ),
+                (
+                    IrPattern::List { elements: vec![IrPattern::Binding(head.id)], tail: Some(tail.id) },
+                    Expression {
+                        type_: return_type.clone(),
+                        span,
+                        kind: ExpressionKind::ListCons { head: Box::new(mapped), tail: Box::new(recurse) },
+                    },
+                ),
+            ],
+        );
+        self.lifted_functions.push(Function {
+            name: name.clone(),
+            public: false,
+            closure_captures: Vec::new(),
+            params: vec![list_param.clone(), callback_param.clone()],
+            locals: vec![list_param, callback_param, head, tail],
+            return_type: return_type.clone(),
+            abi: call_abi(
+                &Type::Function {
+                    params: vec![list_type, (*callback_type).clone()],
+                    return_type: Box::new(return_type),
+                },
+                CallBoundary::Internal,
+            ),
+            body,
+            span,
+        });
+        name
+    }
+
+    fn list_fold_adapter(&mut self, input_type: Type, acc_type: Type, callback_type: Type, span: Span) -> String {
+        let name = self.next_anonymous_name();
+        let list_type = list(input_type.clone());
+        let list_param = synthetic_param(0, "list", list_type.clone(), span);
+        let acc_param = synthetic_param(1, "acc", acc_type.clone(), span);
+        let callback_param = synthetic_param(2, "callback", callback_type.clone(), span);
+        let head = synthetic_param(3, "head", input_type, span);
+        let tail = synthetic_param(4, "tail", list_type.clone(), span);
+        let next_acc = Expression {
+            type_: acc_type.clone(),
+            span,
+            kind: ExpressionKind::IndirectCall(IndirectCall {
+                callee: Box::new(local_get(&callback_param)),
+                arguments: vec![
+                    CallArgument { label: None, value: local_get(&acc_param), span },
+                    CallArgument { label: None, value: local_get(&head), span },
+                ],
+                abi: call_abi(&callback_type, CallBoundary::Internal),
+            }),
+        };
+        let recurse = Expression {
+            type_: acc_type.clone(),
+            span,
+            kind: ExpressionKind::DirectCall(DirectCall {
+                function: name.clone(),
+                arguments: vec![
+                    CallArgument { label: None, value: local_get(&tail), span },
+                    CallArgument { label: None, value: next_acc, span },
+                    CallArgument { label: None, value: local_get(&callback_param), span },
+                ],
+                abi: call_abi(
+                    &Type::Function {
+                        params: vec![list_type.clone(), acc_type.clone(), callback_type.clone()],
+                        return_type: Box::new(acc_type.clone()),
+                    },
+                    CallBoundary::Internal,
+                ),
+            }),
+        };
+        let body = branch_function_body(
+            span,
+            &acc_type,
+            local_get(&list_param),
+            vec![
+                (
+                    IrPattern::List { elements: Vec::new(), tail: None },
+                    local_get(&acc_param),
+                ),
+                (
+                    IrPattern::List { elements: vec![IrPattern::Binding(head.id)], tail: Some(tail.id) },
+                    recurse,
+                ),
+            ],
+        );
+        self.lifted_functions.push(Function {
+            name: name.clone(),
+            public: false,
+            closure_captures: Vec::new(),
+            params: vec![list_param.clone(), acc_param.clone(), callback_param.clone()],
+            locals: vec![list_param, acc_param, callback_param, head, tail],
+            return_type: acc_type.clone(),
+            abi: call_abi(
+                &Type::Function {
+                    params: vec![list_type, acc_type.clone(), callback_type],
+                    return_type: Box::new(acc_type),
+                },
+                CallBoundary::Internal,
+            ),
+            body,
+            span,
+        });
+        name
+    }
+
+    fn option_map_adapter(&mut self, input_type: Type, return_type: Type, callback_type: Type, span: Span) -> String {
+        let name = self.next_anonymous_name();
+        let option_param = synthetic_param(0, "option", option(input_type.clone()), span);
+        let callback_param = synthetic_param(1, "callback", callback_type.clone(), span);
+        let value = synthetic_param(2, "value", input_type, span);
+        let mapped = Expression {
+            type_: match &return_type {
+                Type::Custom { args, .. } => args[0].clone(),
+                _ => Type::Nil,
+            },
+            span,
+            kind: ExpressionKind::IndirectCall(IndirectCall {
+                callee: Box::new(local_get(&callback_param)),
+                arguments: vec![CallArgument { label: None, value: local_get(&value), span }],
+                abi: call_abi(&callback_type, CallBoundary::Internal),
+            }),
+        };
+        let body = branch_function_body(
+            span,
+            &return_type,
+            local_get(&option_param),
+            vec![
+                (
+                    IrPattern::Constructor {
+                        name: "Some".into(),
+                        arguments: vec![ConstructorPatternArgument {
+                            label: None,
+                            pattern: IrPattern::Binding(value.id),
+                            span,
+                        }],
+                    },
+                    Expression {
+                        type_: return_type.clone(),
+                        span,
+                        kind: ExpressionKind::Constructor(ConstructorValue {
+                            name: "Some".into(),
+                            arguments: vec![mapped],
+                        }),
+                    },
+                ),
+                (
+                    IrPattern::Constructor { name: "None".into(), arguments: Vec::new() },
+                    Expression {
+                        type_: return_type.clone(),
+                        span,
+                        kind: ExpressionKind::Constructor(ConstructorValue {
+                            name: "None".into(),
+                            arguments: Vec::new(),
+                        }),
+                    },
+                ),
+            ],
+        );
+        self.lifted_functions.push(Function {
+            name: name.clone(),
+            public: false,
+            closure_captures: Vec::new(),
+            params: vec![option_param.clone(), callback_param.clone()],
+            locals: vec![option_param, callback_param, value],
+            return_type: return_type.clone(),
+            abi: call_abi(
+                &Type::Function {
+                    params: vec![option(input_type_from_callback(&callback_type)), callback_type],
+                    return_type: Box::new(return_type),
+                },
+                CallBoundary::Internal,
+            ),
+            body,
+            span,
+        });
+        name
+    }
+
+    fn result_map_adapter(
+        &mut self, ok_type: Type, error_type: Type, return_type: Type, callback_type: Type, span: Span,
+    ) -> String {
+        let name = self.next_anonymous_name();
+        let result_param = synthetic_param(0, "result", result(ok_type.clone(), error_type.clone()), span);
+        let callback_param = synthetic_param(1, "callback", callback_type.clone(), span);
+        let ok_value = synthetic_param(2, "ok", ok_type.clone(), span);
+        let error_value = synthetic_param(3, "error", error_type.clone(), span);
+        let mapped = Expression {
+            type_: match &return_type {
+                Type::Custom { args, .. } => args[0].clone(),
+                _ => Type::Nil,
+            },
+            span,
+            kind: ExpressionKind::IndirectCall(IndirectCall {
+                callee: Box::new(local_get(&callback_param)),
+                arguments: vec![CallArgument { label: None, value: local_get(&ok_value), span }],
+                abi: call_abi(&callback_type, CallBoundary::Internal),
+            }),
+        };
+        let body = branch_function_body(
+            span,
+            &return_type,
+            local_get(&result_param),
+            vec![
+                (
+                    IrPattern::Constructor {
+                        name: "Ok".into(),
+                        arguments: vec![ConstructorPatternArgument {
+                            label: None,
+                            pattern: IrPattern::Binding(ok_value.id),
+                            span,
+                        }],
+                    },
+                    Expression {
+                        type_: return_type.clone(),
+                        span,
+                        kind: ExpressionKind::Constructor(ConstructorValue {
+                            name: "Ok".into(),
+                            arguments: vec![mapped],
+                        }),
+                    },
+                ),
+                (
+                    IrPattern::Constructor {
+                        name: "Error".into(),
+                        arguments: vec![ConstructorPatternArgument {
+                            label: None,
+                            pattern: IrPattern::Binding(error_value.id),
+                            span,
+                        }],
+                    },
+                    Expression {
+                        type_: return_type.clone(),
+                        span,
+                        kind: ExpressionKind::Constructor(ConstructorValue {
+                            name: "Error".into(),
+                            arguments: vec![local_get(&error_value)],
+                        }),
+                    },
+                ),
+            ],
+        );
+        self.lifted_functions.push(Function {
+            name: name.clone(),
+            public: false,
+            closure_captures: Vec::new(),
+            params: vec![result_param.clone(), callback_param.clone()],
+            locals: vec![result_param, callback_param, ok_value, error_value],
+            return_type: return_type.clone(),
+            abi: call_abi(
+                &Type::Function {
+                    params: vec![result(ok_type, error_type), callback_type],
+                    return_type: Box::new(return_type),
+                },
+                CallBoundary::Internal,
+            ),
+            body,
+            span,
+        });
+        name
+    }
+
+    fn synthetic_local(&self, context: &mut FunctionContext, name: &str, type_: Type, span: Span) -> Local {
+        let name = ast::Name { span, text: name.into() };
+        let local = context.allocate(&name, type_);
+        context.bind(name.text, local.id);
+        local
     }
 
     fn lower_ordered_call_arguments(
@@ -1276,6 +1797,58 @@ fn stdlib_call(module: &ast::Module, function: &AstExpression) -> Option<StdlibC
 
 fn stdlib_lowered_name(module: &str, member: &str) -> String {
     format!("__stdlib_{}_{}", module.replace('/', "_"), member)
+}
+
+fn synthetic_param(id: u32, name: &str, type_: Type, span: Span) -> Local {
+    Local { id: LocalId(id), name: name.into(), type_, span }
+}
+
+fn local_get(local: &Local) -> Expression {
+    Expression { type_: local.type_.clone(), span: local.span, kind: ExpressionKind::LocalGet(local.id) }
+}
+
+fn branch_function_body(span: Span, type_: &Type, subject: Expression, clauses: Vec<(IrPattern, Expression)>) -> Block {
+    Block {
+        instructions: Vec::new(),
+        result: Box::new(Expression {
+            type_: type_.clone(),
+            span,
+            kind: ExpressionKind::Branch(Branch {
+                subjects: vec![subject],
+                clauses: clauses
+                    .into_iter()
+                    .map(|(pattern, body)| BranchClause {
+                        patterns: vec![pattern],
+                        guard: None,
+                        bindings: Vec::new(),
+                        body: Box::new(body),
+                        span,
+                    })
+                    .collect(),
+                fallthrough: FailurePath { reason: FailureReason::BranchFallthrough, span },
+            }),
+        }),
+        span,
+    }
+}
+
+fn list(item: Type) -> Type {
+    Type::List(Box::new(item))
+}
+
+fn option(item: Type) -> Type {
+    Type::custom("Option", vec![item])
+}
+
+fn result(ok: Type, error: Type) -> Type {
+    Type::custom("Result", vec![ok, error])
+}
+
+fn input_type_from_callback(callback: &Type) -> Type {
+    match callback {
+        Type::Function { params, .. } => params.first().cloned().unwrap_or(Type::Nil),
+        _ => Type::Nil,
+    }
 }
 
 trait UsedStdlibHostCalls {
