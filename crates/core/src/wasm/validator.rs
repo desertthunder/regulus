@@ -430,14 +430,6 @@ impl<'a> Validator<'a> {
         }
     }
 
-    fn validate_limits(&mut self, minimum: u32, maximum: Option<u32>, item: impl std::fmt::Display) {
-        if let Some(maximum) = maximum
-            && maximum < minimum
-        {
-            self.error(format!("{item} maximum {maximum} is below minimum {minimum}"));
-        }
-    }
-
     fn type_(&self, id: &TypeId) -> Option<&FunctionType> {
         self.module.types.get(id.0 as usize)
     }
@@ -491,6 +483,14 @@ impl<'a> Validator<'a> {
                 .nth(index)
         } else {
             self.module.tables.get(index - imported_count)
+        }
+    }
+
+    fn validate_limits(&mut self, minimum: u32, maximum: Option<u32>, item: impl std::fmt::Display) {
+        if let Some(maximum) = maximum
+            && maximum < minimum
+        {
+            self.error(format!("{item} maximum {maximum} is below minimum {minimum}"));
         }
     }
 

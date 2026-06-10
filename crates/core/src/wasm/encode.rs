@@ -8,7 +8,6 @@ use super::builder::*;
 pub(super) fn encode_instruction(instruction: &Instruction, out: &mut Vec<u8>, module: &Module) {
     match instruction {
         Instruction::Unreachable => out.push(0x00),
-        Instruction::Nop => out.push(0x01),
         Instruction::Block { type_, body } => {
             out.push(0x02);
             encode_block_type(type_, out, module);
@@ -98,22 +97,18 @@ pub(super) fn encode_instruction(instruction: &Instruction, out: &mut Vec<u8>, m
         }
         Instruction::I32Eqz => out.push(0x45),
         Instruction::I32Eq => out.push(0x46),
-        Instruction::I32Ne => out.push(0x47),
         Instruction::I32LtS => out.push(0x48),
         Instruction::I32LtU => out.push(0x49),
         Instruction::I32GtS => out.push(0x4a),
         Instruction::I32GtU => out.push(0x4b),
         Instruction::I32LeS => out.push(0x4c),
         Instruction::I32GeS => out.push(0x4e),
-        Instruction::I64Eqz => out.push(0x50),
         Instruction::I64Eq => out.push(0x51),
-        Instruction::I64Ne => out.push(0x52),
         Instruction::I64LtS => out.push(0x53),
         Instruction::I64GtS => out.push(0x55),
         Instruction::I64LeS => out.push(0x57),
         Instruction::I64GeS => out.push(0x59),
         Instruction::F64Eq => out.push(0x61),
-        Instruction::F64Ne => out.push(0x62),
         Instruction::F64Lt => out.push(0x63),
         Instruction::F64Gt => out.push(0x64),
         Instruction::F64Le => out.push(0x65),
@@ -121,9 +116,7 @@ pub(super) fn encode_instruction(instruction: &Instruction, out: &mut Vec<u8>, m
         Instruction::I32Add => out.push(0x6a),
         Instruction::I32Sub => out.push(0x6b),
         Instruction::I32And => out.push(0x71),
-        Instruction::I32Or => out.push(0x72),
         Instruction::I32Mul => out.push(0x6c),
-        Instruction::I32Shl => out.push(0x74),
         Instruction::I32DivS => out.push(0x6d),
         Instruction::I32ShrU => out.push(0x76),
         Instruction::I64Add => out.push(0x7c),
@@ -235,6 +228,15 @@ impl From<ValueType> for u8 {
     }
 }
 
+impl From<ReferenceType> for u8 {
+    fn from(type_: ReferenceType) -> Self {
+        match type_ {
+            ReferenceType::FuncRef => 0x70,
+            ReferenceType::ExternRef => 0x6f,
+        }
+    }
+}
+
 pub(super) fn encode_name(name: &str, out: &mut Vec<u8>) {
     encode_u32(name.len() as u32, out);
     out.extend(name.as_bytes());
@@ -266,15 +268,6 @@ pub(super) fn encode_i64(mut value: i64, out: &mut Vec<u8>) {
         out.push(if done { byte } else { byte | 0x80 });
         if done {
             break;
-        }
-    }
-}
-
-impl From<ReferenceType> for u8 {
-    fn from(type_: ReferenceType) -> Self {
-        match type_ {
-            ReferenceType::FuncRef => 0x70,
-            ReferenceType::ExternRef => 0x6f,
         }
     }
 }

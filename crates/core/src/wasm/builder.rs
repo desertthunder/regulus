@@ -3,16 +3,11 @@
 //! This module provides the structured representation that the
 //! backend can validate and lower to bytes.
 
-#![allow(dead_code)]
-
 use std::fmt;
 
+use super::binary::BinaryEmitter;
+use super::validator::{ValidationResult, Validator};
 use crate::source::Span;
-
-use super::{
-    binary::BinaryEmitter,
-    validator::{ValidationResult, Validator},
-};
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(crate) struct Module {
@@ -64,6 +59,8 @@ impl Module {
         id
     }
 
+    /// TODO: add ABI/backend support for compiler-emitted Wasm tables.
+    #[allow(dead_code)]
     pub(crate) fn push_table(&mut self, table: Table) -> TableId {
         let id = TableId((self.imported_table_count() + self.tables.len()) as u32);
         self.tables.push(table);
@@ -110,11 +107,10 @@ pub(crate) struct MemoryId(pub(crate) u32);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct GlobalId(pub(crate) u32);
 
+/// TODO: add ABI/backend support for compiler-emitted Wasm tables.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct TableId(pub(crate) u32);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct DataSegmentId(pub(crate) u32);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct FunctionType {
@@ -132,9 +128,15 @@ impl FunctionType {
 pub(crate) enum ValueType {
     I32,
     I64,
+    /// TODO: add ABI/backend support for compiler-emitted 32-bit floats.
+    #[allow(dead_code)]
     F32,
     F64,
+    /// TODO: add ABI/backend support for compiler-emitted reference values.
+    #[allow(dead_code)]
     FuncRef,
+    /// TODO: add ABI/backend support for compiler-emitted reference values.
+    #[allow(dead_code)]
     ExternRef,
 }
 
@@ -161,7 +163,11 @@ pub(crate) struct Import {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ImportDesc {
     Function(TypeId),
+    /// TODO: add ABI/backend support for imported Wasm memories.
+    #[allow(dead_code)]
     Memory(Memory),
+    /// TODO: add ABI/backend support for imported Wasm tables.
+    #[allow(dead_code)]
     Table(Table),
 }
 
@@ -200,6 +206,8 @@ pub(crate) struct Global {
     pub(crate) init: Vec<Instruction>,
 }
 
+/// TODO: add ABI/backend support for compiler-emitted Wasm tables.
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Table {
     pub(crate) element_type: ReferenceType,
@@ -207,6 +215,8 @@ pub(crate) struct Table {
     pub(crate) maximum: Option<u32>,
 }
 
+/// TODO: add ABI/backend support for compiler-emitted Wasm tables.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum ReferenceType {
     FuncRef,
@@ -232,6 +242,8 @@ pub(crate) struct Export {
 pub(crate) enum ExportDesc {
     Function(FunctionId),
     Memory(MemoryId),
+    /// TODO: add ABI/backend support for exported Wasm tables.
+    #[allow(dead_code)]
     Table(TableId),
 }
 
@@ -251,7 +263,6 @@ pub(crate) struct CustomSection {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Instruction {
     Unreachable,
-    Nop,
     Block {
         type_: BlockType,
         body: Vec<Instruction>,
@@ -273,6 +284,8 @@ pub(crate) enum Instruction {
         depth: u32,
         results: Vec<ValueType>,
     },
+    /// TODO: add ABI/backend support for explicit Wasm return emission.
+    #[allow(dead_code)]
     Return {
         results: Vec<ValueType>,
     },
@@ -280,6 +293,8 @@ pub(crate) enum Instruction {
         function: FunctionId,
         type_: FunctionType,
     },
+    /// TODO: add ABI/backend support for table-backed indirect calls.
+    #[allow(dead_code)]
     CallIndirect {
         table: TableId,
         type_id: TypeId,
@@ -290,6 +305,8 @@ pub(crate) enum Instruction {
         type_: FunctionType,
     },
     Drop(ValueType),
+    /// TODO: add backend support for Wasm select emission.
+    #[allow(dead_code)]
     Select(ValueType),
     LocalGet {
         local: LocalId,
@@ -313,26 +330,24 @@ pub(crate) enum Instruction {
     },
     I32Const(i32),
     I64Const(i64),
+    /// TODO: add ABI/backend support for compiler-emitted 32-bit floats.
+    #[allow(dead_code)]
     F32Const(u32),
     F64Const(u64),
     I32Eqz,
     I32Eq,
-    I32Ne,
     I32LtS,
     I32LtU,
     I32GtS,
     I32GtU,
     I32LeS,
     I32GeS,
-    I64Eqz,
     I64Eq,
-    I64Ne,
     I64LtS,
     I64GtS,
     I64LeS,
     I64GeS,
     F64Eq,
-    F64Ne,
     F64Lt,
     F64Gt,
     F64Le,
@@ -340,9 +355,7 @@ pub(crate) enum Instruction {
     I32Add,
     I32Sub,
     I32And,
-    I32Or,
     I32Mul,
-    I32Shl,
     I32DivS,
     I32ShrU,
     I64Add,
@@ -379,7 +392,6 @@ impl Instruction {
 
         match self {
             I::Unreachable => StackEffect::unreachable(),
-            I::Nop => StackEffect::new([], []),
             I::Block { type_, .. } | I::Loop { type_, .. } => {
                 StackEffect::new(type_.params.clone(), type_.results.clone())
             }
@@ -412,13 +424,12 @@ impl Instruction {
             I::F32Const(_) => StackEffect::new([], [F32]),
             I::F64Const(_) => StackEffect::new([], [F64]),
             I::I32Eqz => StackEffect::new([I32], [I32]),
-            I::I32Eq | I::I32Ne | I::I32LtS | I::I32LtU | I::I32GtS | I::I32GtU | I::I32LeS | I::I32GeS => {
+            I::I32Eq | I::I32LtS | I::I32LtU | I::I32GtS | I::I32GtU | I::I32LeS | I::I32GeS => {
                 StackEffect::new([I32, I32], [I32])
             }
-            I::I64Eqz => StackEffect::new([I64], [I32]),
-            I::I64Eq | I::I64Ne | I::I64LtS | I::I64GtS | I::I64LeS | I::I64GeS => StackEffect::new([I64, I64], [I32]),
-            I::F64Eq | I::F64Ne | I::F64Lt | I::F64Gt | I::F64Le | I::F64Ge => StackEffect::new([F64, F64], [I32]),
-            I::I32Add | I::I32Sub | I::I32And | I::I32Or | I::I32Mul | I::I32DivS | I::I32Shl | I::I32ShrU => {
+            I::I64Eq | I::I64LtS | I::I64GtS | I::I64LeS | I::I64GeS => StackEffect::new([I64, I64], [I32]),
+            I::F64Eq | I::F64Lt | I::F64Gt | I::F64Le | I::F64Ge => StackEffect::new([F64, F64], [I32]),
+            I::I32Add | I::I32Sub | I::I32And | I::I32Mul | I::I32DivS | I::I32ShrU => {
                 StackEffect::new([I32, I32], [I32])
             }
             I::I64Add | I::I64Sub | I::I64Mul | I::I64DivS | I::I64RemS => StackEffect::new([I64, I64], [I64]),
@@ -730,7 +741,6 @@ impl<'a> WatRenderer<'a> {
 fn instruction_inline_wat(instruction: &Instruction) -> String {
     match instruction {
         Instruction::Unreachable => "unreachable".into(),
-        Instruction::Nop => "nop".into(),
         Instruction::Br { depth, .. } => format!("br {depth}"),
         Instruction::BrIf { depth, .. } => format!("br_if {depth}"),
         Instruction::Return { .. } => "return".into(),
@@ -752,22 +762,18 @@ fn instruction_inline_wat(instruction: &Instruction) -> String {
         Instruction::F64Const(value) => format!("f64.const {}", f64::from_bits(*value)),
         Instruction::I32Eqz => "i32.eqz".into(),
         Instruction::I32Eq => "i32.eq".into(),
-        Instruction::I32Ne => "i32.ne".into(),
         Instruction::I32LtS => "i32.lt_s".into(),
         Instruction::I32LtU => "i32.lt_u".into(),
         Instruction::I32GtS => "i32.gt_s".into(),
         Instruction::I32GtU => "i32.gt_u".into(),
         Instruction::I32LeS => "i32.le_s".into(),
         Instruction::I32GeS => "i32.ge_s".into(),
-        Instruction::I64Eqz => "i64.eqz".into(),
         Instruction::I64Eq => "i64.eq".into(),
-        Instruction::I64Ne => "i64.ne".into(),
         Instruction::I64LtS => "i64.lt_s".into(),
         Instruction::I64GtS => "i64.gt_s".into(),
         Instruction::I64LeS => "i64.le_s".into(),
         Instruction::I64GeS => "i64.ge_s".into(),
         Instruction::F64Eq => "f64.eq".into(),
-        Instruction::F64Ne => "f64.ne".into(),
         Instruction::F64Lt => "f64.lt".into(),
         Instruction::F64Gt => "f64.gt".into(),
         Instruction::F64Le => "f64.le".into(),
@@ -775,9 +781,7 @@ fn instruction_inline_wat(instruction: &Instruction) -> String {
         Instruction::I32Add => "i32.add".into(),
         Instruction::I32Sub => "i32.sub".into(),
         Instruction::I32And => "i32.and".into(),
-        Instruction::I32Or => "i32.or".into(),
         Instruction::I32Mul => "i32.mul".into(),
-        Instruction::I32Shl => "i32.shl".into(),
         Instruction::I32DivS => "i32.div_s".into(),
         Instruction::I32ShrU => "i32.shr_u".into(),
         Instruction::I64Add => "i64.add".into(),

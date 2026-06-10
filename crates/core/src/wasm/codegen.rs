@@ -17,6 +17,7 @@ pub(super) fn emit(module: &ir::Module, options: EmitOptions) -> Result<Module, 
     match emitter.module(module) {
         Ok(module) => Ok(module),
         Err(StructuredError::Unsupported) => Err(unsupported_structured_diagnostics(module)),
+        Err(StructuredError::Invariant(message)) => Err(invariant_diagnostics(module, &message)),
         Err(StructuredError::Diagnostics(diagnostics)) => Err(diagnostics),
     }
 }
@@ -30,8 +31,17 @@ fn unsupported_structured_diagnostics(module: &ir::Module) -> Diagnostics {
     if let Some(function) = module.functions.first() {
         vec![diagnostic.with_label(Label::primary(function.span, "module lowered to unsupported IR here"))]
     } else {
-        vec![diagnostic]
+        vec![diagnostic.with_label(Label::primary(module.span, "module lowered to unsupported IR here"))]
     }
+}
+
+fn invariant_diagnostics(module: &ir::Module, message: &str) -> Diagnostics {
+    vec![
+        Diagnostic::new(DiagnosticCode::WasmError, message.to_string()).with_label(Label::primary(
+            module.span,
+            "internal Wasm invariant failed while compiling this module",
+        )),
+    ]
 }
 
 #[derive(Clone)]
@@ -131,6 +141,7 @@ impl DebugImport {
 #[derive(Debug)]
 enum StructuredError {
     Unsupported,
+    Invariant(String),
     Diagnostics(Diagnostics),
 }
 
@@ -258,12 +269,7 @@ impl<'a> StructuredEmitter<'a> {
             return Ok(());
         }
         let string_result = FunctionType::new([], [ValueType::I32]);
-        let string_type = self
-            .signatures
-            .get(&function.name)
-            .ok_or(StructuredError::Unsupported)?
-            .type_
-            .clone();
+        let string_type = self.required_signature(&function.name)?.type_.clone();
         let original = self.function_id_structured(&function.name);
         let memory = self.ensure_memory();
 
@@ -797,7 +803,7 @@ impl<'a> StructuredEmitter<'a> {
             }
             "__stdlib_gleam_bool_to_string" => self.bool_to_string(call, out)?,
             "__stdlib_gleam_bool_compare" => {
-                let scratch = self.scratch_local.ok_or(StructuredError::Unsupported)?;
+                let scratch = self.required_local(self.scratch_local, "scratch")?;
                 self.expression(&call.arguments[0].value, out)?;
                 self.expression(&call.arguments[1].value, out)?;
                 out.push(Instruction::I32Sub);
@@ -849,11 +855,7 @@ impl<'a> StructuredEmitter<'a> {
             "__stdlib_gleam_dynamic_decode_run" => self.decode_run(call, out)?,
             "__stdlib_gleam_io_debug" => self.stdlib_io_debug(call, out)?,
             _ => {
-                let signature = self
-                    .signatures
-                    .get(&call.function)
-                    .ok_or(StructuredError::Unsupported)?
-                    .clone();
+                let signature = self.required_signature(&call.function)?;
                 let id = self.function_id_structured(&call.function);
                 for argument in &call.arguments {
                     self.expression(&argument.value, out)?;
@@ -865,9 +867,9 @@ impl<'a> StructuredEmitter<'a> {
     }
 
     fn allocate(&mut self, bytes: u32, out: &mut Vec<Instruction>) -> StructuredResult<()> {
-        let ptr = self.alloc_local.ok_or(StructuredError::Unsupported)?;
-        let end = self.alloc_end_local.ok_or(StructuredError::Unsupported)?;
-        let pages = self.alloc_pages_local.ok_or(StructuredError::Unsupported)?;
+        let ptr = self.required_local(self.alloc_local, "allocation pointer")?;
+        let end = self.required_local(self.alloc_end_local, "allocation end")?;
+        let pages = self.required_local(self.alloc_pages_local, "allocation pages")?;
         let heap = self.ensure_heap_global();
         let memory = self.ensure_memory();
 
@@ -928,9 +930,9 @@ impl<'a> StructuredEmitter<'a> {
     }
 
     fn allocate_dynamic(&mut self, out: &mut Vec<Instruction>) -> StructuredResult<()> {
-        let ptr = self.alloc_local.ok_or(StructuredError::Unsupported)?;
-        let end = self.alloc_end_local.ok_or(StructuredError::Unsupported)?;
-        let pages = self.alloc_pages_local.ok_or(StructuredError::Unsupported)?;
+        let ptr = self.required_local(self.alloc_local, "allocation pointer")?;
+        let end = self.required_local(self.alloc_end_local, "allocation end")?;
+        let pages = self.required_local(self.alloc_pages_local, "allocation pages")?;
         let heap = self.ensure_heap_global();
         let memory = self.ensure_memory();
         out.push(Instruction::GlobalGet { global: heap, type_: ValueType::I32 });
@@ -986,9 +988,9 @@ impl<'a> StructuredEmitter<'a> {
     }
 
     fn string_concat(&mut self, call: &ir::DirectCall, out: &mut Vec<Instruction>) -> StructuredResult<()> {
-        let ptr = self.string_ptr_local.ok_or(StructuredError::Unsupported)?;
-        let left_len = self.string_left_len_local.ok_or(StructuredError::Unsupported)?;
-        let right_len = self.string_right_len_local.ok_or(StructuredError::Unsupported)?;
+        let ptr = self.required_local(self.string_ptr_local, "string pointer")?;
+        let left_len = self.required_local(self.string_left_len_local, "string left length")?;
+        let right_len = self.required_local(self.string_right_len_local, "string right length")?;
         self.expression(&call.arguments[0].value, out)?;
         out.push(Instruction::I32Load(mem_arg(self.ensure_memory(), 4, 2)));
         out.push(Instruction::LocalSet { local: left_len, type_: ValueType::I32 });
@@ -1074,7 +1076,7 @@ impl<'a> StructuredEmitter<'a> {
     }
 
     fn float_compare(&mut self, call: &ir::DirectCall, out: &mut Vec<Instruction>) -> StructuredResult<()> {
-        let scratch = self.scratch_local.ok_or(StructuredError::Unsupported)?;
+        let scratch = self.required_local(self.scratch_local, "scratch")?;
         self.expression(&call.arguments[0].value, out)?;
         self.expression(&call.arguments[1].value, out)?;
         out.push(Instruction::F64Lt);
@@ -1187,7 +1189,7 @@ impl<'a> StructuredEmitter<'a> {
     }
 
     fn dynamic_i64_from_stack(&mut self, tag: i32, out: &mut Vec<Instruction>) -> StructuredResult<()> {
-        let field = self.dynamic_field_local.ok_or(StructuredError::Unsupported)?;
+        let field = self.required_local(self.dynamic_field_local, "dynamic field")?;
         out.push(Instruction::LocalSet { local: field, type_: ValueType::I64 });
         self.custom_value(tag, 1, [(12, field)], out)
     }
@@ -1202,13 +1204,13 @@ impl<'a> StructuredEmitter<'a> {
     }
 
     fn decoder_from_stack(&mut self, kind: i64, out: &mut Vec<Instruction>) -> StructuredResult<()> {
-        let decoder = self.dynamic_decoder_local.ok_or(StructuredError::Unsupported)?;
+        let decoder = self.required_local(self.dynamic_decoder_local, "dynamic decoder")?;
         out.push(Instruction::LocalSet { local: decoder, type_: ValueType::I32 });
-        let field = self.dynamic_field_local.ok_or(StructuredError::Unsupported)?;
+        let field = self.required_local(self.dynamic_field_local, "dynamic field")?;
         out.push(Instruction::I64Const(kind));
         out.push(Instruction::LocalSet { local: field, type_: ValueType::I64 });
         self.custom_value(200, 2, [(12, field)], out)?;
-        let ptr = self.alloc_local.ok_or(StructuredError::Unsupported)?;
+        let ptr = self.required_local(self.alloc_local, "allocation pointer")?;
         out.push(Instruction::LocalSet { local: ptr, type_: ValueType::I32 });
         out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
         out.push(Instruction::I32Const(20));
@@ -1225,7 +1227,7 @@ impl<'a> StructuredEmitter<'a> {
     ) -> StructuredResult<()> {
         let size = self.config.layout.custom_size(fields, 8);
         self.allocate(size, out)?;
-        let ptr = self.alloc_local.ok_or(StructuredError::Unsupported)?;
+        let ptr = self.required_local(self.alloc_local, "allocation pointer")?;
         out.push(Instruction::LocalSet { local: ptr, type_: ValueType::I32 });
         out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
         out.push(Instruction::I32Const(u32::from(runtime::ObjectTag::Custom) as i32));
@@ -1246,12 +1248,12 @@ impl<'a> StructuredEmitter<'a> {
     }
 
     fn decode_run(&mut self, call: &ir::DirectCall, out: &mut Vec<Instruction>) -> StructuredResult<()> {
-        let data = self.dynamic_data_local.ok_or(StructuredError::Unsupported)?;
-        let decoder = self.dynamic_decoder_local.ok_or(StructuredError::Unsupported)?;
-        let kind = self.dynamic_kind_local.ok_or(StructuredError::Unsupported)?;
-        let tag = self.dynamic_tag_local.ok_or(StructuredError::Unsupported)?;
-        let field = self.dynamic_field_local.ok_or(StructuredError::Unsupported)?;
-        let result = self.dynamic_result_local.ok_or(StructuredError::Unsupported)?;
+        let data = self.required_local(self.dynamic_data_local, "dynamic data")?;
+        let decoder = self.required_local(self.dynamic_decoder_local, "dynamic decoder")?;
+        let kind = self.required_local(self.dynamic_kind_local, "dynamic kind")?;
+        let tag = self.required_local(self.dynamic_tag_local, "dynamic tag")?;
+        let field = self.required_local(self.dynamic_field_local, "dynamic field")?;
+        let result = self.required_local(self.dynamic_result_local, "dynamic result")?;
         self.expression(&call.arguments[0].value, out)?;
         out.push(Instruction::LocalSet { local: data, type_: ValueType::I32 });
         self.expression(&call.arguments[1].value, out)?;
@@ -1349,7 +1351,7 @@ impl<'a> StructuredEmitter<'a> {
             Instruction::LocalGet { local: data, type_: ValueType::I32 },
             Instruction::I64ExtendI32U,
         ];
-        let field = self.dynamic_field_local.ok_or(StructuredError::Unsupported)?;
+        let field = self.required_local(self.dynamic_field_local, "dynamic field")?;
         some_body.push(Instruction::LocalSet { local: field, type_: ValueType::I64 });
         self.custom_value(2407843793u32 as i32, 1, [(12, field)], &mut some_body)?;
         some_body.push(Instruction::I64ExtendI32U);
@@ -1360,7 +1362,7 @@ impl<'a> StructuredEmitter<'a> {
     }
 
     fn decode_ok_from_stack(&mut self, out: &mut Vec<Instruction>) -> StructuredResult<()> {
-        let field = self.dynamic_field_local.ok_or(StructuredError::Unsupported)?;
+        let field = self.required_local(self.dynamic_field_local, "dynamic field")?;
         out.push(Instruction::LocalSet { local: field, type_: ValueType::I64 });
         self.custom_value(1115088027, 1, [(12, field)], out)
     }
@@ -1373,7 +1375,7 @@ impl<'a> StructuredEmitter<'a> {
         &mut self, source: &ir::Expression, dest: LocalId, len: LocalId, dest_extra: Option<LocalId>,
         out: &mut Vec<Instruction>,
     ) -> StructuredResult<()> {
-        let i = self.string_i_local.ok_or(StructuredError::Unsupported)?;
+        let i = self.required_local(self.string_i_local, "string index")?;
         let memory = self.ensure_memory();
         out.push(Instruction::I32Const(0));
         out.push(Instruction::LocalSet { local: i, type_: ValueType::I32 });
@@ -1414,7 +1416,7 @@ impl<'a> StructuredEmitter<'a> {
     fn constructor_value(
         &mut self, constructor: &ir::ConstructorValue, out: &mut Vec<Instruction>,
     ) -> StructuredResult<()> {
-        let ptr = self.alloc_local.ok_or(StructuredError::Unsupported)?;
+        let ptr = self.required_local(self.alloc_local, "allocation pointer")?;
         let size = self.config.layout.custom_size(constructor.arguments.len() as u32, 8);
         self.allocate(size, out)?;
         out.push(Instruction::LocalTee { local: ptr, type_: ValueType::I32 });
@@ -1444,11 +1446,15 @@ impl<'a> StructuredEmitter<'a> {
         out: &mut Vec<Instruction>,
     ) -> StructuredResult<()> {
         let fields = fields.into_iter().collect::<Vec<_>>();
-        let ptr = self.alloc_local.ok_or(StructuredError::Unsupported)?;
+        let ptr = self.required_local(self.alloc_local, "allocation pointer")?;
         let size = match tag {
             runtime::ObjectTag::Tuple => self.config.layout.tuple_size(fields.len() as u32, 8),
             runtime::ObjectTag::Record => self.config.layout.record_size(fields.len() as u32, 8),
-            _ => return Err(StructuredError::Unsupported),
+            _ => {
+                return Err(StructuredError::Invariant(format!(
+                    "internal Wasm codegen invariant failed: unsupported field array tag {tag:?}"
+                )));
+            }
         };
         self.allocate(size, out)?;
         out.push(Instruction::LocalTee { local: ptr, type_: ValueType::I32 });
@@ -1471,8 +1477,8 @@ impl<'a> StructuredEmitter<'a> {
     }
 
     fn list_value(&mut self, items: &[ir::Expression], out: &mut Vec<Instruction>) -> StructuredResult<()> {
-        let tail = self.scratch_local.ok_or(StructuredError::Unsupported)?;
-        let ptr = self.alloc_local.ok_or(StructuredError::Unsupported)?;
+        let tail = self.required_local(self.scratch_local, "scratch")?;
+        let ptr = self.required_local(self.alloc_local, "allocation pointer")?;
         out.push(Instruction::I32Const(0));
         out.push(Instruction::LocalSet { local: tail, type_: ValueType::I32 });
         for item in items.iter().rev() {
@@ -1500,8 +1506,8 @@ impl<'a> StructuredEmitter<'a> {
         &mut self, record: &ir::Expression, constructor: &str, fields: &[ir::RecordFieldUpdate], type_: &Type,
         out: &mut Vec<Instruction>,
     ) -> StructuredResult<()> {
-        let source = self.scratch_local.ok_or(StructuredError::Unsupported)?;
-        let ptr = self.alloc_local.ok_or(StructuredError::Unsupported)?;
+        let source = self.required_local(self.scratch_local, "scratch")?;
+        let ptr = self.required_local(self.alloc_local, "allocation pointer")?;
         self.expression(record, out)?;
         out.push(Instruction::LocalSet { local: source, type_: ValueType::I32 });
         let (size, tag, header_fields, slot_offset) = if matches!(type_, Type::Record { .. }) {
@@ -1571,7 +1577,7 @@ impl<'a> StructuredEmitter<'a> {
     fn list_cons(
         &mut self, head: &ir::Expression, tail: &ir::Expression, out: &mut Vec<Instruction>,
     ) -> StructuredResult<()> {
-        let ptr = self.alloc_local.ok_or(StructuredError::Unsupported)?;
+        let ptr = self.required_local(self.alloc_local, "allocation pointer")?;
         self.allocate(self.config.layout.list_cons_size(8), out)?;
         out.push(Instruction::LocalTee { local: ptr, type_: ValueType::I32 });
         out.push(Instruction::I32Const(u32::from(runtime::ObjectTag::ListCons) as i32));
@@ -1592,7 +1598,7 @@ impl<'a> StructuredEmitter<'a> {
     fn closure_allocation(
         &mut self, function: &ir::AnonymousFunction, out: &mut Vec<Instruction>,
     ) -> StructuredResult<()> {
-        let ptr = self.alloc_local.ok_or(StructuredError::Unsupported)?;
+        let ptr = self.required_local(self.alloc_local, "allocation pointer")?;
         let size = self.config.layout.closure_size(function.captures.len() as u32);
         self.allocate(size, out)?;
         out.push(Instruction::LocalTee { local: ptr, type_: ValueType::I32 });
@@ -1663,7 +1669,15 @@ impl<'a> StructuredEmitter<'a> {
             | Type::Opaque { .. }
             | Type::Function { .. } => DebugImport::Value,
             Type::Nil => return Ok(()),
-            Type::Generic(_) => return Err(StructuredError::Unsupported),
+            Type::Generic(_) => {
+                return Err(StructuredError::Diagnostics(vec![
+                    Diagnostic::new(
+                        DiagnosticCode::WasmError,
+                        "debug intrinsic does not support generic values",
+                    )
+                    .with_label(Label::primary(value.span, "generic value passed to debug here")),
+                ]));
+            }
         };
         if self.options.target == WasmTarget::Wasi {
             return Err(StructuredError::Diagnostics(vec![
@@ -1678,11 +1692,12 @@ impl<'a> StructuredEmitter<'a> {
                 .with_note("supported targets for `gleam/io` host calls are `wasmtime` and `browser`"),
             ]));
         }
-        let local = self
-            .debug_locals
-            .get(&import)
-            .copied()
-            .ok_or(StructuredError::Unsupported)?;
+        let local = self.debug_locals.get(&import).copied().ok_or_else(|| {
+            StructuredError::Invariant(format!(
+                "internal Wasm codegen invariant failed: missing {} debug local",
+                import.name()
+            ))
+        })?;
         let function = self.ensure_debug_import(import);
         self.expression(value, out)?;
         out.push(Instruction::LocalTee { local, type_: import.value_type() });
@@ -1749,7 +1764,12 @@ impl<'a> StructuredEmitter<'a> {
                     (Type::Bool, ir::ComparisonOp::LessEqual) => Instruction::I32LeS,
                     (Type::Bool, ir::ComparisonOp::Greater) => Instruction::I32GtS,
                     (Type::Bool, ir::ComparisonOp::GreaterEqual) => Instruction::I32GeS,
-                    _ => return Err(StructuredError::Unsupported),
+                    _ => {
+                        return Err(StructuredError::Diagnostics(vec![
+                            Diagnostic::new(DiagnosticCode::WasmError, "comparison type is not supported")
+                                .with_label(Label::primary(left.span, "unsupported comparison operand here")),
+                        ]));
+                    }
                 });
             }
         }
@@ -1779,7 +1799,15 @@ impl<'a> StructuredEmitter<'a> {
             | Type::Function { .. } => {
                 self.call_runtime_helper("__equal_value", [ValueType::I32, ValueType::I32], [ValueType::I32], out);
             }
-            Type::Generic(_) => return Err(StructuredError::Unsupported),
+            Type::Generic(_) => {
+                return Err(StructuredError::Diagnostics(vec![
+                    Diagnostic::new(
+                        DiagnosticCode::WasmError,
+                        "runtime equality does not support generic values",
+                    )
+                    .with_label(Label::primary(left.span, "generic equality operand here")),
+                ]));
+            }
         }
         Ok(())
     }
@@ -1813,7 +1841,9 @@ impl<'a> StructuredEmitter<'a> {
         let Some(clause) = branch.clauses.get(index) else {
             let mut failure = Vec::new();
             if !matches!(type_, Type::Nil) && results.is_empty() {
-                return Err(StructuredError::Unsupported);
+                return Err(StructuredError::Invariant(
+                    "internal Wasm codegen invariant failed: non-nil branch has no Wasm result type".into(),
+                ));
             }
             failure.push(Instruction::Unreachable);
             return Ok(failure);
@@ -2122,7 +2152,7 @@ impl<'a> StructuredEmitter<'a> {
         &mut self, subject: &PatternSubject<'_>, offset: u32, bit_size: u32, local: ir::LocalId,
         out: &mut Vec<Instruction>,
     ) -> StructuredResult<()> {
-        let value = self.bit_value_local.ok_or(StructuredError::Unsupported)?;
+        let value = self.required_local(self.bit_value_local, "bit-string value")?;
         out.push(Instruction::I64Const(0));
         out.push(Instruction::LocalSet { local: value, type_: ValueType::I64 });
         for bit in 0..bit_size.min(64) {
@@ -2148,9 +2178,9 @@ impl<'a> StructuredEmitter<'a> {
                 "structured binary bit-string binding requires a byte-aligned offset",
             )]));
         }
-        let bit_len = self.scratch_local.ok_or(StructuredError::Unsupported)?;
-        let ptr = self.alloc_local.ok_or(StructuredError::Unsupported)?;
-        let i = self.bit_i_local.ok_or(StructuredError::Unsupported)?;
+        let bit_len = self.required_local(self.scratch_local, "scratch")?;
+        let ptr = self.required_local(self.alloc_local, "allocation pointer")?;
+        let i = self.required_local(self.bit_i_local, "bit-string index")?;
         self.subject_pointer(subject, out)?;
         out.push(Instruction::I32Load(mem_arg(self.ensure_memory(), 4, 2)));
         out.push(Instruction::I32Const(offset as i32));
@@ -2207,7 +2237,7 @@ impl<'a> StructuredEmitter<'a> {
     fn bit_array_get_const_bit_subject(
         &mut self, subject: &PatternSubject<'_>, index: u32, out: &mut Vec<Instruction>,
     ) -> StructuredResult<()> {
-        let ptr = self.scratch_local.ok_or(StructuredError::Unsupported)?;
+        let ptr = self.required_local(self.scratch_local, "scratch")?;
         self.subject_pointer(subject, out)?;
         out.push(Instruction::LocalSet { local: ptr, type_: ValueType::I32 });
         out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
@@ -2268,7 +2298,11 @@ impl<'a> StructuredEmitter<'a> {
             ValueType::I64 => {}
             ValueType::I32 => out.push(Instruction::I32WrapI64),
             ValueType::F64 => out.push(Instruction::F64ReinterpretI64),
-            ValueType::F32 | ValueType::FuncRef | ValueType::ExternRef => return Err(StructuredError::Unsupported),
+            ValueType::F32 | ValueType::FuncRef | ValueType::ExternRef => {
+                return Err(StructuredError::Invariant(
+                    "internal Wasm codegen invariant failed: unsupported slot value type".into(),
+                ));
+            }
         }
         Ok(())
     }
@@ -2321,7 +2355,7 @@ impl<'a> StructuredEmitter<'a> {
     }
 
     fn indirect_call(&mut self, call: &ir::IndirectCall, out: &mut Vec<Instruction>) -> StructuredResult<()> {
-        let scratch = self.scratch_local.ok_or(StructuredError::Unsupported)?;
+        let scratch = self.required_local(self.scratch_local, "scratch")?;
         self.expression(&call.callee, out)?;
         out.push(Instruction::LocalSet { local: scratch, type_: ValueType::I32 });
         let results = call
@@ -2370,7 +2404,7 @@ impl<'a> StructuredEmitter<'a> {
         for argument in &call.arguments {
             self.expression(&argument.value, &mut then_body)?;
         }
-        let signature = self.signatures.get(&name).ok_or(StructuredError::Unsupported)?.clone();
+        let signature = self.required_signature(&name)?;
         then_body.push(Instruction::Call { function: self.function_id_structured(&name), type_: signature.type_ });
         let else_body = self.indirect_call_branch(call, index + 1, scratch, results.clone())?;
         condition.push(Instruction::If { type_: BlockType::new([], results), then_body, else_body });
@@ -2556,6 +2590,20 @@ impl<'a> StructuredEmitter<'a> {
             .get(name)
             .copied()
             .unwrap_or_else(|| FunctionId(self.function_id(name)))
+    }
+
+    fn required_signature(&self, name: &str) -> StructuredResult<FunctionSignature> {
+        self.signatures.get(name).cloned().ok_or_else(|| {
+            StructuredError::Invariant(format!(
+                "internal Wasm codegen invariant failed: missing signature for `{name}`"
+            ))
+        })
+    }
+
+    fn required_local(&self, local: Option<LocalId>, name: &str) -> StructuredResult<LocalId> {
+        local.ok_or_else(|| {
+            StructuredError::Invariant(format!("internal Wasm codegen invariant failed: missing {name} local"))
+        })
     }
 
     fn local(&self, local: ir::LocalId, span: crate::source::Span) -> StructuredResult<LocalId> {

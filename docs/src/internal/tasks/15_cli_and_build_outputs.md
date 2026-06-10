@@ -88,11 +88,11 @@ Make the CLI compile projects and produce useful artifacts.
           `Failure`, and `MemoryOperation::Allocate` IR.
     - [x] Replace literal/static-value parse failures with source-spanned
           diagnostics.
-    - [ ] Replace missing scratch/allocation/dynamic local and signature lookups
+    - [x] Replace missing scratch/allocation/dynamic local and signature lookups
           with checked invariants.
-    - [ ] Add tests that each unsupported residual IR path reports a precise
+    - [x] Add tests that each unsupported residual IR path reports a precise
           diagnostic with a source span.
-  - [ ] Delete the old `Emitter` implementation and fallback-only tests.
+  - [x] Delete the old `Emitter` implementation and fallback-only tests.
   - [ ] Helper-backed modules need direct structured byte emission too.
 - [x] Add tests that backend validation reports source-spanned diagnostics
       before byte emission for stack, signature, local, and target-adapter
