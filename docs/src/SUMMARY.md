@@ -3,6 +3,11 @@
 # The Book
 
 - [Introduction](./introduction.md)
+- [Compiler architecture](./chapter_9.md)
+  - [Phase boundaries](./chapter_9/phase_boundaries.md)
+  - [Pass pipelines and invariants](./chapter_9/pass_pipeline_invariants.md)
+  - [Project input and module graph](./chapter_9/project_to_modules.md)
+  - [Artifacts and execution](./chapter_9/artifacts_execution.md)
 - [The Gleam Programming Language](./chapter_1.md)
   - [Modules, imports, and packages](./chapter_1/mods_imports_pkgs.md)
   - [Functional programming in Gleam](./chapter_1/functional_programming.md)
@@ -12,8 +17,13 @@
     - [Pattern matching](./chapter_1/pattern_matching.md)
   - [Compilation](./chapter_1/compiler_notes.md)
 - [Lexing, parsing, and syntax trees](./chapter_2.md)
-  - [Lexing](./chapter_2/lexing.md)
-  - [Parsing](./chapter_2/parsing.md)
+  - [lexical analysis (TODO)]()
+    - [Lexing](./chapter_2/lexing.md)
+    - [Parsing](./chapter_2/parsing.md)
+      - [top-down (recursive-descent, LL) (TODO)]()
+      - [bottom-up (LR and its variants) (TODO)]()
+    - [finite-state machines (TODO)]()
+  - [regular expressions (TODO)]()
   - [Syntax Trees](./chapter_2/syntax_trees.md)
   - [Grammars](./chapter_2/gleam_grammar.md)
 - [Name Resolution](./chapter_3.md)
@@ -30,7 +40,14 @@
   - [Patterns and imports](./chapter_4/patterns_imports_opaque.md)
   - [Module interfaces](./chapter_4/module_interfaces.md)
 - [IR & Lowering](./chapter_5.md)
-- [Runtime Value Representation](./chapter_6.md)
+- [Runtimes (TODO)]()
+  - [Runtime Value Representation](./chapter_6.md)
+  - [Runtime Memory Management](./chapter_10.md)
+    - [Register allocation]()
+    - [The arena allocator](./chapter_10/arena_allocator.md)
+    - [Growth and allocation failure](./chapter_10/growth_and_failure.md)
+    - [Host pointers and reset boundaries](./chapter_10/host_pointers.md)
+    - [Future collectors](./chapter_10/collector_families.md)
 - [WebAssembly Code Gen](./chapter_7.md)
   - [Modules and stack machine](./chapter_7/modules_stack_machine.md)
   - [Text and binary formats](./chapter_7/text_binary_format.md)
@@ -40,17 +57,19 @@
   - [Compiling pattern matching](./chapter_8/compiling_pattern_matching.md)
   - [Binding variables](./chapter_8/binding_variables.md)
   - [Exhaustiveness diagnostics](./chapter_8/exhaustiveness_diagnostics.md)
-- [Compiler architecture](./chapter_9.md)
-  - [Phase boundaries](./chapter_9/phase_boundaries.md)
-  - [Pass pipelines and invariants](./chapter_9/pass_pipeline_invariants.md)
-  - [Project input and module graph](./chapter_9/project_to_modules.md)
-  - [Artifacts and execution](./chapter_9/artifacts_execution.md)
 - [WebAssembly In-Depth (TODO)]()
-- [Runtime Memory Management](./chapter_10.md)
-  - [The arena allocator](./chapter_10/arena_allocator.md)
-  - [Growth and allocation failure](./chapter_10/growth_and_failure.md)
-  - [Host pointers and reset boundaries](./chapter_10/host_pointers.md)
-  - [Future collectors](./chapter_10/collector_families.md)
+- [interprocedural analysis (TODO)]()
+  - [Linking modules (TODO)]()
+  - [handling dependencies (TODO)]()
+  - [pointer analysis (TODO)]()
+  - [aliasing (TODO)]()
+  - [data-flow (TODO)]()
+- [Code Optimization (TODO)]()
+  - [Parallelization (TODO)]()
+  - [Loop optimizations (TODO)]()
+  - [Flow Graphs (TODO)]()
+  - [Tarjan's algorithm and SCCs (TODO)]()
+    - [Other Algorithms (TODO)]()
 
 <!--
 TODO:
@@ -59,10 +78,6 @@ TODO:
   - Lowering typed and resolved syntax into a smaller IR
   - Making evaluation order, scopes, captures, and failure paths explicit
   - Distinguishing language lowering from backend-specific limitations
-- Runtime value representation
-- Linking modules and handling dependencies
-- Standard library and host interop
-- Testing a compiler end to end
 -->
 
 # Development

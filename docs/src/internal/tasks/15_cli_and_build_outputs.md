@@ -31,9 +31,9 @@ Make the CLI compile projects and produce useful artifacts.
 
 ### Structured Wasm construction
 
-- [ ] Define compiler-owned Wasm module, import, function, local, memory,
+- [x] Define compiler-owned Wasm module, import, function, local, memory,
       table, export, data segment, and custom-section data structures.
-- [ ] Define typed Wasm instruction enums with explicit operand-stack effects.
+- [x] Define typed Wasm instruction enums with explicit operand-stack effects.
 - [ ] Add a validation pass for instruction stack effects, branch result types,
       local indices, function signatures, and call signatures.
 - [ ] Emit Wasm bytes from the structured module without going through WAT.
