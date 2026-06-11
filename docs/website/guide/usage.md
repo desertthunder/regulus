@@ -47,6 +47,29 @@ gleam-wasm compile path/to/module.gleam
 By default, single-file compilation writes a `.wasm` file next to the input.
 `--output` and `--out-dir` work the same way as project builds.
 
+## Run one file
+
+Use `run` to compile a single `.gleam` file and execute one exported function
+with Wasmtime.
+
+```sh
+gleam-wasm run path/to/module.gleam
+gleam-wasm run path/to/module.gleam --function answer
+gleam-wasm run path/to/module.gleam --function add 1 2
+```
+
+`run` defaults to the `main` export. The `exec` command is an alias:
+
+```sh
+gleam-wasm exec path/to/module.gleam
+```
+
+Scalar arguments and return values use the low-level Wasm ABI. `Int` values are
+passed as `i64`, `Float` values as `f64`, and `Bool` values as `i32`. Managed
+values such as strings, lists, tuples, records, and custom types are pointers
+into guest memory at the Wasm boundary. Programs can still print strings through
+`gleam/io.print` and `gleam/io.println` when targeting Wasmtime.
+
 ## Targets
 
 Both `build` and `compile` accept `--target`:

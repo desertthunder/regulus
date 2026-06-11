@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -19,6 +20,10 @@ pub fn run(command: Command) -> ExitCode {
         Command::Compile { input, output, out_dir, target, emit, wat, dump_dir, verbose, json } => {
             let mut compiler = Compiler { input: &input, output, out_dir, wat, dump_dir, target, emit, verbose, json };
             compiler.compile()
+        }
+        Command::Run { input, function, args, target, verbose, json } => {
+            let runner = Runner { input: &input, function: &function, args: &args, target, verbose, json };
+            runner.run()
         }
         Command::List { project } => list(project.as_deref().unwrap_or_else(|| Path::new("."))),
     }
@@ -204,6 +209,152 @@ impl Compiler<'_> {
 
         ExitCode::SUCCESS
     }
+}
+
+struct Runner<'a> {
+    input: &'a Path,
+    function: &'a str,
+    args: &'a [String],
+    target: Target,
+    verbose: bool,
+    json: bool,
+}
+
+impl Runner<'_> {
+    pub fn run(&self) -> ExitCode {
+        if self.json {
+            return echo::fail("run", "--json", "machine-readable output is not implemented yet");
+        }
+        if self.verbose {
+            echo::status("compile", self.input.display().to_string());
+        }
+        let source = match fs::read_to_string(self.input) {
+            Ok(source) => SourceFile::with_path(SourceFileId(0), self.input, source),
+            Err(error) => return echo::fail("read", self.input.display(), error),
+        };
+        let compiled = match compile_with_dumps(source, self.target.into()) {
+            Ok(compiled) => compiled,
+            Err(diagnostics) => return echo::fail_with_diagnostics("compile", self.input.display(), &diagnostics),
+        };
+
+        match run_wasm_export(&compiled.wasm.bytes, self.function, self.args) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(message) => echo::fail("run", self.function, message),
+        }
+    }
+}
+
+fn run_wasm_export(bytes: &[u8], function: &str, args: &[String]) -> Result<(), String> {
+    use wasmtime::{Caller, Engine, Linker, Module, Store};
+
+    let engine = Engine::default();
+    let module = Module::new(&engine, bytes).map_err(|error| error.to_string())?;
+    let mut linker = Linker::new(&engine);
+    linker
+        .func_wrap("env", "print", |mut caller: Caller<'_, ()>, ptr: i32| {
+            print!("{}", read_host_string(&mut caller, ptr));
+            let _ = io::stdout().flush();
+        })
+        .map_err(|error| error.to_string())?;
+    linker
+        .func_wrap("env", "println", |mut caller: Caller<'_, ()>, ptr: i32| {
+            println!("{}", read_host_string(&mut caller, ptr));
+        })
+        .map_err(|error| error.to_string())?;
+    linker
+        .func_wrap("env", "debug_i64", |value: i64| println!("{value}"))
+        .map_err(|error| error.to_string())?;
+    linker
+        .func_wrap("env", "debug_value", |mut caller: Caller<'_, ()>, ptr: i32| {
+            println!("{}", read_host_string(&mut caller, ptr));
+        })
+        .map_err(|error| error.to_string())?;
+
+    let mut store = Store::new(&engine, ());
+    let instance = linker
+        .instantiate(&mut store, &module)
+        .map_err(|error| error.to_string())?;
+    let func = instance
+        .get_func(&mut store, function)
+        .ok_or_else(|| format!("export `{function}` was not found"))?;
+    let ty = func.ty(&store);
+    let params = ty.params().collect::<Vec<_>>();
+    let results = ty.results().collect::<Vec<_>>();
+    if params.len() != args.len() {
+        return Err(format!(
+            "export `{function}` expects {} argument(s), got {}",
+            params.len(),
+            args.len()
+        ));
+    }
+    let values = args
+        .iter()
+        .zip(params.iter())
+        .map(|(arg, type_)| parse_wasm_arg(arg, type_))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut result_values = results.iter().map(default_wasm_value).collect::<Result<Vec<_>, _>>()?;
+    func.call(&mut store, &values, &mut result_values)
+        .map_err(|error| error.to_string())?;
+
+    for result in result_values {
+        println!("{}", format_wasm_value(&result));
+    }
+    Ok(())
+}
+
+fn parse_wasm_arg(arg: &str, type_: &wasmtime::ValType) -> Result<wasmtime::Val, String> {
+    use wasmtime::{Val, ValType};
+
+    match type_ {
+        ValType::I32 => Ok(Val::I32(arg.parse::<i32>().map_err(|error| error.to_string())?)),
+        ValType::I64 => Ok(Val::I64(arg.parse::<i64>().map_err(|error| error.to_string())?)),
+        ValType::F32 => Ok(Val::F32(
+            arg.parse::<f32>().map_err(|error| error.to_string())?.to_bits(),
+        )),
+        ValType::F64 => Ok(Val::F64(
+            arg.parse::<f64>().map_err(|error| error.to_string())?.to_bits(),
+        )),
+        other => Err(format!("cannot pass CLI argument for Wasm type `{other}`")),
+    }
+}
+
+fn default_wasm_value(type_: &wasmtime::ValType) -> Result<wasmtime::Val, String> {
+    use wasmtime::{Val, ValType};
+
+    match type_ {
+        ValType::I32 => Ok(Val::I32(0)),
+        ValType::I64 => Ok(Val::I64(0)),
+        ValType::F32 => Ok(Val::F32(0)),
+        ValType::F64 => Ok(Val::F64(0)),
+        other => Err(format!("cannot print Wasm result type `{other}`")),
+    }
+}
+
+fn format_wasm_value(value: &wasmtime::Val) -> String {
+    match value {
+        wasmtime::Val::I32(value) => value.to_string(),
+        wasmtime::Val::I64(value) => value.to_string(),
+        wasmtime::Val::F32(value) => f32::from_bits(*value).to_string(),
+        wasmtime::Val::F64(value) => f64::from_bits(*value).to_string(),
+        other => format!("{other:?}"),
+    }
+}
+
+fn read_host_string(caller: &mut wasmtime::Caller<'_, ()>, ptr: i32) -> String {
+    let Some(memory) = caller.get_export("memory").and_then(|export| export.into_memory()) else {
+        return "<missing memory export>".into();
+    };
+    let ptr = ptr as usize;
+    let mut header = [0; 8];
+    if memory.read(&mut *caller, ptr, &mut header).is_err() {
+        return "<invalid string header>".into();
+    }
+    let len = u32::from_le_bytes(header[4..8].try_into().expect("string length header")) as usize;
+    let mut bytes = vec![0; len];
+    if memory.read(&mut *caller, ptr + 8, &mut bytes).is_err() {
+        return "<invalid string data>".into();
+    }
+    String::from_utf8(bytes).unwrap_or_else(|_| "<invalid utf-8 string>".into())
 }
 
 struct CompiledModule {

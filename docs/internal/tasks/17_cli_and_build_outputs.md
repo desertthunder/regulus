@@ -16,6 +16,9 @@ Make compiler commands predictable and generated artifacts useful.
 - [ ] Add CLI target or profile selection for JS host profiles: browser,
       bundler, and Node.js.
 - [ ] Keep project compilation flags consistent with single-file compilation.
+- [ ] Add CLI `run` or `exec` integration tests for Wasmtime execution.
+- [ ] Add ABI-aware rendering for managed `run` return values such as strings,
+      tuples, lists, records, `Result`, and `Option`.
 
 ### Artifacts
 

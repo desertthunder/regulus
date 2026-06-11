@@ -68,6 +68,26 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Compile a source file and execute one exported function with Wasmtime.
+    #[command(visible_alias = "exec")]
+    Run {
+        /// Gleam source file to compile and run.
+        input: PathBuf,
+        /// Exported function to invoke.
+        #[arg(short, long, default_value = "main")]
+        function: String,
+        /// Positional arguments passed to the exported function.
+        args: Vec<String>,
+        /// Select the intended runtime target.
+        #[arg(long, value_enum, default_value_t = Target::Wasmtime)]
+        target: Target,
+        /// Print the input as it is compiled.
+        #[arg(short, long)]
+        verbose: bool,
+        /// Reserved for future machine-readable output.
+        #[arg(long)]
+        json: bool,
+    },
     /// Load a Gleam project and print discovered modules.
     List {
         /// Project directory or gleam.toml path. Defaults to the current directory.
