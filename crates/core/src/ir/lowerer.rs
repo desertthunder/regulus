@@ -2485,6 +2485,13 @@ mod tests {
         assert_eq!(names.len(), 3);
         assert!(names.iter().all(|name| name.starts_with("r$pkg$")));
         assert_eq!(names.iter().collect::<std::collections::HashSet<_>>().len(), 3);
+        let run_export = module
+            .exports
+            .iter()
+            .find(|export| export.name == "run")
+            .expect("run export");
+        assert_ne!(run_export.name, run_export.backend_name());
+        assert!(run_export.backend_name().ends_with("$fn$x72756e"));
         let run = module
             .functions
             .iter()

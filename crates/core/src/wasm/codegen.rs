@@ -273,11 +273,17 @@ impl<'a> StructuredEmitter<'a> {
 
         for function in &source.functions {
             if matches!(function.abi.boundary, ir::CallBoundary::ModuleExport) {
+                let export_name = source
+                    .exports
+                    .iter()
+                    .find(|export| export.kind == ir::ExportKind::Function && export.backend_name() == function.name)
+                    .map(|export| export.name.clone())
+                    .unwrap_or_else(|| function.name.clone());
                 let function_id = self.function_id_structured(&function.name);
                 self.module
                     .exports
-                    .push(Export { name: function.name.clone(), desc: ExportDesc::Function(function_id) });
-                self.export_adapters(function)?;
+                    .push(Export { name: export_name.clone(), desc: ExportDesc::Function(function_id) });
+                self.export_adapters(function, &export_name)?;
             }
         }
 
@@ -304,7 +310,7 @@ impl<'a> StructuredEmitter<'a> {
         Ok(self.module)
     }
 
-    fn export_adapters(&mut self, function: &ir::Function) -> StructuredResult<()> {
+    fn export_adapters(&mut self, function: &ir::Function, export_name: &str) -> StructuredResult<()> {
         if !function.params.is_empty() || function.return_type != Type::String {
             return Ok(());
         }
@@ -324,7 +330,7 @@ impl<'a> StructuredEmitter<'a> {
         let data_id = self.module.push_function(data);
         self.module
             .exports
-            .push(Export { name: format!("{}__data", function.name), desc: ExportDesc::Function(data_id) });
+            .push(Export { name: format!("{export_name}__data"), desc: ExportDesc::Function(data_id) });
 
         let len_type = self.module.push_type(FunctionType::new([], [ValueType::I32]));
         let mut len = Function::new(len_type);
@@ -336,7 +342,7 @@ impl<'a> StructuredEmitter<'a> {
         let len_id = self.module.push_function(len);
         self.module
             .exports
-            .push(Export { name: format!("{}__len", function.name), desc: ExportDesc::Function(len_id) });
+            .push(Export { name: format!("{export_name}__len"), desc: ExportDesc::Function(len_id) });
         Ok(())
     }
 

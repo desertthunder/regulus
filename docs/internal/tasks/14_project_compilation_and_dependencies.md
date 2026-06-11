@@ -31,9 +31,9 @@ The goal here is to make linked project names deterministic and collision-free.
       punctuation-sanitization collisions.
 - [x] Assign backend names from structured compiler identity instead of raw
       lowered declaration strings.
-- [ ] Preserve intentional public export names separately from internal backend
+- [x] Preserve intentional public export names separately from internal backend
       names during emission.
-- [ ] Rename project functions, constants, constructors, lifted closures, and
+- [x] Rename project functions, constants, constructors, lifted closures, and
       helper functions during linking.
 - [ ] Rewrite same-project direct calls, function values, constructor names,
       record update constructors, and debug references to generated names.

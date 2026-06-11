@@ -7,7 +7,9 @@ use std::collections::{HashMap, HashSet};
 use crate::{
     ast::{self, Declaration as AstDeclaration, LiteralKind},
     diagnostic::{Diagnostic, DiagnosticCode, Diagnostics},
-    naming::{BackendName, ModuleName, render_backend_name},
+    naming::{
+        BackendItem, BackendItemKind, BackendName, CompilerGeneratedIndex, HelperKind, ModuleName, render_backend_name,
+    },
     resolve::SymbolKind,
     source::Span,
     stdlib,
@@ -292,26 +294,35 @@ impl From<&SymbolKind> for ReferenceKind {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Export {
+    /// User-facing ABI export name.
     pub name: String,
+    /// Internal backend declaration name. This is assigned by the project
+    /// linker after generated names are rendered. Single-file compilation
+    /// leaves it unset and uses `name` as the backend name.
+    pub backend_name: Option<String>,
     pub kind: ExportKind,
     pub span: Span,
 }
 
 impl Export {
     pub fn function(name: String, span: Span) -> Self {
-        Self { name, kind: ExportKind::Function, span }
+        Self { name, backend_name: None, kind: ExportKind::Function, span }
     }
 
     pub fn constant(name: String, span: Span) -> Self {
-        Self { name, kind: ExportKind::Constant, span }
+        Self { name, backend_name: None, kind: ExportKind::Constant, span }
     }
 
     pub fn type_(name: String, span: Span) -> Self {
-        Self { name, kind: ExportKind::Type, span }
+        Self { name, backend_name: None, kind: ExportKind::Type, span }
     }
 
     pub fn constructor(name: String, span: Span) -> Self {
-        Self { name, kind: ExportKind::Constructor, span }
+        Self { name, backend_name: None, kind: ExportKind::Constructor, span }
+    }
+
+    pub fn backend_name(&self) -> &str {
+        self.backend_name.as_deref().unwrap_or(&self.name)
     }
 }
 
@@ -871,10 +882,10 @@ fn link_modules(modules: Vec<Module>) -> Result<Module, Diagnostics> {
     let mut functions = HashSet::new();
     let mut diagnostics = Vec::new();
 
-    let global_renames = global_backend_function_renames(&modules);
+    let global_renames = global_backend_renames(&modules);
 
     for module in modules {
-        let mut renames = module_backend_function_renames(&module, &global_renames);
+        let mut renames = module_backend_renames(&module, &global_renames);
         renames.extend(
             global_renames
                 .iter()
@@ -903,32 +914,81 @@ fn link_modules(modules: Vec<Module>) -> Result<Module, Diagnostics> {
     if diagnostics.is_empty() { Ok(linked) } else { Err(diagnostics) }
 }
 
-fn global_backend_function_renames(modules: &[Module]) -> HashMap<String, String> {
+fn global_backend_renames(modules: &[Module]) -> HashMap<String, String> {
     let mut renames = HashMap::new();
     for module in modules {
         let Some(identity) = &module.identity else { continue };
+        let module_name = ModuleName::from_path(&identity.module);
+        let mut generated = 0;
         for function in &module.functions {
-            let backend = BackendName::function(
-                identity.package.as_str(),
-                ModuleName::from_path(&identity.module),
-                function.name.as_str(),
-            );
+            let backend = if let Some(index) = anonymous_function_index(&function.name) {
+                BackendName::package_item(
+                    identity.package.as_str(),
+                    module_name.clone(),
+                    BackendItem::generated(
+                        BackendItemKind::Helper(HelperKind::LiftedFunction),
+                        CompilerGeneratedIndex(index),
+                    ),
+                )
+            } else if function.name.starts_with("__") {
+                let index = generated;
+                generated += 1;
+                BackendName::package_item(
+                    identity.package.as_str(),
+                    module_name.clone(),
+                    BackendItem::generated_for_member(
+                        BackendItemKind::Helper(HelperKind::Other("project".into())),
+                        function.name.as_str(),
+                        CompilerGeneratedIndex(index),
+                    ),
+                )
+            } else {
+                BackendName::function(identity.package.as_str(), module_name.clone(), function.name.as_str())
+            };
             renames.insert(
                 format!("{}.{}", identity.module, function.name),
                 render_backend_name(&backend),
             );
         }
+        for constant in &module.constants {
+            let backend = BackendName::constant(identity.package.as_str(), module_name.clone(), constant.name.as_str());
+            renames.insert(
+                format!("{}.{}", identity.module, constant.name),
+                render_backend_name(&backend),
+            );
+        }
+        for declaration in &module.declarations {
+            if declaration.kind == DeclarationKind::TypeDefinition
+                && let Some(name) = &declaration.name
+            {
+                let backend = BackendName::constructor(identity.package.as_str(), module_name.clone(), name.as_str());
+                renames.insert(format!("{}.{}", identity.module, name), render_backend_name(&backend));
+            }
+        }
     }
     renames
 }
 
-fn module_backend_function_renames(module: &Module, global: &HashMap<String, String>) -> HashMap<String, String> {
+fn module_backend_renames(module: &Module, global: &HashMap<String, String>) -> HashMap<String, String> {
     let mut renames = HashMap::new();
     let Some(identity) = &module.identity else { return renames };
 
     for function in &module.functions {
         if let Some(backend) = global.get(&format!("{}.{}", identity.module, function.name)) {
             renames.insert(function.name.clone(), backend.clone());
+        }
+    }
+    for constant in &module.constants {
+        if let Some(backend) = global.get(&format!("{}.{}", identity.module, constant.name)) {
+            renames.insert(constant.name.clone(), backend.clone());
+        }
+    }
+    for declaration in &module.declarations {
+        if declaration.kind == DeclarationKind::TypeDefinition
+            && let Some(name) = &declaration.name
+            && let Some(backend) = global.get(&format!("{}.{}", identity.module, name))
+        {
+            renames.insert(name.clone(), backend.clone());
         }
     }
 
@@ -946,15 +1006,66 @@ fn module_backend_function_renames(module: &Module, global: &HashMap<String, Str
                 continue;
             };
             renames.insert(format!("{local}.{member}"), backend.clone());
+            if import
+                .unqualified
+                .iter()
+                .any(|item| item.alias.as_deref().unwrap_or(&item.name) == member)
+            {
+                renames.insert(member.to_string(), backend.clone());
+            }
         }
     }
 
     renames
 }
 
+fn anonymous_function_index(name: &str) -> Option<u32> {
+    name.strip_prefix("__anon_")?.parse().ok()
+}
+
 fn rewrite_module_backend_names(module: &mut Module, renames: &HashMap<String, String>) {
+    for constant in &mut module.constants {
+        rewrite_name(&mut constant.name, renames);
+    }
+    for step in &mut module.init.steps {
+        if let InitStep::StaticData { name, .. } = step {
+            rewrite_name(name, renames);
+        }
+    }
+    for reference in &mut module.references {
+        rewrite_reference(reference, renames);
+    }
+    for export in &mut module.exports {
+        if matches!(
+            export.kind,
+            ExportKind::Function | ExportKind::Constant | ExportKind::Constructor
+        ) {
+            export.backend_name = Some(
+                renames
+                    .get(&export.name)
+                    .cloned()
+                    .unwrap_or_else(|| export.name.clone()),
+            );
+        }
+    }
     for function in &mut module.functions {
         rewrite_function(function, renames);
+    }
+}
+
+fn rewrite_reference(reference: &mut Reference, renames: &HashMap<String, String>) {
+    rewrite_name(&mut reference.name, renames);
+    match &mut reference.target {
+        ReferenceTargetName::LocalSymbol { name, .. } => rewrite_name(name, renames),
+        ReferenceTargetName::QualifiedMember { module, member, resolved } => {
+            let qualified = format!("{module}.{member}");
+            if let Some(backend) = renames.get(&qualified).cloned() {
+                *member = backend.clone();
+                *resolved = Some(backend);
+            } else if let Some(resolved_name) = resolved {
+                rewrite_name(resolved_name, renames);
+            }
+        }
     }
 }
 
@@ -968,12 +1079,39 @@ fn rewrite_function(function: &mut Function, renames: &HashMap<String, String>) 
 fn rewrite_block(block: &mut Block, renames: &HashMap<String, String>) {
     for instruction in &mut block.instructions {
         match instruction {
-            Instruction::Evaluate { expression, .. }
-            | Instruction::LocalSet { value: expression, .. }
-            | Instruction::AssertMatch { value: expression, .. } => rewrite_expression(expression, renames),
+            Instruction::Evaluate { expression, .. } | Instruction::LocalSet { value: expression, .. } => {
+                rewrite_expression(expression, renames)
+            }
+            Instruction::AssertMatch { value, pattern, .. } => {
+                rewrite_expression(value, renames);
+                rewrite_pattern(pattern, renames);
+            }
         }
     }
     rewrite_expression(&mut block.result, renames);
+}
+
+fn rewrite_pattern(pattern: &mut IrPattern, renames: &HashMap<String, String>) {
+    match pattern {
+        IrPattern::Alias { pattern, .. } => rewrite_pattern(pattern, renames),
+        IrPattern::Tuple(items) => {
+            for item in items {
+                rewrite_pattern(item, renames);
+            }
+        }
+        IrPattern::List { elements, .. } => {
+            for item in elements {
+                rewrite_pattern(item, renames);
+            }
+        }
+        IrPattern::Constructor { name, arguments } => {
+            rewrite_name(name, renames);
+            for argument in arguments {
+                rewrite_pattern(&mut argument.pattern, renames);
+            }
+        }
+        IrPattern::Discard | IrPattern::Binding(_) | IrPattern::Literal(_) | IrPattern::BitString(_) => {}
+    }
 }
 
 fn rewrite_expression(expression: &mut Expression, renames: &HashMap<String, String>) {
@@ -1008,6 +1146,9 @@ fn rewrite_expression(expression: &mut Expression, renames: &HashMap<String, Str
                 rewrite_expression(subject, renames);
             }
             for clause in &mut branch.clauses {
+                for pattern in &mut clause.patterns {
+                    rewrite_pattern(pattern, renames);
+                }
                 if let Some(guard) = &mut clause.guard {
                     rewrite_expression(guard, renames);
                 }
@@ -1035,12 +1176,14 @@ fn rewrite_expression(expression: &mut Expression, renames: &HashMap<String, Str
             }
         }
         ExpressionKind::Constructor(constructor) => {
+            rewrite_name(&mut constructor.name, renames);
             for argument in &mut constructor.arguments {
                 rewrite_expression(argument, renames);
             }
         }
-        ExpressionKind::RecordUpdate { record, fields, .. } => {
+        ExpressionKind::RecordUpdate { record, constructor, fields } => {
             rewrite_expression(record, renames);
+            rewrite_name(constructor, renames);
             for field in fields {
                 if let Some(value) = &mut field.value {
                     rewrite_expression(value, renames);

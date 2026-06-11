@@ -2,7 +2,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use compiler_core;
 use compiler_core::source::{SourceFile, SourceFileId};
 use compiler_core::{diagnostic::Diagnostics, target::CompileTarget};
 
