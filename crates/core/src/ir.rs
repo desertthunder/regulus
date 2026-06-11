@@ -370,7 +370,7 @@ impl From<&Type> for AbiValue {
 pub enum CallBoundary {
     Internal,
     ModuleExport,
-    ModuleImport { module: String },
+    ModuleImport { module: String, name: String },
     HostImport { module: String, name: String },
 }
 
@@ -921,7 +921,22 @@ fn global_backend_renames(modules: &[Module]) -> HashMap<String, String> {
         let module_name = ModuleName::from_path(&identity.module);
         let mut generated = 0;
         for function in &module.functions {
-            let backend = if let Some(index) = anonymous_function_index(&function.name) {
+            let backend = if matches!(
+                function.abi.boundary,
+                CallBoundary::HostImport { .. } | CallBoundary::ModuleImport { .. }
+            ) {
+                let index = generated;
+                generated += 1;
+                BackendName::package_item(
+                    identity.package.as_str(),
+                    module_name.clone(),
+                    BackendItem::generated_for_member(
+                        BackendItemKind::Helper(HelperKind::ImportWrapper),
+                        function.name.as_str(),
+                        CompilerGeneratedIndex(index),
+                    ),
+                )
+            } else if let Some(index) = anonymous_function_index(&function.name) {
                 BackendName::package_item(
                     identity.package.as_str(),
                     module_name.clone(),

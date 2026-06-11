@@ -2466,10 +2466,14 @@ mod tests {
         )
         .expect("write manifest");
         fs::create_dir_all(dir.path().join("src")).expect("create src");
-        fs::write(dir.path().join("src/app.gleam"), "pub fn id(x: Int) -> Int { x }\n").expect("write app");
+        fs::write(
+            dir.path().join("src/app.gleam"),
+            "pub fn id(x: Int) -> Int { x }\npub fn box(f: fn(Int) -> Int) -> fn(Int) -> Int { f }\n",
+        )
+        .expect("write app");
         fs::write(
             dir.path().join("src/main.gleam"),
-            "import app\npub fn id(x: Int) -> Int { x + 1 }\npub fn run() -> Int { app.id(id(1)) }\n",
+            "import app\npub fn id(x: Int) -> Int { x + 1 }\npub fn run() -> Int { app.id(id(1)) }\npub fn value() -> fn(Int) -> Int { app.box(id) }\n",
         )
         .expect("write main");
         let project = project::load_project(dir.path()).expect("load project");
@@ -2482,9 +2486,9 @@ mod tests {
             .iter()
             .map(|function| function.name.as_str())
             .collect::<Vec<_>>();
-        assert_eq!(names.len(), 3);
+        assert_eq!(names.len(), 5);
         assert!(names.iter().all(|name| name.starts_with("r$pkg$")));
-        assert_eq!(names.iter().collect::<std::collections::HashSet<_>>().len(), 3);
+        assert_eq!(names.iter().collect::<std::collections::HashSet<_>>().len(), 5);
         let run_export = module
             .exports
             .iter()
@@ -2509,6 +2513,59 @@ mod tests {
             "inner function was {}",
             inner.function
         );
+        let value = module
+            .functions
+            .iter()
+            .find(|function| function.name.ends_with("$fn$x76616c7565"))
+            .expect("value function");
+        let ExpressionKind::DirectCall(box_call) = &value.body.result.kind else {
+            panic!("expected boxed function value call");
+        };
+        let ExpressionKind::FunctionValue(function_value) = &box_call.arguments[0].value.kind else {
+            panic!("expected renamed function value");
+        };
+        assert!(function_value.name.contains("$mod$x6d61696e$fn$x6964"));
+    }
+
+    #[test]
+    fn namespaces_project_host_import_wrappers_without_mangling_abi_names() {
+        let dir = tempdir().expect("tempdir");
+        fs::write(
+            dir.path().join("gleam.toml"),
+            "name = \"host-app\"\nversion = \"1.0.0\"\n",
+        )
+        .expect("write manifest");
+        fs::create_dir_all(dir.path().join("src")).expect("create src");
+        fs::write(
+            dir.path().join("src/main.gleam"),
+            "external fn inc(value: Int) -> Int = \"env\" \"host_inc\"\npub fn run() -> Int { inc(1) }\n",
+        )
+        .expect("write main");
+        let project = project::load_project(dir.path()).expect("load project");
+        let typed = types::check_project(&project).expect("type check project");
+
+        let module = lower_project(typed).expect("lower project");
+
+        let import = module
+            .functions
+            .iter()
+            .find(|function| matches!(function.abi.boundary, CallBoundary::HostImport { .. }))
+            .expect("host import wrapper");
+        assert!(import.name.starts_with("r$pkg$"));
+        assert!(import.name.contains("$helper$import_wrapper$"));
+        assert!(matches!(
+            &import.abi.boundary,
+            CallBoundary::HostImport { module, name } if module == "env" && name == "host_inc"
+        ));
+        let run = module
+            .functions
+            .iter()
+            .find(|function| function.name.ends_with("$fn$x72756e"))
+            .expect("run function");
+        let ExpressionKind::DirectCall(call) = &run.body.result.kind else {
+            panic!("expected direct call");
+        };
+        assert_eq!(call.function, import.name);
     }
 
     #[test]

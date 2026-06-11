@@ -292,11 +292,9 @@ fn module_name(root: &Path, source_root: SourceRoot, path: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
-
-    use tempfile::tempdir;
-
     use super::*;
+    use std::fs;
+    use tempfile::tempdir;
 
     fn write(path: &Path, text: &str) {
         fs::create_dir_all(path.parent().expect("fixture parent")).expect("create fixture dir");

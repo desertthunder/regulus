@@ -35,15 +35,15 @@ The goal here is to make linked project names deterministic and collision-free.
       names during emission.
 - [x] Rename project functions, constants, constructors, lifted closures, and
       helper functions during linking.
-- [ ] Rewrite same-project direct calls, function values, constructor names,
+- [x] Rewrite same-project direct calls, function values, constructor names,
       record update constructors, and debug references to generated names.
-- [ ] Keep host import and module import ABI names stable while namespacing
+- [x] Keep host import and module import ABI names stable while namespacing
       compiler-owned wrapper functions.
 - [ ] Detect generated-name collisions deterministically and report the source
       declarations that caused them.
+- [ ] Show source names and generated names in linked IR debug dumps.
 - [ ] Add fixtures for duplicate function names in different modules, duplicate
       module basenames, dependency module name overlap, and lifted closures.
-- [ ] Show source names and generated names in linked IR debug dumps.
 
 ### Examples
 

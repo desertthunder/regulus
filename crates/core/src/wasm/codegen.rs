@@ -366,7 +366,7 @@ impl<'a> StructuredEmitter<'a> {
                 )
                 .with_label(Label::primary(function.span, "unsupported target import here")),
             ])),
-            ir::CallBoundary::ModuleImport { module } => Ok(Some((module.clone(), function.name.clone()))),
+            ir::CallBoundary::ModuleImport { module, name } => Ok(Some((module.clone(), name.clone()))),
             ir::CallBoundary::Internal | ir::CallBoundary::ModuleExport => Ok(None),
         }
     }

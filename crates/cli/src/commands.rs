@@ -1,13 +1,21 @@
+mod builder;
+mod compiler;
+mod runner;
+
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use compiler_core::source::{SourceFile, SourceFileId};
+use compiler_core::source::SourceFile;
 use compiler_core::{diagnostic::Diagnostics, target::CompileTarget};
 
-use crate::args::{Command, Emit, Target};
-use crate::echo;
+use super::args::Command;
+use super::echo;
+
+use builder::Builder;
+use compiler::Compiler;
+use runner::Runner;
 
 pub fn run(command: Command) -> ExitCode {
     match command {
@@ -47,200 +55,6 @@ fn list(input: &Path) -> ExitCode {
             ExitCode::SUCCESS
         }
         Err(diagnostics) => echo::fail_with_diagnostics("load project", input.display(), &diagnostics),
-    }
-}
-
-struct Builder<'a> {
-    input: Option<&'a Path>,
-    output: Option<PathBuf>,
-    out_dir: Option<PathBuf>,
-    target: Option<Target>,
-    emit: Vec<Emit>,
-    dump_dir: Option<PathBuf>,
-    verbose: bool,
-    json: bool,
-}
-
-impl Builder<'_> {
-    pub fn build(&mut self) -> ExitCode {
-        if self.json {
-            return echo::fail("build", "--json", "machine-readable output is not implemented yet");
-        }
-        let input = self.input.unwrap_or_else(|| Path::new("."));
-        let project = match compiler_core::project::load_project(input) {
-            Ok(project) => project,
-            Err(diagnostics) => return echo::fail_with_diagnostics("load project", input.display(), &diagnostics),
-        };
-        if self.verbose {
-            for module in &project.graph.modules {
-                echo::status("compile", format!("{} -> {}", module.name, module.path.display()));
-            }
-        }
-
-        let target = self
-            .target
-            .map(Into::into)
-            .unwrap_or_else(|| compiler_core::target::project_compile_target(project.config.target.as_ref()));
-        let typed = match compiler_core::types::check_project(&project) {
-            Ok(typed) => typed,
-            Err(diagnostics) => {
-                return echo::fail_with_diagnostics("compile project", project.root.display(), &diagnostics);
-            }
-        };
-        let ir = match compiler_core::ir::lower_project(typed) {
-            Ok(ir) => ir,
-            Err(diagnostics) => {
-                return echo::fail_with_diagnostics("compile project", project.root.display(), &diagnostics);
-            }
-        };
-        let wasm = match ir.emit_wasm_with_options(target.into()) {
-            Ok(wasm) => wasm,
-            Err(diagnostics) => return echo::fail_with_diagnostics("emit wasm", project.root.display(), &diagnostics),
-        };
-
-        let artifact_base = project.config.name.replace('-', "_");
-        let output = match final_wasm_path(
-            self.output.clone(),
-            self.out_dir.as_deref(),
-            &project.root,
-            &artifact_base,
-        ) {
-            Ok(path) => path,
-            Err(message) => return echo::fail("build", "output", message),
-        };
-
-        if self.emit.contains(&Emit::Wasm) {
-            if let Err(error) = write_file(&output, &wasm.bytes) {
-                return echo::fail("write", output.display(), error);
-            }
-            echo::status("wasm", format!("{} ({} bytes)", output.display(), wasm.bytes.len()));
-        }
-        if self.emit.contains(&Emit::Wat) {
-            let wat_path = artifact_path(self.out_dir.as_deref(), &output, &artifact_base, "wat");
-            if let Err(error) = write_file(&wat_path, wasm.wat.as_bytes()) {
-                return echo::fail("write", wat_path.display(), error);
-            }
-            echo::status("wat", wat_path.display().to_string());
-        }
-        if let Some(dump_dir) = self.dump_dir.clone()
-            && let Err(error) = write_project_debug_dumps(&dump_dir, &ir, &wasm)
-        {
-            return echo::fail("write", "debug dumps", error);
-        }
-
-        ExitCode::SUCCESS
-    }
-}
-
-struct Compiler<'a> {
-    input: &'a Path,
-    output: Option<PathBuf>,
-    out_dir: Option<PathBuf>,
-    wat: Option<Option<PathBuf>>,
-    dump_dir: Option<PathBuf>,
-    target: Target,
-    emit: Vec<Emit>,
-    verbose: bool,
-    json: bool,
-}
-
-impl Compiler<'_> {
-    pub fn compile(&mut self) -> ExitCode {
-        if self.json {
-            return echo::fail("compile", "--json", "machine-readable output is not implemented yet");
-        }
-        if self.wat.is_some() && !self.emit.contains(&Emit::Wat) {
-            self.emit.push(Emit::Wat);
-        }
-        if self.verbose {
-            echo::status("compile", self.input.display().to_string());
-        }
-        let source = match fs::read_to_string(self.input) {
-            Ok(source) => SourceFile::with_path(SourceFileId(0), self.input, source),
-            Err(error) => return echo::fail("read", self.input.display(), error),
-        };
-
-        let compiled = match compile_with_dumps(source, self.target.into()) {
-            Ok(compiled) => compiled,
-            Err(diagnostics) => return echo::fail_with_diagnostics("compile", self.input.display(), &diagnostics),
-        };
-
-        if let Some(dump_dir) = self.dump_dir.clone()
-            && let Err(error) = write_debug_dumps(&dump_dir, &compiled)
-        {
-            return echo::fail("write", "debug dumps", error);
-        }
-
-        let artifact_base = self
-            .input
-            .file_stem()
-            .and_then(|stem| stem.to_str())
-            .unwrap_or("module");
-        let output = match (self.output.clone(), self.out_dir.as_deref()) {
-            (Some(_), Some(_)) => {
-                return echo::fail("compile", "output", "--output and --out-dir cannot be used together");
-            }
-            (Some(path), None) => path,
-            (None, Some(dir)) => dir.join(format!("{artifact_base}.wasm")),
-            (None, None) => self.input.with_extension("wasm"),
-        };
-
-        if self.emit.contains(&Emit::Wasm) {
-            if let Err(error) = write_file(&output, &compiled.wasm.bytes) {
-                return echo::fail("write", output.display(), error);
-            }
-            echo::status(
-                "wasm",
-                format!("{} ({} bytes)", output.display(), compiled.wasm.bytes.len()),
-            );
-        }
-
-        if self.emit.contains(&Emit::Wat) {
-            let wat_path = self
-                .wat
-                .clone()
-                .flatten()
-                .unwrap_or_else(|| artifact_path(self.out_dir.as_deref(), &output, artifact_base, "wat"));
-            if let Err(error) = write_file(&wat_path, compiled.wasm.wat.as_bytes()) {
-                return echo::fail("write", wat_path.display(), error);
-            }
-            echo::status("wat", wat_path.display().to_string());
-        }
-
-        ExitCode::SUCCESS
-    }
-}
-
-struct Runner<'a> {
-    input: &'a Path,
-    function: &'a str,
-    args: &'a [String],
-    target: Target,
-    verbose: bool,
-    json: bool,
-}
-
-impl Runner<'_> {
-    pub fn run(&self) -> ExitCode {
-        if self.json {
-            return echo::fail("run", "--json", "machine-readable output is not implemented yet");
-        }
-        if self.verbose {
-            echo::status("compile", self.input.display().to_string());
-        }
-        let source = match fs::read_to_string(self.input) {
-            Ok(source) => SourceFile::with_path(SourceFileId(0), self.input, source),
-            Err(error) => return echo::fail("read", self.input.display(), error),
-        };
-        let compiled = match compile_with_dumps(source, self.target.into()) {
-            Ok(compiled) => compiled,
-            Err(diagnostics) => return echo::fail_with_diagnostics("compile", self.input.display(), &diagnostics),
-        };
-
-        match run_wasm_export(&compiled.wasm.bytes, self.function, self.args) {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(message) => echo::fail("run", self.function, message),
-        }
     }
 }
 
@@ -357,6 +171,7 @@ fn read_host_string(caller: &mut wasmtime::Caller<'_, ()>, ptr: i32) -> String {
     String::from_utf8(bytes).unwrap_or_else(|_| "<invalid utf-8 string>".into())
 }
 
+// TODO: maybe this should live in core/src/lib.rs
 struct CompiledModule {
     ast: compiler_core::ast::Module,
     resolved: compiler_core::resolve::ResolvedModule,
