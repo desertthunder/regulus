@@ -5,36 +5,44 @@ intermediate representations without adding test-only entry points.
 
 ## Commands
 
+`gleam-wasm build [project]` compiles a Gleam project from `gleam.toml`.
+With no argument it builds the current directory. A directory argument builds
+that project root, and a `gleam.toml` argument builds the owning project.
+
+The command writes `build/<package>.wasm` by default. `--output` writes the
+final Wasm artifact to an exact path. `--out-dir` writes compiler-named
+artifacts such as `<package>.wasm` and `<package>.wat` into the given
+directory. `--emit` accepts comma-separated artifact kinds, including `wasm`
+and `wat`.
+
 `gleam-wasm compile <input>` compiles one Gleam source file. It runs the same
-pipeline used by tests:
+single-file pipeline used by tests:
 
 ```text
 source -> parse -> AST -> resolved AST -> typed module -> IR -> WAT -> Wasm
 ```
 
-The command writes a `.wasm` file next to the input unless `--output` is set.
-`--wat` also writes the generated WebAssembly text format. Passing `--wat`
-without a path uses the `.wat` path matching the output file.
+The command writes a `.wasm` file next to the input unless `--output` or
+`--out-dir` is set. `--wat` remains a compatibility alias for emitting WAT.
+Passing `--wat` without a path uses the `.wat` path matching the output file.
 
-`gleam-wasm project <input>` loads a project directory containing `gleam.toml`
-and prints the discovered modules. It is an inspection command today; linked
-project compilation is still future work.
+`gleam-wasm list [project]` loads a project and prints discovered modules. It is
+an inspection command and does not write artifacts.
 
 ## Targets
 
 `compile` accepts `--target wasmtime`, `--target browser`, and `--target wasi`.
-Wasmtime is the default. Target selection filters target-group declarations
-before later compiler phases and configures backend host import validation.
+Wasmtime is the default. `build` accepts the same `--target` values; when
+omitted it uses the project target from `gleam.toml`.
+
+Target selection filters target-group declarations before later compiler phases
+and configures backend host import validation.
 
 ## Debug dumps
 
-`--dump-dir <dir>` writes deterministic debug files:
-
-- `ast.txt`
-- `resolved.txt`
-- `typed.txt`
-- `ir.txt`
-- `wat.wat`
+`--dump-dir <dir>` writes deterministic debug files. Single-file compilation
+writes AST, resolved AST, typed output, IR, and WAT dumps. Project builds write
+linked IR and WAT dumps today.
 
 These dumps are for contributor inspection. Normal CLI output stays focused on
 the final artifact path, optional WAT path, and diagnostics.

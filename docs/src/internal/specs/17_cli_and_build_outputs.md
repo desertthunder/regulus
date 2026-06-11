@@ -6,7 +6,7 @@ tracks the remaining user-facing command and artifact work that is not specific
 to project linking.
 
 Project compilation itself is defined in
-[Project compilation and dependencies](14_project_compilation_and_dependencies.md).
+[Project compilation and dependencies](./14_project_compilation_and_dependencies.md).
 
 ## Responsibilities
 

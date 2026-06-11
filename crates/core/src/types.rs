@@ -195,7 +195,11 @@ pub fn check_project(project: &Project) -> Result<TypedProject, Diagnostics> {
         .flat_map(|module| function_label_map(&module.ast))
         .collect::<HashMap<_, _>>();
 
-    for (module_info, module) in project.graph.modules.iter().zip(resolved.modules) {
+    let module_order = project_module_order(project, &resolved);
+    let mut resolved_modules = resolved.modules.into_iter().map(Some).collect::<Vec<_>>();
+    for index in module_order {
+        let module_info = &project.graph.modules[index];
+        let module = resolved_modules[index].take().expect("resolved module checked once");
         match check_with_externals(
             module,
             external_constructors.clone(),
@@ -219,6 +223,49 @@ pub fn check_project(project: &Project) -> Result<TypedProject, Diagnostics> {
     }
 
     if diagnostics.is_empty() { Ok(TypedProject { modules, interfaces }) } else { Err(diagnostics) }
+}
+
+fn project_module_order(project: &Project, resolved: &resolve::ResolvedProject) -> Vec<usize> {
+    let module_indices = project
+        .graph
+        .modules
+        .iter()
+        .enumerate()
+        .map(|(index, module)| (module.name.as_str(), index))
+        .collect::<HashMap<_, _>>();
+    let mut order = Vec::new();
+    let mut visiting = vec![false; project.graph.modules.len()];
+    let mut visited = vec![false; project.graph.modules.len()];
+
+    fn visit(
+        index: usize, resolved: &resolve::ResolvedProject, module_indices: &HashMap<&str, usize>,
+        visiting: &mut [bool], visited: &mut [bool], order: &mut Vec<usize>,
+    ) {
+        if visited[index] || visiting[index] {
+            return;
+        }
+        visiting[index] = true;
+        for import in &resolved.modules[index].ast.imports {
+            if let Some(import_index) = module_indices.get(import.module.text.as_str()) {
+                visit(*import_index, resolved, module_indices, visiting, visited, order);
+            }
+        }
+        visiting[index] = false;
+        visited[index] = true;
+        order.push(index);
+    }
+
+    for index in 0..project.graph.modules.len() {
+        visit(
+            index,
+            resolved,
+            &module_indices,
+            &mut visiting,
+            &mut visited,
+            &mut order,
+        );
+    }
+    order
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

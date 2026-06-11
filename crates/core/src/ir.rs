@@ -2,13 +2,15 @@ pub mod bit_slices;
 mod closure;
 mod lowerer;
 
+use std::collections::HashSet;
+
 use crate::{
     ast::{self, Declaration as AstDeclaration, LiteralKind},
-    diagnostic::Diagnostics,
+    diagnostic::{Diagnostic, DiagnosticCode, Diagnostics},
     resolve::SymbolKind,
     source::Span,
     stdlib,
-    types::{Type, TypedModule},
+    types::{Type, TypedModule, TypedProject},
 };
 
 pub use bit_slices::{BitArrayLiteral, BitArraySegment, BitSegmentOption, BitSegmentType, BitStringPatternSegment};
@@ -815,6 +817,66 @@ pub struct ConstructorPatternArgument {
 
 pub fn lower(module: TypedModule) -> Result<Module, Diagnostics> {
     lowerer::lower(module)
+}
+
+pub fn lower_project(project: TypedProject) -> Result<Module, Diagnostics> {
+    let mut modules = Vec::new();
+    let mut diagnostics = Vec::new();
+
+    for module in project.modules {
+        match lowerer::lower_with_project_interfaces(module, &project.interfaces) {
+            Ok(module) => modules.push(module),
+            Err(mut errors) => diagnostics.append(&mut errors),
+        }
+    }
+
+    if !diagnostics.is_empty() {
+        return Err(diagnostics);
+    }
+
+    link_modules(modules)
+}
+
+fn link_modules(modules: Vec<Module>) -> Result<Module, Diagnostics> {
+    let Some(first) = modules.first() else {
+        return Err(vec![Diagnostic::new(
+            DiagnosticCode::ProjectError,
+            "project has no modules to compile",
+        )]);
+    };
+
+    let mut linked = Module {
+        span: first.span,
+        imports: Vec::new(),
+        declarations: Vec::new(),
+        constants: Vec::new(),
+        init: ModuleInit { steps: Vec::new() },
+        references: Vec::new(),
+        exports: Vec::new(),
+        functions: Vec::new(),
+    };
+    let mut functions = HashSet::new();
+    let mut diagnostics = Vec::new();
+
+    for module in modules {
+        for function in &module.functions {
+            if !functions.insert(function.name.clone()) {
+                diagnostics.push(Diagnostic::new(
+                    DiagnosticCode::ProjectError,
+                    format!("duplicate lowered function `{}`", function.name),
+                ));
+            }
+        }
+        linked.imports.extend(module.imports);
+        linked.declarations.extend(module.declarations);
+        linked.constants.extend(module.constants);
+        linked.init.steps.extend(module.init.steps);
+        linked.references.extend(module.references);
+        linked.exports.extend(module.exports);
+        linked.functions.extend(module.functions);
+    }
+
+    if diagnostics.is_empty() { Ok(linked) } else { Err(diagnostics) }
 }
 
 fn comparison_op(operator: &ast::BinaryOperator) -> Option<ComparisonOp> {

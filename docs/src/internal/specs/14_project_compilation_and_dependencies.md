@@ -119,6 +119,33 @@ single backend module. It should:
 - reject duplicate generated names deterministically
 - preserve source spans for linked declarations and diagnostics
 
+## Generated names
+
+The next project-compilation milestone is a deterministic generated-name scheme
+for linked modules. The current linked project path can only compile modules
+whose lowered names do not collide. A real project linker must assign backend
+names from stable package, module, member, and helper identity before Wasm
+emission.
+
+The scheme should cover:
+
+- project functions, constants, constructors, and type helpers
+- anonymous and lifted functions, including closure helpers
+- runtime and stdlib helper functions
+- dependency package members, once dependency source loading is enabled
+- host imports and module imports without changing their ABI names
+- public exports, which should keep user-facing export names intentional
+
+Generated names should be deterministic across platforms and filesystem order.
+They should avoid collisions between modules such as `app/main.gleam` and
+`test/main.gleam`, between dependencies with the same module names, and between
+compiler-generated helpers and user declarations.
+
+The linker should rewrite every same-project reference to the generated backend
+name and report any remaining collision as a source-spanned project diagnostic.
+Debug dumps should show both source names and generated names so users can trace
+linked calls without treating same-project members as host imports.
+
 ## Artifacts
 
 Project compilation should produce deterministic artifact names. With `-o`, the

@@ -14,6 +14,12 @@ pub fn lower(module: TypedModule) -> Result<Module, Diagnostics> {
     Lowerer::new(module).lower()
 }
 
+pub fn lower_with_project_interfaces(
+    module: TypedModule, interfaces: &HashMap<String, crate::types::ModuleInterface>,
+) -> Result<Module, Diagnostics> {
+    Lowerer::new(module).with_project_interfaces(interfaces).lower()
+}
+
 pub struct Lowerer {
     module: TypedModule,
     function_types: HashMap<String, Type>,
@@ -57,6 +63,22 @@ impl Lowerer {
             lifted_functions: Vec::new(),
             anonymous_counter: 0,
         }
+    }
+
+    fn with_project_interfaces(mut self, interfaces: &HashMap<String, crate::types::ModuleInterface>) -> Self {
+        for (module, interface) in interfaces {
+            for (name, type_) in &interface.functions {
+                self.function_types
+                    .entry(format!("{module}.{name}"))
+                    .or_insert_with(|| type_.clone());
+            }
+            for (name, labels) in &interface.function_labels {
+                self.function_labels
+                    .entry(format!("{module}.{name}"))
+                    .or_insert_with(|| labels.clone());
+            }
+        }
+        self
     }
 
     fn lower(mut self) -> Result<Module, Diagnostics> {
@@ -768,6 +790,16 @@ impl Lowerer {
         }
     }
 
+    fn qualified_function(&self, function: &AstExpression) -> Option<(String, Type)> {
+        let AstExpression::FieldAccess(access) = function else { return None };
+        let AstExpression::Variable(module) = access.record.as_ref() else { return None };
+        let qualified = format!("{}.{}", module.text, access.field.text);
+        self.function_types
+            .get(&qualified)
+            .cloned()
+            .map(|type_| (access.field.text.clone(), type_))
+    }
+
     fn lower_call_with_callback(
         &mut self, context: &mut FunctionContext, call: &ast::Call, callback: Expression, return_type: Type,
     ) -> Option<Expression> {
@@ -1008,6 +1040,21 @@ impl Lowerer {
                     function: function_name.text.clone(),
                     arguments: self.lower_ordered_call_arguments(context, call)?,
                     abi: call_abi(&function_type, boundary),
+                }),
+            });
+        }
+
+        if let Some((function_name, function_type)) = self.qualified_function(&call.function) {
+            let Type::Function { return_type, .. } = function_type.clone() else {
+                return None;
+            };
+            return Some(Expression {
+                type_: *return_type,
+                span: call.span,
+                kind: ExpressionKind::DirectCall(DirectCall {
+                    function: function_name,
+                    arguments: self.lower_ordered_call_arguments(context, call)?,
+                    abi: call_abi(&function_type, CallBoundary::Internal),
                 }),
             });
         }
