@@ -1,22 +1,16 @@
 :root {
   --vp-font-family-base:
-    "Switzer", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
-    "Segoe UI", sans-serif;
-  --vp-font-family-mono:
-    "SFMono-Regular", "Cascadia Code", "Liberation Mono", monospace;
+    "IBM Plex Sans Variable", ui-sans-serif, system-ui, -apple-system,
+    BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --vp-font-family-mono: "IBM Plex Mono", "SFMono-Regular", monospace;
+  --regulus-font-heading:
+    "Lexend Variable", "IBM Plex Sans Variable", ui-sans-serif, system-ui,
+    sans-serif;
   --vp-c-brand-1: #8aadf4;
   --vp-c-brand-2: #7dc4e4;
   --vp-c-brand-3: #91d7e3;
   --vp-home-hero-name-color: #8aadf4;
   --vp-layout-max-width: 1500px;
-}
-
-@font-face {
-  font-family: "Switzer";
-  src: url("/fonts/Switzer-Variable.woff2") format("woff2");
-  font-weight: 100 900;
-  font-style: normal;
-  font-display: swap;
 }
 
 .VPHome {
@@ -32,6 +26,25 @@
 
 .VPHomeHero .tagline {
   max-width: 43rem;
+}
+
+.VPHomeHero .name,
+.VPHomeHero .text,
+.vp-doc h1,
+.vp-doc h2,
+.vp-doc h3,
+.vp-doc h4 {
+  font-family: var(--regulus-font-heading);
+  letter-spacing: 0;
+}
+
+.VPHomeHero .name {
+  font-weight: 650;
+}
+
+.vp-doc h1,
+.vp-doc h2 {
+  font-weight: 620;
 }
 
 .VPFeature {

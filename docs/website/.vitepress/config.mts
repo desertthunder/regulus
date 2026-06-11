@@ -50,7 +50,7 @@ const sidebar = [
 
 export default defineConfig({
   title: "Regulus",
-  description: "Use and develop the experimental Gleam to WebAssembly compiler.",
+  description: "Docs for Regulus (aka Reggie), the experimental Gleam to WebAssembly compiler.",
   cleanUrls: true,
   lastUpdated: true,
   markdown: {
@@ -75,8 +75,7 @@ export default defineConfig({
     outline: {
       level: [2, 3],
     },
-    socialLinks: [
-      { icon: "github", link: "https://github.com/desertthunder/regulus" },
-    ],
+    socialLinks: [{ icon: "github", link: "https://github.com/desertthunder/regulus" }],
   },
+  head: [["link", { rel: "icon", href: "/favicon.svg" }]],
 });
