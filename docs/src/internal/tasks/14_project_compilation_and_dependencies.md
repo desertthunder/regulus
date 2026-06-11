@@ -41,6 +41,17 @@ The goal here is to make linked project names deterministic and collision-free.
       module basenames, dependency module name overlap, and lifted closures.
 - [ ] Show source names and generated names in linked IR debug dumps.
 
+### Examples
+
+- [x] Add small working project examples for scalar functions, same-project
+      imports, and browser-target scalar Wasm.
+- [x] Add a diagnostic example for duplicate module names across source roots.
+- [x] Document example commands in the user-facing usage page.
+- [x] Reference examples from internal project-model and CLI development docs.
+- [ ] Add compile or CLI integration coverage for working examples.
+- [ ] Add snapshot coverage for intentional diagnostic examples.
+- [ ] Keep examples categorized as working, diagnostic, or roadmap examples.
+
 ### Module pipeline
 
 - [x] Discover all selected project modules in deterministic order.

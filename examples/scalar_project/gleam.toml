@@ -1,0 +1,7 @@
+name = "scalar_project"
+version = "1.0.0"
+description = "Small scalar project for Regulus project builds."
+licences = ["Apache-2.0"]
+
+[dependencies]
+gleam_stdlib = ">= 0.44.0 and < 2.0.0"

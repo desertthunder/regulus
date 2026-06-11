@@ -3,6 +3,7 @@
 # The Book
 
 - [Introduction](./introduction.md)
+- [Usage](./usage.md)
 - [Compiler architecture](./chapter_9.md)
   - [Phase boundaries](./chapter_9/phase_boundaries.md)
   - [Pass pipelines and invariants](./chapter_9/pass_pipeline_invariants.md)

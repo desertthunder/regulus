@@ -53,12 +53,19 @@ The project model produces package and module metadata:
 Source file IDs are stable within a loaded project. Diagnostics use paths when
 no source span exists and normal spans once a source file is available.
 
-## Fixtures
+## Fixtures and Examples
 
 `fixtures/projects/scalar_app` is the small project fixture for current compiler
-behavior. It should grow as language support grows. A larger long-term fixture
-should exercise real Gleam project structure, dependencies, UI code, records,
-custom types, and browser-facing Wasm.
+behavior. It should grow as language support grows.
+
+The checked examples cover project shapes at a user-facing level:
+
+- `examples/scalar_project` is the smallest working project build.
+- `examples/multi_module_project` exercises same-project imports.
+- `examples/diagnostics/duplicate_modules` shows a project-shape diagnostic.
+
+A larger long-term fixture should exercise real Gleam project structure,
+dependencies, UI code, records, custom types, and browser-facing Wasm.
 
 ## Reference
 

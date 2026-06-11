@@ -29,6 +29,18 @@ Passing `--wat` without a path uses the `.wat` path matching the output file.
 `gleam-wasm list [project]` loads a project and prints discovered modules. It is
 an inspection command and does not write artifacts.
 
+## Examples
+
+The `examples/` directory keeps user-facing projects aligned with this CLI
+contract:
+
+- `examples/scalar_project` builds the smallest project Wasm artifact.
+- `examples/multi_module_project` builds linked same-project modules.
+- `examples/browser_scalar` builds a browser-target artifact with JS glue.
+- `examples/diagnostics/duplicate_modules` documents a failing project shape.
+
+See `docs/src/usage.md` for user-facing commands.
+
 ## Targets
 
 `compile` accepts `--target wasmtime`, `--target browser`, and `--target wasi`.
