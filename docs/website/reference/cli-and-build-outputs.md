@@ -39,7 +39,7 @@ contract:
 - `examples/browser_scalar` builds a browser-target artifact with JS glue.
 - `examples/diagnostics/duplicate_modules` documents a failing project shape.
 
-See `docs/src/usage.md` for user-facing commands.
+See `docs/website/guide/usage.md` for user-facing commands.
 
 ## Targets
 

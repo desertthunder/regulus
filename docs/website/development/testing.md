@@ -84,7 +84,8 @@ Before considering a change done, run:
 ```bash
 cargo fmt
 cargo test
-mdbook build docs
+cd docs/website
+pnpm docs:build
 ```
 
 Changes that add generated output should also check that snapshots are

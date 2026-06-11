@@ -87,20 +87,8 @@ Use `list` to inspect discovered modules without building artifacts.
 gleam-wasm list examples/multi_module_project
 ```
 
-## Examples
-
-The `examples/` directory contains checked examples:
-
-- `examples/scalar_project`: smallest working project build.
-- `examples/multi_module_project`: same-project imports and linking.
-- `examples/browser_scalar`: browser-target Wasm plus minimal JS host glue.
-- `examples/diagnostics/duplicate_modules`: intentional project diagnostic.
-
-Working examples should compile with `gleam-wasm build`. Diagnostic examples
-are expected to fail before Wasm emission.
-
 ## Current limitations
 
 Project compilation is still growing. Dependency interfaces, dependency source
 loading, general external functions, and richer host ABI adapters are tracked in
-the inflight work section of this book.
+`docs/internal`.

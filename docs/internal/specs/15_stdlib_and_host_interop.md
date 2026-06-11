@@ -158,7 +158,7 @@ and JS glue are defined in [JS host ABI](./16_js_host_abi.md).
 Compiler/runtime intrinsics must support the same closure semantics as ordinary
 Gleam code. The shared callback ABI, lowering rule, reuse requirements, and
 callback-taking stdlib members are defined in
-[Closures and intrinsic callbacks](../development/closures.md).
+[Closures and intrinsic callbacks](../../website/reference/closures.md).
 
 Unsupported callback shapes should be rejected before WAT assembly with a
 source-spanned diagnostic naming the intrinsic, closure type, and ABI shape.

@@ -1,1 +1,1 @@
-docs/src/CHANGELOG.md
+docs/website/changelog.md

@@ -1,12 +1,13 @@
 # CLI and build outputs
 
-Current single-file CLI behavior is documented in
-[CLI and build outputs](../development/cli_and_build_outputs.md). This spec
-tracks the remaining user-facing command and artifact work that is not specific
-to project linking.
+Current single-file CLI behavior is documented in [CLI and build outputs][cli].
+This spec tracks the remaining user-facing command and artifact work that is not
+specific to project linking.
 
 Project compilation itself is defined in
 [Project compilation and dependencies](./14_project_compilation_and_dependencies.md).
+
+[cli]: ../../website/reference/cli-and-build-outputs.md
 
 ## Responsibilities
 

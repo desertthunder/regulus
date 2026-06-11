@@ -52,5 +52,5 @@ rules, and tests for pointer lifetime across host calls.
 
 See also:
 
-- [Runtime representation](./architecture/runtime_representation.md)
-- [WASM backend and runtime](./architecture/wasm_backend_and_runtime.md)
+- [Runtime representation](./runtime-representation.md)
+- [WASM backend and runtime](./wasm-backend-and-runtime.md)

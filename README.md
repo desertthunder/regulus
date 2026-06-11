@@ -3,7 +3,7 @@
 Regulus ("Reggie") is an experimental Gleam to WebAssembly compiler written in
 Rust.
 
-<img src="./docs/src/favicon.png" alt="Reggie" width="196"/>
+<img src="./docs/book/src/favicon.png" alt="Reggie" width="196"/>
 
 The compiler uses tree-sitter to parse Gleam source, builds compiler-owned data
 structures, lowers a supported subset of Gleam to core IR, and emits `.wasm`
@@ -88,8 +88,9 @@ that each layer can be tested and explained.
 - [ ] Provide complete WASI adapters
 - [ ] Add garbage collection, reference counting, or heap growth checks
 
-For more detail, see the book in [docs](./docs/src/introduction.md) and the
-current [supported subset](./docs/src/internal/supported_subset.md).
+For more detail, see the case-study book in
+[docs/book](./docs/book/src/introduction.md) and the user/development docs in
+[docs/website](./docs/website/index.md).
 
 ## Usage
 
@@ -111,5 +112,9 @@ expressions, IR, and WAT.
 ```sh
 cargo fmt
 cargo test
-mdbook build docs
+mdbook build docs/book
+
+cd docs/website
+pnpm install
+pnpm docs:dev
 ```

@@ -43,7 +43,7 @@ plain scalar WebAssembly.
 
 Static managed literals are emitted as data segments before the dynamic heap.
 The object layout is documented in
-[Runtime representation](./runtime_representation.md).
+[Runtime representation](./runtime-representation.md).
 
 ## Supported emitted forms
 

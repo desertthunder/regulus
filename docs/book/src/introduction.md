@@ -45,8 +45,9 @@ The Gleam chapter introduces the source language itself: modules, imports,
 functions, expressions, custom types, records, tuples, lists, pattern matching,
 and type inference.
 
-The development pages describe what the compiler supports today and how tests
-and documentation are organized.
+The development docs are separate from this book. They explain how to install,
+run, and contribute to Regulus. This book uses Regulus as a case study for
+compiler concepts.
 
 ## What to expect from the compiler
 
@@ -71,5 +72,5 @@ previous one.
 If you know compilers but are new to Gleam, start with the Gleam chapter, then
 come back to the pipeline chapters.
 
-If you are working on the project, keep the development pages nearby. They show
+If you are working on the project, keep the development docs nearby. They show
 what is supported, where fixtures live, and how tests should be structured.
