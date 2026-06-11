@@ -40,8 +40,10 @@ dependency interface calls before lowering.
 
 The first milestone can load dependency interfaces without compiling dependency
 source. That is enough for examples that keep dependency execution behind host
-adapters or compiler-supported intrinsics. Later milestones can compile selected
-dependency source when the supported language surface is broad enough.
+adapters or compiler-supported intrinsics. Later milestones should compile
+selected dependency source when the supported language surface is broad enough.
+That is the preferred path for stdlib and package behavior, including decoder,
+routing, and response helper code that does not require a host primitive.
 
 ## Targets and host profiles
 

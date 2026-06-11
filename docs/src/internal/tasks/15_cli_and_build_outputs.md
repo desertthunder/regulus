@@ -22,6 +22,9 @@ Make the CLI compile projects and produce useful artifacts.
 - [ ] Load enough dependency metadata for project compile inputs.
 - [ ] Load dependency module interfaces for values, types, constructors, and
       labels used by project compilation.
+- [ ] Add a dependency source loader for selected Hex and path modules.
+- [ ] Add a dependency-source compile fixture that links one package module
+      without modeling the package function as an intrinsic or host import.
 - [ ] Report unsupported dependency calls before lowering or byte emission.
 - [x] Return useful exit codes for success, diagnostics, and command misuse.
 
@@ -34,6 +37,8 @@ Make the CLI compile projects and produce useful artifacts.
 - [ ] Keep generated artifact names deterministic for multi-module projects.
 - [ ] Link multi-module project output in dependency order.
 - [ ] Link same-project module calls without treating them as host imports.
+- [ ] Link compiled dependency module calls without treating them as host
+      imports.
 - [ ] Keep dependency interface calls distinct from host imports in debug dumps.
 - [ ] Emit stable artifact paths for example host adapters.
 - [ ] Avoid writing partial final artifacts after a failed compile unless the

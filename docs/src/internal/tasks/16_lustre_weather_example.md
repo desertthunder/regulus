@@ -45,7 +45,9 @@ forecasts for selected US cities.
 
 - [ ] Render city selection and cached forecast state through Lustre.
 - [ ] Fetch the NWS forecast endpoint through the browser host.
-- [ ] Decode only the fields needed for a simple forecast view.
+- [ ] Add a small forecast decoder module that uses `gleam/dynamic/decode`.
+- [ ] Add a compile fixture for the forecast decoder and snapshot the first
+      unsupported language, dependency, dynamic runtime, or ABI diagnostic.
 - [ ] Persist the selected city and last successful forecast locally.
 - [ ] Add an example README with build and run commands.
 

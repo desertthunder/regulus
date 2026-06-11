@@ -2315,6 +2315,211 @@ pub fn float_mapped_value() -> Float {
     }
 
     #[test]
+    fn runs_closure_values_passed_to_stdlib_intrinsics() {
+        let wasm = compile_wasm(
+            r#"import gleam/function
+import gleam/list
+import gleam/option.{Some}
+
+pub fn mapped_with_value_closure() -> Int {
+  let inc = fn(x) { x + 1 }
+  case list.map([1], inc) {
+    [x] -> x
+    _ -> 0
+  }
+}
+
+pub fn composed_with_value_closure() -> Int {
+  let inc = fn(x) { x + 1 }
+  let double = fn(x) { x * 2 }
+  let composed = function.compose(inc, double)
+  composed(4)
+}
+
+pub fn option_with_value_closure() -> Int {
+  let inc = fn(x) { x + 1 }
+  case option.map(Some(4), inc) {
+    Some(x) -> x
+    _ -> 0
+  }
+}
+"#,
+        );
+
+        let engine = Engine::default();
+        let module = Module::new(&engine, &wasm.bytes).expect("compile wasm module");
+        let mut store = Store::new(&engine, ());
+        let instance = Instance::new(&mut store, &module, &[]).expect("instantiate module");
+        for (name, expected) in [
+            ("mapped_with_value_closure", 2),
+            ("composed_with_value_closure", 9),
+            ("option_with_value_closure", 5),
+        ] {
+            let function = instance
+                .get_typed_func::<(), i64>(&mut store, name)
+                .expect("get export");
+            assert_eq!(function.call(&mut store, ()).expect("call export"), expected, "{name}");
+        }
+    }
+
+    #[test]
+    fn runs_captured_closures_passed_to_stdlib_intrinsics() {
+        let wasm = compile_wasm(
+            r#"import gleam/list
+import gleam/option.{Some}
+
+pub fn mapped_with_capture(seed: Int) -> Int {
+  case list.map([1, 2], fn(x) { x + seed }) {
+    [a, b] -> a + b
+    _ -> 0
+  }
+}
+
+pub fn folded_with_capture(seed: Int) -> Int {
+  list.fold([1, 2, 3], seed, fn(acc, x) { acc + x })
+}
+
+pub fn option_with_capture(seed: Int) -> Int {
+  case option.map(Some(4), fn(x) { x + seed }) {
+    Some(x) -> x
+    _ -> 0
+  }
+}
+"#,
+        );
+
+        let engine = Engine::default();
+        let module = Module::new(&engine, &wasm.bytes).expect("compile wasm module");
+        let mut store = Store::new(&engine, ());
+        let instance = Instance::new(&mut store, &module, &[]).expect("instantiate module");
+        let mapped = instance
+            .get_typed_func::<i64, i64>(&mut store, "mapped_with_capture")
+            .expect("get mapped_with_capture export");
+        assert_eq!(mapped.call(&mut store, 10).expect("call export"), 23);
+        let folded = instance
+            .get_typed_func::<i64, i64>(&mut store, "folded_with_capture")
+            .expect("get folded_with_capture export");
+        assert_eq!(folded.call(&mut store, 10).expect("call export"), 16);
+        let option = instance
+            .get_typed_func::<i64, i64>(&mut store, "option_with_capture")
+            .expect("get option_with_capture export");
+        assert_eq!(option.call(&mut store, 10).expect("call export"), 14);
+    }
+
+    #[test]
+    fn runs_nested_stdlib_intrinsic_callbacks() {
+        let wasm = compile_wasm(
+            r#"import gleam/list
+import gleam/option.{Some}
+
+pub fn nested_option_in_list_map() -> Int {
+  case list.map([1, 2], fn(x) {
+    case option.map(Some(x), fn(y) { y + 1 }) {
+      Some(y) -> y
+      _ -> 0
+    }
+  }) {
+    [a, b] -> a + b
+    _ -> 0
+  }
+}
+
+pub fn nested_list_in_option_map() -> Int {
+  case option.map(Some([1, 2]), fn(xs) {
+    case list.map(xs, fn(x) { x * 2 }) {
+      [a, b] -> a + b
+      _ -> 0
+    }
+  }) {
+    Some(x) -> x
+    _ -> 0
+  }
+}
+"#,
+        );
+
+        let engine = Engine::default();
+        let module = Module::new(&engine, &wasm.bytes).expect("compile wasm module");
+        let mut store = Store::new(&engine, ());
+        let instance = Instance::new(&mut store, &module, &[]).expect("instantiate module");
+        for (name, expected) in [("nested_option_in_list_map", 5), ("nested_list_in_option_map", 6)] {
+            let function = instance
+                .get_typed_func::<(), i64>(&mut store, name)
+                .expect("get export");
+            assert_eq!(function.call(&mut store, ()).expect("call export"), expected, "{name}");
+        }
+    }
+
+    #[test]
+    fn reports_generic_callback_diagnostics_before_wasm_emission() {
+        let diagnostics = compile_wasm_target(
+            r#"import gleam/list
+
+fn id(x) { x }
+
+pub fn main() -> Int {
+  case list.map([1], id) {
+    [x] -> x
+    _ -> 0
+  }
+}
+"#,
+            CompileTarget::Wasmtime,
+        )
+        .expect_err("generic callback should fail before Wasm emission");
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic
+                .message
+                .contains("cannot be lowered without monomorphization")
+        }));
+    }
+
+    #[test]
+    fn callback_failures_in_stdlib_intrinsics_trap() {
+        let wasm = compile_wasm(
+            r#"import gleam/list
+import gleam/option.{Some}
+
+pub fn list_map_callback_failure() -> Int {
+  case list.map([1], fn(x) {
+    case x {
+      0 -> 0
+      _ -> panic
+    }
+  }) {
+    [x] -> x
+    _ -> 0
+  }
+}
+
+pub fn option_map_callback_failure() -> Int {
+  case option.map(Some(1), fn(x) {
+    case x {
+      0 -> 0
+      _ -> panic
+    }
+  }) {
+    Some(x) -> x
+    _ -> 0
+  }
+}
+"#,
+        );
+
+        let engine = Engine::default();
+        let module = Module::new(&engine, &wasm.bytes).expect("compile wasm module");
+        let mut store = Store::new(&engine, ());
+        let instance = Instance::new(&mut store, &module, &[]).expect("instantiate module");
+        for name in ["list_map_callback_failure", "option_map_callback_failure"] {
+            let function = instance
+                .get_typed_func::<(), i64>(&mut store, name)
+                .expect("get export");
+            assert!(function.call(&mut store, ()).is_err(), "{name} should trap");
+        }
+    }
+
+    #[test]
     fn runs_string_concat_and_value_equality_codegen() {
         let wasm = compile_wasm(
             r#"pub fn join() { "ab" <> "cd" }

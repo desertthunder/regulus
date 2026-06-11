@@ -74,6 +74,11 @@ Group 2 should prefer compiling stdlib Gleam source where possible. Runtime
 intrinsics and host adapters should be reserved for functions that require
 special ABI support, target capabilities, or efficient runtime primitives.
 
+The compiler should not reimplement library behavior when the same behavior can
+be compiled from Gleam source. Unsupported library code should identify the
+missing language, dependency, runtime, or ABI feature that blocks ordinary
+compilation.
+
 ## Host ABI
 
 The host ABI should define how values cross the WASM boundary:
@@ -167,12 +172,18 @@ callback-taking stdlib members are defined in
 Unsupported callback shapes should be rejected before WAT assembly with a
 source-spanned diagnostic naming the intrinsic, closure type, and ABI shape.
 
-## Decoding and structured data
+## Dynamic values and structured data
 
 The weather example needs a small JSON decoding path for NWS responses. The
-Wisp reference API needs structured JSON output. JSON should decode in Gleam
-using `gleam/dynamic` and `gleam/dynamic/decode`, with a documented bridge that
-turns JSON text or host JSON values into `dynamic.Dynamic`.
+Wisp reference API needs structured output. These needs should be covered by
+ordinary language, dependency, runtime, and host ABI support, not by
+example-specific compiler features.
+
+JSON decoding should happen in Gleam by compiling `gleam/dynamic` and
+`gleam/dynamic/decode` where possible. The compiler/runtime only owns the
+language semantics, dynamic value representation, primitive dynamic operations,
+and any target-specific bridge that turns JSON text or host JSON values into
+`dynamic.Dynamic`.
 
 The bridge must map JSON values to dynamic values consistently:
 
@@ -185,22 +196,26 @@ The bridge must map JSON values to dynamic values consistently:
 | array      | dynamic array/list of dynamic values                          |
 | object     | dynamic properties with string keys                           |
 
-Full `gleam/dynamic/decode` compatibility requires more than primitive runtime
-helpers. Decoder combinators such as `field`, `map`, `then`, and `recursive`
-call user closures or continuations. Runtime WAT helpers cannot call arbitrary
-Gleam closures on their own, so these combinators should be lowered through IR
-or another compiler-owned decoder plan that reuses normal closure dispatch.
-Low-level runtime helpers should only provide operations such as dynamic
-classification, property lookup, list traversal, and decode error allocation.
+Runtime helpers should stay primitive: dynamic classification, property lookup,
+list traversal, object traversal, value construction, and decode error value
+construction where the stdlib needs it. Decoder combinators such as `field`,
+`map`, `then`, `one_of`, and `recursive` should run as compiled Gleam code using
+normal closure dispatch.
 
-The supported decoder surface should include primitive decoders, `list`,
-`dict`, `optional`, path and field decoders, `success`, `failure`, `map`,
-`then`, `one_of`, error mapping, `recursive`, and primitive custom decoders.
-Decode errors must preserve `DecodeError(expected, found, path)` with paths for
-fields, nested paths, and list indexes.
+Unsupported dynamic operations, dependency modules, bridge shapes, and
+structured response shapes should fail with source-spanned diagnostics.
 
-Unsupported decoders, dependency modules, bridge shapes, and structured
-response shapes should fail with source-spanned diagnostics.
+## Runtime scope
+
+The runtime is part of the compiler distribution when it supports compiled
+Gleam semantics or the host ABI. It may own allocation, managed value layout,
+strings, lists, records, custom values, closures, equality, debug formatting,
+panic values, dynamic primitives, and adapter helpers.
+
+The runtime should not own application or library behavior that can be compiled
+from Gleam source. Networking policy, routing, response construction, JSON
+decoder combinator semantics, and product-specific data shaping should stay in
+user or dependency modules unless a narrow primitive is required by the ABI.
 
 ## Diagnostics
 

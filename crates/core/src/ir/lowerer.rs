@@ -1002,18 +1002,21 @@ impl Lowerer {
         &mut self, context: &mut FunctionContext, call: &ast::Call, stdlib_call: &StdlibCall,
     ) -> Option<Expression> {
         match (stdlib_call.module.as_str(), stdlib_call.member.as_str()) {
-            ("gleam/list", "map") => self.lower_list_map(context, call),
-            ("gleam/list", "fold") => self.lower_list_fold(context, call),
-            ("gleam/result", "map") => self.lower_result_map(context, call),
-            ("gleam/option", "map") => self.lower_option_map(context, call),
-            ("gleam/function", "compose") => self.lower_function_compose(context, call),
-            ("gleam/function", "flip") => self.lower_function_flip(context, call),
+            ("gleam/list", "map") => self.lower_list_map(context, call, stdlib_call),
+            ("gleam/list", "fold") => self.lower_list_fold(context, call, stdlib_call),
+            ("gleam/result", "map") => self.lower_result_map(context, call, stdlib_call),
+            ("gleam/option", "map") => self.lower_option_map(context, call, stdlib_call),
+            ("gleam/function", "compose") => self.lower_function_compose(context, call, stdlib_call),
+            ("gleam/function", "flip") => self.lower_function_flip(context, call, stdlib_call),
             _ => None,
         }
     }
 
-    fn lower_list_map(&mut self, context: &mut FunctionContext, call: &ast::Call) -> Option<Expression> {
+    fn lower_list_map(
+        &mut self, context: &mut FunctionContext, call: &ast::Call, stdlib_call: &StdlibCall,
+    ) -> Option<Expression> {
         let arguments = self.lower_ordered_call_arguments(context, call)?;
+        self.validate_callback_argument(stdlib_call, call.span, arguments.get(1)?)?;
         let list_type = arguments[0].value.type_.clone();
         let callback_type = arguments[1].value.type_.clone();
         let Type::List(input_type) = list_type.clone() else { return None };
@@ -1035,8 +1038,11 @@ impl Lowerer {
         })
     }
 
-    fn lower_list_fold(&mut self, context: &mut FunctionContext, call: &ast::Call) -> Option<Expression> {
+    fn lower_list_fold(
+        &mut self, context: &mut FunctionContext, call: &ast::Call, stdlib_call: &StdlibCall,
+    ) -> Option<Expression> {
         let arguments = self.lower_ordered_call_arguments(context, call)?;
+        self.validate_callback_argument(stdlib_call, call.span, arguments.get(2)?)?;
         let list_type = arguments[0].value.type_.clone();
         let acc_type = arguments[1].value.type_.clone();
         let callback_type = arguments[2].value.type_.clone();
@@ -1064,8 +1070,11 @@ impl Lowerer {
         })
     }
 
-    fn lower_option_map(&mut self, context: &mut FunctionContext, call: &ast::Call) -> Option<Expression> {
+    fn lower_option_map(
+        &mut self, context: &mut FunctionContext, call: &ast::Call, stdlib_call: &StdlibCall,
+    ) -> Option<Expression> {
         let arguments = self.lower_ordered_call_arguments(context, call)?;
+        self.validate_callback_argument(stdlib_call, call.span, arguments.get(1)?)?;
         let option_type = arguments[0].value.type_.clone();
         let callback_type = arguments[1].value.type_.clone();
         let Type::Custom { name, args } = option_type.clone() else { return None };
@@ -1089,8 +1098,11 @@ impl Lowerer {
         })
     }
 
-    fn lower_result_map(&mut self, context: &mut FunctionContext, call: &ast::Call) -> Option<Expression> {
+    fn lower_result_map(
+        &mut self, context: &mut FunctionContext, call: &ast::Call, stdlib_call: &StdlibCall,
+    ) -> Option<Expression> {
         let arguments = self.lower_ordered_call_arguments(context, call)?;
+        self.validate_callback_argument(stdlib_call, call.span, arguments.get(1)?)?;
         let result_type = arguments[0].value.type_.clone();
         let callback_type = arguments[1].value.type_.clone();
         let Type::Custom { name, args } = result_type.clone() else { return None };
@@ -1120,8 +1132,12 @@ impl Lowerer {
         })
     }
 
-    fn lower_function_compose(&mut self, context: &mut FunctionContext, call: &ast::Call) -> Option<Expression> {
+    fn lower_function_compose(
+        &mut self, context: &mut FunctionContext, call: &ast::Call, stdlib_call: &StdlibCall,
+    ) -> Option<Expression> {
         let arguments = self.lower_ordered_call_arguments(context, call)?;
+        self.validate_callback_argument(stdlib_call, call.span, arguments.first()?)?;
+        self.validate_callback_argument(stdlib_call, call.span, arguments.get(1)?)?;
         let composed_type = self.typed_expression_type(call.span)?;
         let Type::Function { params, return_type } = composed_type.clone() else { return None };
         let input_type = params.first()?.clone();
@@ -1165,8 +1181,11 @@ impl Lowerer {
         ))
     }
 
-    fn lower_function_flip(&mut self, context: &mut FunctionContext, call: &ast::Call) -> Option<Expression> {
+    fn lower_function_flip(
+        &mut self, context: &mut FunctionContext, call: &ast::Call, stdlib_call: &StdlibCall,
+    ) -> Option<Expression> {
         let arguments = self.lower_ordered_call_arguments(context, call)?;
+        self.validate_callback_argument(stdlib_call, call.span, arguments.first()?)?;
         let flipped_type = self.typed_expression_type(call.span)?;
         let Type::Function { params, return_type } = flipped_type.clone() else { return None };
         if params.len() != 2 {
@@ -1202,6 +1221,63 @@ impl Lowerer {
             body,
             &flipped_type,
         ))
+    }
+
+    fn validate_callback_argument(
+        &mut self, stdlib_call: &StdlibCall, call_span: Span, argument: &CallArgument,
+    ) -> Option<()> {
+        let Type::Function { params, return_type } = &argument.value.type_ else {
+            self.unsupported_callback_shape(
+                stdlib_call,
+                call_span,
+                argument.span,
+                "callback parameter",
+                &argument.value.type_,
+            );
+            return None;
+        };
+
+        for param in params {
+            if !callback_value_type_supported(param) {
+                self.unsupported_callback_shape(stdlib_call, call_span, argument.span, "callback parameter", param);
+                return None;
+            }
+        }
+        if !callback_value_type_supported(return_type) {
+            self.unsupported_callback_shape(stdlib_call, call_span, argument.span, "callback return", return_type);
+            return None;
+        }
+        if let Some(type_) = unsupported_callback_capture_type(&argument.value) {
+            self.unsupported_callback_shape(stdlib_call, call_span, argument.span, "callback capture", type_);
+            return None;
+        }
+        if callback_crosses_host_boundary(&argument.value) {
+            self.unsupported_callback_shape(
+                stdlib_call,
+                call_span,
+                argument.span,
+                "callback host boundary",
+                &argument.value.type_,
+            );
+            return None;
+        }
+        Some(())
+    }
+
+    fn unsupported_callback_shape(
+        &mut self, stdlib_call: &StdlibCall, call_span: Span, callback_span: Span, shape: &str, type_: &Type,
+    ) {
+        self.diagnostics.push(
+            Diagnostic::new(
+                DiagnosticCode::LoweringError,
+                format!(
+                    "stdlib intrinsic `{}.{}` does not support {shape} ABI shape `{:?}`",
+                    stdlib_call.module, stdlib_call.member, type_
+                ),
+            )
+            .with_label(Label::primary(callback_span, "unsupported callback ABI shape here"))
+            .with_label(Label::primary(call_span, "callback passed to this intrinsic")),
+        );
     }
 
     fn list_map_adapter(&mut self, input_type: &Type, output_type: &Type, callback_type: &Type, span: Span) -> String {
@@ -1851,6 +1927,43 @@ fn input_type_from_callback(callback: &Type) -> Type {
     }
 }
 
+fn callback_value_type_supported(type_: &Type) -> bool {
+    match type_ {
+        Type::Nil | Type::Generic(_) | Type::Opaque { .. } => false,
+        Type::Tuple(items) => items.iter().all(callback_value_type_supported),
+        Type::List(item) => callback_value_type_supported(item),
+        Type::Record { fields, .. } => fields.iter().all(|field| callback_value_type_supported(&field.type_)),
+        Type::Custom { args, .. } => args.iter().all(callback_value_type_supported),
+        Type::Function { params, return_type } => {
+            params.iter().all(callback_value_type_supported) && callback_value_type_supported(return_type)
+        }
+        Type::Int | Type::Float | Type::String | Type::BitArray | Type::Bool => true,
+    }
+}
+
+fn unsupported_callback_capture_type(expression: &Expression) -> Option<&Type> {
+    match &expression.kind {
+        ExpressionKind::AnonymousFunction(function) => function
+            .captures
+            .iter()
+            .find_map(|capture| (!callback_value_type_supported(&capture.type_)).then_some(&capture.type_)),
+        _ => None,
+    }
+}
+
+fn callback_crosses_host_boundary(expression: &Expression) -> bool {
+    match &expression.kind {
+        ExpressionKind::FunctionValue(function) => matches!(
+            function.abi.boundary,
+            CallBoundary::HostImport { .. } | CallBoundary::ModuleImport { .. }
+        ),
+        ExpressionKind::AnonymousFunction(function) => {
+            function.body.contains_expression(callback_crosses_host_boundary)
+        }
+        _ => false,
+    }
+}
+
 trait UsedStdlibHostCalls {
     fn used_stdlib_host_calls(&self) -> HashSet<(String, String)>;
 }
@@ -2236,6 +2349,24 @@ mod tests {
             diagnostic
                 .message
                 .contains("cannot be lowered without monomorphization")
+        }));
+    }
+
+    #[test]
+    fn rejects_unsupported_callback_abi_shapes_before_wasm_emission() {
+        let diagnostics = lower_source_err(
+            r#"import gleam/list
+
+pub fn main() {
+  list.map([Nil], fn(x) { x })
+}
+"#,
+        );
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.message.contains("gleam/list.map")
+                && diagnostic.message.contains("callback parameter")
+                && diagnostic.message.contains("Nil")
         }));
     }
 

@@ -90,36 +90,45 @@ Support useful standard library modules and host calls.
 - [x] Support callback-taking stdlib functions such as `list.map`,
       `list.fold`, `result.map`, `option.map`, `function.compose`, and
       `function.flip` through the shared mechanism.
-- [ ] Add diagnostics for unsupported callback parameter, return, capture, or
+- [x] Add diagnostics for unsupported callback parameter, return, capture, or
       host boundary ABI shapes before WAT assembly.
-- [ ] Add tests for closures passed to intrinsics, captured closures, nested
+- [x] Add tests for closures passed to intrinsics, captured closures, nested
       callbacks, generic callbacks, and callback failures.
 
-### JSON and structured data
+### Dynamic values and structured data
 
 - [ ] Define the JSON bridge from host JSON or JSON text to `Dynamic`.
 - [ ] Map JSON null, bool, number, string, array, and object values to
       documented dynamic runtime shapes.
 - [ ] Support full `gleam/dynamic` value construction and classification.
-- [ ] Support full `gleam/dynamic/decode` compatibility so JSON decoding
-      happens in Gleam.
-- [ ] Lower decoder combinators that call user closures through IR or another
-      compiler-owned plan rather than plain runtime WAT helpers.
+- [ ] Implement primitive dynamic runtime operations for classification,
+      property lookup, list traversal, object traversal, and value construction.
+- [ ] Add a compile fixture for the upstream `gleam/dynamic/decode` module.
+- [ ] Add a blocker report for that fixture that lists each unsupported syntax,
+      dependency interface, runtime primitive, and ABI shape encountered.
 - [ ] Reuse normal closure dispatch for decoder continuations used by `field`,
       `map`, `then`, `recursive`, and generated record decoders.
-- [ ] Implement property lookup and path traversal for `field`, `subfield`,
-      `at`, `optional_field`, and `optionally_at`.
-- [ ] Implement collection decoding for `list` and `dict`, including nested
-      error paths and error aggregation.
-- [ ] Implement decoder composition for `success`, `failure`, `map`, `then`,
-      `one_of`, `collapse_errors`, and `map_errors`.
-- [ ] Implement `optional`, `recursive`, and `new_primitive_decoder` with the
-      same behavior as the Gleam stdlib.
-- [ ] Construct real `DecodeError(expected, found, path)` values.
-- [ ] Add diagnostics for unsupported decoders and structured response shapes.
+- [ ] Implement any missing dynamic primitives required by compiled decoder
+      source for field lookup, path traversal, collection traversal, error
+      aggregation, recursion, and primitive custom decoders.
+- [ ] Construct real `DecodeError(expected, found, path)` values through
+      compiled stdlib code or a documented primitive constructor.
+- [ ] Add diagnostics for unsupported dynamic operations, dependency modules,
+      bridge shapes, and structured response shapes.
 - [ ] Add fixtures for simple JSON input and JSON-like structured output.
 - [ ] Add fixtures for nested objects, optional/null fields, lists, dicts,
       records, enum variants, `one_of`, and decode error paths.
+
+### Runtime scope
+
+- [ ] Add a runtime helper inventory grouped by allocation, managed values,
+      closures, equality, debug, dynamic values, and host adapters.
+- [ ] Add tests that prove dynamic decoder combinators call normal compiled
+      closures rather than runtime-specific callback paths.
+- [ ] Replace any runtime helper that implements library-level decoder,
+      routing, or response behavior with a compile fixture for the library code.
+- [ ] Add unsupported-feature diagnostics for any runtime primitive requested by
+      compiled library code but not implemented.
 
 ### Group 2: remaining stdlib
 

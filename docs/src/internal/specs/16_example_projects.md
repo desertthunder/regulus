@@ -14,6 +14,8 @@ capabilities before they become design debt.
 3. Use the examples as compiler acceptance fixtures, not as separate product
    projects.
 4. Keep host boundaries explicit and target-specific.
+5. Prefer general language, dependency, runtime, and ABI support over
+   example-specific compiler behavior.
 
 ## Current compiler gaps
 
@@ -36,7 +38,8 @@ records, result values, and request or response objects.
 `gleam/dynamic`, `gleam/dynamic/decode`, `gleam/uri`, `gleam/pair`,
 `gleam/set`, `gleam/string_tree`, and `gleam/bytes_tree` are still unsupported
 or interface-only. The examples should avoid unnecessary breadth, but JSON and
-HTTP work will likely need a small decoded-data story.
+HTTP work should be handled by compiling library code where possible plus a
+small dynamic-value or host bridge where necessary.
 
 ## Lustre weather SPA
 
@@ -52,7 +55,9 @@ browser host is online.
 The compiler should not need to implement browser networking directly in
 Gleam. A small target-specific host import can provide `fetch_text`, local
 storage reads and writes, and time or online state as needed. The Gleam side
-should keep those imports behind an example module with explicit types.
+should keep those imports behind an example module with explicit types. The
+compiler should only provide general external-function lowering, target
+validation, ABI checks, and runtime adapters.
 
 The example is useful when it proves:
 
@@ -95,7 +100,9 @@ review.
 
 The Worker host can own the real FetchEvent, Request, and Response objects.
 The Wasm API should start with simple string inputs and structured return data,
-then graduate to opaque request and response handles only when needed.
+then graduate to opaque request and response handles only when needed. Routing,
+static data lookup, and response shaping should live in compiled Gleam code, not
+in compiler-owned special cases.
 
 The example is useful when it proves:
 

@@ -30,6 +30,8 @@ small developer reference catalog.
 - [ ] Lower general external functions to Worker-compatible Wasm imports.
 - [ ] Start with string request inputs and string or tagged response outputs.
 - [ ] Add adapter helpers for status, headers, and body data when needed.
+- [ ] Add a Gleam route table fixture that returns tagged response data without
+      Worker-specific request or response handles.
 - [ ] Validate that unsupported request or response handles fail before emit.
 
 ## Milestone 4: static data
