@@ -171,6 +171,7 @@ impl Lowerer {
                 references,
                 exports,
                 functions,
+                linked_names: Vec::new(),
             })
         } else {
             Err(self.diagnostics)

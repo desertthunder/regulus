@@ -1,6 +1,6 @@
 ---
 source: crates/core/src/ir/lowerer.rs
-assertion_line: 1234
+assertion_line: 2663
 expression: module
 ---
 Module {
@@ -990,4 +990,5 @@ Module {
             },
         },
     ],
+    linked_names: [],
 }

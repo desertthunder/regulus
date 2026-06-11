@@ -2,11 +2,11 @@ pub mod bit_slices;
 mod closure;
 mod lowerer;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 
 use crate::{
     ast::{self, Declaration as AstDeclaration, LiteralKind},
-    diagnostic::{Diagnostic, DiagnosticCode, Diagnostics},
+    diagnostic::{Diagnostic, DiagnosticCode, Diagnostics, Label},
     naming::{
         BackendItem, BackendItemKind, BackendName, CompilerGeneratedIndex, HelperKind, ModuleName, render_backend_name,
     },
@@ -83,6 +83,43 @@ pub struct Module {
     pub references: Vec<Reference>,
     pub exports: Vec<Export>,
     pub functions: Vec<Function>,
+    /// Source-to-generated names assigned by the project linker.
+    ///
+    /// This is empty for single-file compilation.
+    pub linked_names: Vec<LinkedName>,
+}
+
+impl Module {
+    pub fn linked_debug_dump(&self) -> String {
+        use std::fmt::Write;
+
+        let mut out = String::new();
+        if !self.linked_names.is_empty() {
+            writeln!(&mut out, "linked names:").expect("write linked IR debug dump");
+            let mut names = self.linked_names.iter().collect::<Vec<_>>();
+            names.sort_by_key(|name| {
+                (
+                    name.generated_name.as_str(),
+                    name.source_name.as_str(),
+                    &name.kind,
+                    name.span.file_id.0,
+                    name.span.start,
+                    name.span.end,
+                )
+            });
+            for name in names {
+                writeln!(
+                    &mut out,
+                    "  {:?} source={} generated={}",
+                    name.kind, name.source_name, name.generated_name
+                )
+                .expect("write linked IR debug dump");
+            }
+            writeln!(&mut out).expect("write linked IR debug dump");
+        }
+        writeln!(&mut out, "{self:#?}").expect("write linked IR debug dump");
+        out
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -92,6 +129,22 @@ pub struct ConstantId(pub u32);
 pub struct ModuleIdentity {
     pub package: String,
     pub module: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LinkedName {
+    pub source_name: String,
+    pub generated_name: String,
+    pub kind: LinkedNameKind,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum LinkedNameKind {
+    Function,
+    Constant,
+    Constructor,
+    Helper,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -878,11 +931,15 @@ fn link_modules(modules: Vec<Module>) -> Result<Module, Diagnostics> {
         references: Vec::new(),
         exports: Vec::new(),
         functions: Vec::new(),
+        linked_names: Vec::new(),
     };
-    let mut functions = HashSet::new();
-    let mut diagnostics = Vec::new();
-
-    let global_renames = global_backend_renames(&modules);
+    let rename_plan = global_backend_renames(&modules);
+    let diagnostics = generated_name_collision_diagnostics(&rename_plan.linked_names);
+    if !diagnostics.is_empty() {
+        return Err(diagnostics);
+    }
+    linked.linked_names = rename_plan.linked_names;
+    let global_renames = rename_plan.renames;
 
     for module in modules {
         let mut renames = module_backend_renames(&module, &global_renames);
@@ -894,14 +951,6 @@ fn link_modules(modules: Vec<Module>) -> Result<Module, Diagnostics> {
         let mut module = module;
         rewrite_module_backend_names(&mut module, &renames);
 
-        for function in &module.functions {
-            if !functions.insert(function.name.clone()) {
-                diagnostics.push(Diagnostic::new(
-                    DiagnosticCode::ProjectError,
-                    format!("duplicate generated function `{}`", function.name),
-                ));
-            }
-        }
         linked.imports.extend(module.imports);
         linked.declarations.extend(module.declarations);
         linked.constants.extend(module.constants);
@@ -911,11 +960,17 @@ fn link_modules(modules: Vec<Module>) -> Result<Module, Diagnostics> {
         linked.functions.extend(module.functions);
     }
 
-    if diagnostics.is_empty() { Ok(linked) } else { Err(diagnostics) }
+    Ok(linked)
 }
 
-fn global_backend_renames(modules: &[Module]) -> HashMap<String, String> {
+struct BackendRenamePlan {
+    renames: HashMap<String, String>,
+    linked_names: Vec<LinkedName>,
+}
+
+fn global_backend_renames(modules: &[Module]) -> BackendRenamePlan {
     let mut renames = HashMap::new();
+    let mut linked_names = Vec::new();
     for module in modules {
         let Some(identity) = &module.identity else { continue };
         let module_name = ModuleName::from_path(&identity.module);
@@ -960,28 +1015,87 @@ fn global_backend_renames(modules: &[Module]) -> HashMap<String, String> {
             } else {
                 BackendName::function(identity.package.as_str(), module_name.clone(), function.name.as_str())
             };
-            renames.insert(
-                format!("{}.{}", identity.module, function.name),
-                render_backend_name(&backend),
-            );
+            let generated_name = render_backend_name(&backend);
+            let source_name = format!("{}.{}", identity.module, function.name);
+            let kind = if function.name.starts_with("__")
+                || matches!(
+                    function.abi.boundary,
+                    CallBoundary::HostImport { .. } | CallBoundary::ModuleImport { .. }
+                ) {
+                LinkedNameKind::Helper
+            } else {
+                LinkedNameKind::Function
+            };
+            renames.insert(source_name.clone(), generated_name.clone());
+            linked_names.push(LinkedName { source_name, generated_name, kind, span: function.span });
         }
         for constant in &module.constants {
             let backend = BackendName::constant(identity.package.as_str(), module_name.clone(), constant.name.as_str());
-            renames.insert(
-                format!("{}.{}", identity.module, constant.name),
-                render_backend_name(&backend),
-            );
+            let generated_name = render_backend_name(&backend);
+            let source_name = format!("{}.{}", identity.module, constant.name);
+            renames.insert(source_name.clone(), generated_name.clone());
+            linked_names.push(LinkedName {
+                source_name,
+                generated_name,
+                kind: LinkedNameKind::Constant,
+                span: constant.span,
+            });
         }
         for declaration in &module.declarations {
             if declaration.kind == DeclarationKind::TypeDefinition
                 && let Some(name) = &declaration.name
             {
                 let backend = BackendName::constructor(identity.package.as_str(), module_name.clone(), name.as_str());
-                renames.insert(format!("{}.{}", identity.module, name), render_backend_name(&backend));
+                let generated_name = render_backend_name(&backend);
+                let source_name = format!("{}.{}", identity.module, name);
+                renames.insert(source_name.clone(), generated_name.clone());
+                linked_names.push(LinkedName {
+                    source_name,
+                    generated_name,
+                    kind: LinkedNameKind::Constructor,
+                    span: declaration.span,
+                });
             }
         }
     }
-    renames
+    BackendRenamePlan { renames, linked_names }
+}
+
+fn generated_name_collision_diagnostics(linked_names: &[LinkedName]) -> Diagnostics {
+    let mut by_generated: BTreeMap<&str, Vec<&LinkedName>> = BTreeMap::new();
+    for name in linked_names {
+        by_generated.entry(name.generated_name.as_str()).or_default().push(name);
+    }
+
+    let mut diagnostics = Vec::new();
+    for (generated_name, mut origins) in by_generated {
+        if origins.len() < 2 {
+            continue;
+        }
+        origins.sort_by_key(|origin| {
+            (
+                origin.source_name.as_str(),
+                &origin.kind,
+                origin.span.file_id.0,
+                origin.span.start,
+                origin.span.end,
+            )
+        });
+
+        let mut diagnostic = Diagnostic::new(
+            DiagnosticCode::ProjectError,
+            format!("duplicate generated backend name `{generated_name}`"),
+        )
+        .with_note("generated backend names must be unique after project linking");
+        for origin in origins {
+            diagnostic = diagnostic.with_label(Label::primary(
+                origin.span,
+                format!("`{}` generated `{}`", origin.source_name, origin.generated_name),
+            ));
+        }
+        diagnostics.push(diagnostic);
+    }
+    diagnostics
 }
 
 fn module_backend_renames(module: &Module, global: &HashMap<String, String>) -> HashMap<String, String> {
@@ -1413,4 +1527,69 @@ fn declaration_name(source: &str, keyword: &str) -> Option<String> {
 
 fn visibility(public: bool) -> Visibility {
     if public { Visibility::Public } else { Visibility::Private }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::source::{SourceFileId, Span};
+
+    use super::*;
+
+    #[test]
+    fn reports_generated_name_collisions_with_source_declarations() {
+        let first_span = Span::new(SourceFileId(1), 10, 20);
+        let second_span = Span::new(SourceFileId(2), 30, 40);
+        let names = vec![
+            LinkedName {
+                source_name: "app/main.run".into(),
+                generated_name: "generated/run".into(),
+                kind: LinkedNameKind::Function,
+                span: first_span,
+            },
+            LinkedName {
+                source_name: "test/main.run".into(),
+                generated_name: "generated/run".into(),
+                kind: LinkedNameKind::Function,
+                span: second_span,
+            },
+        ];
+
+        let diagnostics = generated_name_collision_diagnostics(&names);
+
+        assert_eq!(diagnostics.len(), 1);
+        insta::assert_snapshot!(diagnostics[0].render_plain(), @r#"
+ProjectError: duplicate generated backend name `generated/run`
+  --> file 1 bytes 10..20
+      `app/main.run` generated `generated/run`
+  --> file 2 bytes 30..40
+      `test/main.run` generated `generated/run`
+  note: generated backend names must be unique after project linking
+"#);
+    }
+
+    #[test]
+    fn linked_debug_dump_shows_source_and_generated_names() {
+        let span = Span::new(SourceFileId(1), 0, 3);
+        let module = Module {
+            span,
+            identity: None,
+            imports: Vec::new(),
+            declarations: Vec::new(),
+            constants: Vec::new(),
+            init: ModuleInit::default(),
+            references: Vec::new(),
+            exports: Vec::new(),
+            functions: Vec::new(),
+            linked_names: vec![LinkedName {
+                source_name: "app/main.run".into(),
+                generated_name: "generated/run".into(),
+                kind: LinkedNameKind::Function,
+                span,
+            }],
+        };
+
+        let dump = module.linked_debug_dump();
+
+        assert!(dump.starts_with("linked names:\n  Function source=app/main.run generated=generated/run\n\nModule"));
+    }
 }

@@ -51,6 +51,7 @@ fn ir_module(functions: Vec<ir::Function>, span: Span) -> ir::Module {
         references: Vec::new(),
         exports: Vec::new(),
         functions,
+        linked_names: Vec::new(),
     }
 }
 
@@ -125,11 +126,11 @@ fn emits_wat_for_public_scalar_function() {
 
     insta::assert_snapshot!(wasm.wat, @r#"
 (module
-(type (func (param i64) (result i64)))
-(func $id (type 0) (param i64) (result i64)
- local.get 0
-)
-(export "id" (func 0))
+  (type (func (param i64) (result i64)))
+  (func $id (type 0) (param i64) (result i64)
+    local.get 0
+  )
+  (export "id" (func 0))
 )
 "#);
     assert!(!wasm.bytes.is_empty());
@@ -179,14 +180,14 @@ fn renders_deterministic_structured_wat_for_managed_values() {
 
     insta::assert_snapshot!(wasm.wat, @r#"
 (module
-(type (func (result i32)))
-(memory 1)
-(func $pair (type 0) (result i32)
- i32.const 1024
-)
-(export "pair" (func 0))
-(export "memory" (memory 0))
-(data (memory 0) (offset i32.const 1024) "\03\00\00\00\02\00\00\00\01\00\00\00\00\00\00\00\02\00\00\00\00\00\00\00")
+  (type (func (result i32)))
+  (memory 1)
+  (func $pair (type 0) (result i32)
+    i32.const 1024
+  )
+  (export "pair" (func 0))
+  (export "memory" (memory 0))
+  (data (memory 0) (offset i32.const 1024) "\03\00\00\00\02\00\00\00\01\00\00\00\00\00\00\00\02\00\00\00\00\00\00\00")
 )
 "#);
 }
@@ -455,32 +456,6 @@ case Some(Some(2)) {
     }
 }
 
-fn invalid_structured_module(span: Span, body: Vec<builder::Instruction>) -> builder::Module {
-    let mut module = builder::Module::new();
-    module.source_span = Some(span);
-    let type_id = module.push_type(builder::FunctionType::new([], [builder::ValueType::I64]));
-    let mut function = builder::Function::new(type_id);
-    function.body = body;
-    module.push_function(function);
-    module
-}
-
-fn assert_source_spanned_wasm_error(module: &builder::Module, expected: &str, span: Span) {
-    let errors = module
-        .structured_wat()
-        .expect_err("invalid module should fail before byte emission");
-    assert!(
-        errors.iter().any(|diagnostic| diagnostic.message.contains(expected)),
-        "{errors:?}"
-    );
-    assert!(
-        errors
-            .iter()
-            .any(|diagnostic| diagnostic.labels.iter().any(|label| label.span == span)),
-        "{errors:?}"
-    );
-}
-
 fn exported_function_with_body(name: &str, return_type: &Type, result: ir::Expression, span: Span) -> ir::Function {
     ir::Function {
         closure_captures: Vec::new(),
@@ -674,40 +649,6 @@ fn structured_codegen_ports_failure_ir() {
 }
 
 #[test]
-fn backend_validation_reports_source_spanned_stack_diagnostics() {
-    let span = Span::new(SourceFileId(0), 5, 9);
-    let module = invalid_structured_module(span, vec![builder::Instruction::I32Const(1)]);
-
-    assert_source_spanned_wasm_error(&module, "leaves stack", span);
-}
-
-#[test]
-fn backend_validation_reports_source_spanned_signature_diagnostics() {
-    let span = Span::new(SourceFileId(0), 10, 14);
-    let mut module = invalid_structured_module(
-        span,
-        vec![builder::Instruction::Call {
-            function: builder::FunctionId(0),
-            type_: builder::FunctionType::new([], [builder::ValueType::I32]),
-        }],
-    );
-    module.functions[0].body.push(builder::Instruction::I64Const(0));
-
-    assert_source_spanned_wasm_error(&module, "call to function 0 has signature", span);
-}
-
-#[test]
-fn backend_validation_reports_source_spanned_local_diagnostics() {
-    let span = Span::new(SourceFileId(0), 15, 20);
-    let module = invalid_structured_module(
-        span,
-        vec![builder::Instruction::LocalGet { local: builder::LocalId(9), type_: builder::ValueType::I64 }],
-    );
-
-    assert_source_spanned_wasm_error(&module, "unknown local index", span);
-}
-
-#[test]
 fn backend_validation_reports_source_spanned_target_adapter_diagnostics() {
     let module = host_import_module(Span::new(SourceFileId(0), 21, 30));
     let errors = module
@@ -733,14 +674,14 @@ fn emits_host_import_before_exported_function() {
 
     insta::assert_snapshot!(module.emit_wat().expect("emit wat"), @r#"
 (module
-(type (func (param i64) (result i64)))
-(type (func (result i64)))
-(import "env" "inc" (func (type 0) (param i64) (result i64)))
-(func $main (type 1) (result i64)
- i64.const 41
- call 0
-)
-(export "main" (func 1))
+  (type (func (param i64) (result i64)))
+  (type (func (result i64)))
+  (import "env" "inc" (func (type 0) (param i64) (result i64)))
+  (func $main (type 1) (result i64)
+    i64.const 41
+    call 0
+  )
+  (export "main" (func 1))
 )
 "#);
 }

@@ -39,9 +39,9 @@ The goal here is to make linked project names deterministic and collision-free.
       record update constructors, and debug references to generated names.
 - [x] Keep host import and module import ABI names stable while namespacing
       compiler-owned wrapper functions.
-- [ ] Detect generated-name collisions deterministically and report the source
+- [x] Detect generated-name collisions deterministically and report the source
       declarations that caused them.
-- [ ] Show source names and generated names in linked IR debug dumps.
+- [x] Show source names and generated names in linked IR debug dumps.
 - [ ] Add fixtures for duplicate function names in different modules, duplicate
       module basenames, dependency module name overlap, and lifted closures.
 

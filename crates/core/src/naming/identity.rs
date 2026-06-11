@@ -1,4 +1,4 @@
-use std::fmt;
+use std::fmt::{self, Display};
 
 /// Package identity used for compiler-owned backend names.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -108,6 +108,12 @@ impl fmt::Display for MemberName {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CompilerGeneratedIndex(pub u32);
 
+impl Display for CompilerGeneratedIndex {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "i{}", self.0)
+    }
+}
+
 /// Owner namespace for backend symbols controlled by the compiler.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum BackendOwner {
@@ -149,6 +155,18 @@ pub enum BackendItemKind {
     Helper(HelperKind),
 }
 
+impl Display for BackendItemKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            BackendItemKind::Function => "fn",
+            BackendItemKind::Constant => "const",
+            BackendItemKind::Constructor => "ctor",
+            BackendItemKind::TypeHelper => "type",
+            BackendItemKind::Helper(_) => "helper",
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum HelperKind {
     Closure,
@@ -159,6 +177,24 @@ pub enum HelperKind {
     Stdlib,
     Debug,
     Other(String),
+}
+
+impl Display for HelperKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            HelperKind::Closure => f.write_str("closure"),
+            HelperKind::LiftedFunction => f.write_str("lifted"),
+            HelperKind::RecordUpdateConstructor => f.write_str("record_update"),
+            HelperKind::ImportWrapper => f.write_str("import_wrapper"),
+            HelperKind::Runtime => f.write_str("runtime"),
+            HelperKind::Stdlib => f.write_str("stdlib"),
+            HelperKind::Debug => f.write_str("debug"),
+            HelperKind::Other(name) => {
+                let d = super::escape_segment(name);
+                f.write_str(d.as_str())
+            }
+        }
+    }
 }
 
 /// Complete compiler-owned backend name before rendering.

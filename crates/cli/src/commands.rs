@@ -222,7 +222,7 @@ fn write_project_debug_dumps(
     dump_dir: &Path, ir: &compiler_core::ir::Module, wasm: &compiler_core::wasm::WasmModule,
 ) -> std::io::Result<()> {
     fs::create_dir_all(dump_dir)?;
-    fs::write(dump_dir.join("ir.txt"), format!("{ir:#?}\n"))?;
+    fs::write(dump_dir.join("ir.txt"), ir.linked_debug_dump())?;
     fs::write(dump_dir.join("wat.wat"), &wasm.wat)?;
     Ok(())
 }

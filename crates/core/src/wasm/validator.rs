@@ -6,6 +6,11 @@
 
 use super::builder::*;
 
+#[derive(Debug, Clone)]
+struct LabelType {
+    branch_results: Vec<ValueType>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValidationError {
     pub message: String,
@@ -532,7 +537,67 @@ impl FunctionContext {
     }
 }
 
-#[derive(Debug, Clone)]
-struct LabelType {
-    branch_results: Vec<ValueType>,
+#[cfg(test)]
+mod tests {
+    use crate::source::{SourceFileId, Span};
+    use crate::wasm::builder;
+
+    fn invalid_structured_module(span: Span, body: Vec<builder::Instruction>) -> builder::Module {
+        let mut module = builder::Module::new();
+        module.source_span = Some(span);
+
+        let type_id = module.push_type(builder::FunctionType::new([], [builder::ValueType::I64]));
+        let mut function = builder::Function::new(type_id);
+        function.body = body;
+        module.push_function(function);
+        module
+    }
+
+    fn assert_source_spanned_wasm_error(module: &builder::Module, expected: &str, span: Span) {
+        let errors = module
+            .structured_wat()
+            .expect_err("invalid module should fail before byte emission");
+        assert!(
+            errors.iter().any(|diagnostic| diagnostic.message.contains(expected)),
+            "{errors:?}"
+        );
+        assert!(
+            errors
+                .iter()
+                .any(|diagnostic| diagnostic.labels.iter().any(|label| label.span == span)),
+            "{errors:?}"
+        );
+    }
+
+    #[test]
+    fn backend_validation_reports_source_spanned_stack_diagnostics() {
+        let span = Span::new(SourceFileId(0), 5, 9);
+        let module = invalid_structured_module(span, vec![builder::Instruction::I32Const(1)]);
+        assert_source_spanned_wasm_error(&module, "leaves stack", span);
+    }
+
+    #[test]
+    fn backend_validation_reports_source_spanned_signature_diagnostics() {
+        let span = Span::new(SourceFileId(0), 10, 14);
+        let mut module = invalid_structured_module(
+            span,
+            vec![builder::Instruction::Call {
+                function: builder::FunctionId(0),
+                type_: builder::FunctionType::new([], [builder::ValueType::I32]),
+            }],
+        );
+
+        module.functions[0].body.push(builder::Instruction::I64Const(0));
+        assert_source_spanned_wasm_error(&module, "call to function 0 has signature", span);
+    }
+
+    #[test]
+    fn backend_validation_reports_source_spanned_local_diagnostics() {
+        let span = Span::new(SourceFileId(0), 15, 20);
+        let module = invalid_structured_module(
+            span,
+            vec![builder::Instruction::LocalGet { local: builder::LocalId(9), type_: builder::ValueType::I64 }],
+        );
+        assert_source_spanned_wasm_error(&module, "unknown local index", span);
+    }
 }

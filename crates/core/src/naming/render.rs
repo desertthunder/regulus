@@ -1,6 +1,4 @@
-use super::{
-    BackendItem, BackendItemKind, BackendName, BackendOwner, CompilerGeneratedIndex, HelperKind, escape_segment,
-};
+use super::{BackendItemKind, BackendName, BackendOwner, escape_segment};
 
 /// Render a structured backend name into a deterministic symbol string.
 pub fn render_backend_name(name: &BackendName) -> String {
@@ -17,15 +15,12 @@ pub fn render_backend_name(name: &BackendName) -> String {
         BackendOwner::Compiler => parts.push("compiler".into()),
     }
 
-    push_item_parts(&mut parts, &name.item);
-    parts.join("$")
-}
+    let item = &name.item;
 
-fn push_item_parts(parts: &mut Vec<String>, item: &BackendItem) {
-    parts.push(item_kind_tag(&item.kind).to_string());
+    parts.push(item.kind.to_string());
 
     if let BackendItemKind::Helper(helper) = &item.kind {
-        parts.push(helper_kind_tag(helper));
+        parts.push(helper.to_string());
     }
 
     if let Some(member) = &item.member {
@@ -33,46 +28,20 @@ fn push_item_parts(parts: &mut Vec<String>, item: &BackendItem) {
     }
 
     if let Some(index) = item.index {
-        parts.push(render_index(index));
+        parts.push(index.to_string());
     }
-}
 
-fn item_kind_tag(kind: &BackendItemKind) -> &'static str {
-    match kind {
-        BackendItemKind::Function => "fn",
-        BackendItemKind::Constant => "const",
-        BackendItemKind::Constructor => "ctor",
-        BackendItemKind::TypeHelper => "type",
-        BackendItemKind::Helper(_) => "helper",
-    }
-}
-
-fn helper_kind_tag(kind: &HelperKind) -> String {
-    match kind {
-        HelperKind::Closure => "closure".into(),
-        HelperKind::LiftedFunction => "lifted".into(),
-        HelperKind::RecordUpdateConstructor => "record_update".into(),
-        HelperKind::ImportWrapper => "import_wrapper".into(),
-        HelperKind::Runtime => "runtime".into(),
-        HelperKind::Stdlib => "stdlib".into(),
-        HelperKind::Debug => "debug".into(),
-        HelperKind::Other(name) => escape_segment(name),
-    }
-}
-
-fn render_index(index: CompilerGeneratedIndex) -> String {
-    format!("i{}", index.0)
+    parts.join("$")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::naming::{BackendItem, BackendItemKind, HelperKind, ModuleName};
+    use crate::naming::{BackendItem, BackendItemKind, CompilerGeneratedIndex, HelperKind, ModuleName};
 
     #[test]
     fn renders_package_function_names() {
         let name = BackendName::function("app", ModuleName::from_path("app/main"), "run");
-
         assert_eq!(
             render_backend_name(&name),
             "r$pkg$x617070$mod$x617070$x6d61696e$fn$x72756e"
