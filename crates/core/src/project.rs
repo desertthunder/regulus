@@ -1,15 +1,12 @@
-use std::{
-    collections::{BTreeMap, HashMap},
-    fs,
-    path::{Path, PathBuf},
-};
+use std::collections::{BTreeMap, HashMap};
+use std::fs;
+use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
-use crate::{
-    diagnostic::{Diagnostic, DiagnosticCode, Diagnostics},
-    source::{SourceFile, SourceFileId},
-};
+use crate::diagnostic::{Diagnostic, DiagnosticCode, Diagnostics};
+use crate::source::{SourceFile, SourceFileId};
+use crate::{loader::dependency, target, types};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Project {
@@ -19,10 +16,26 @@ pub struct Project {
     pub sources: Vec<SourceFile>,
 }
 
+impl Project {
+    pub fn module(&self, name: &str) -> Result<&ModuleInfo, Diagnostics> {
+        self.graph
+            .modules
+            .iter()
+            .find(|module| module.name == name)
+            .ok_or_else(|| {
+                vec![Diagnostic::new(
+                    DiagnosticCode::ProjectError,
+                    format!("missing module `{name}`"),
+                )]
+            })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackageGraph {
     pub root_package: PackageNode,
     pub dependencies: Vec<Dependency>,
+    pub dependency_interfaces: HashMap<String, types::ModuleInterface>,
     pub modules: Vec<ModuleInfo>,
 }
 
@@ -38,6 +51,26 @@ pub struct Dependency {
     pub name: String,
     pub requirement: String,
     pub dev: bool,
+    pub source: DependencySource,
+    pub root: Option<PathBuf>,
+    pub version: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DependencySource {
+    Hex,
+    Path,
+    Git,
+}
+
+impl DependencySource {
+    pub fn from_toml(dependency: &DependencyToml) -> Self {
+        match dependency {
+            DependencyToml::Options { path: Some(_), .. } => Self::Path,
+            DependencyToml::Options { git: Some(_), .. } => Self::Git,
+            _ => Self::Hex,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -111,13 +144,42 @@ impl DependencyToml {
                 .unwrap_or_else(|| "*".into()),
         }
     }
+
+    pub fn version(&self) -> Option<String> {
+        match self {
+            DependencyToml::Version(version) => Some(version.clone()),
+            DependencyToml::Options { version, .. } => version.clone(),
+        }
+    }
+
+    pub fn path(&self) -> Option<String> {
+        match self {
+            DependencyToml::Options { path, .. } => path.clone(),
+            DependencyToml::Version(_) => None,
+        }
+    }
+
+    pub fn get_dep_ver(&self, name: &str, pkg_versions: &HashMap<String, String>, pkg_root: &Path) -> Option<String> {
+        self.version()
+            .or_else(|| pkg_versions.get(name).cloned())
+            .or_else(|| Self::package_gleam_toml_version(pkg_root))
+    }
+
+    fn package_gleam_toml_version(root: &Path) -> Option<String> {
+        let text = fs::read_to_string(root.join("gleam.toml")).ok()?;
+        toml::from_str::<GleamToml>(&text).ok().map(|config| config.version)
+    }
 }
 
 pub fn load_project(path: impl AsRef<Path>) -> Result<Project, Diagnostics> {
     let root = project_root(path.as_ref());
     let config = read_config(&root)?;
     let (sources, modules) = discover_modules(&root)?;
-    let dependencies = dependencies(&config);
+    let configured_dependencies = configured_dependencies(&config);
+    let compile_target = target::project_compile_target(config.target.as_ref());
+    let dependency_interfaces =
+        dependency::load_dependency_interfaces(&root, &configured_dependencies, compile_target)?;
+    let dependencies = dependency::dependency_nodes(&dependency_interfaces.packages, dependencies(&config));
 
     Ok(Project {
         graph: PackageGraph {
@@ -127,6 +189,7 @@ pub fn load_project(path: impl AsRef<Path>) -> Result<Project, Diagnostics> {
                 root: root.clone(),
             },
             dependencies,
+            dependency_interfaces: dependency_interfaces.modules,
             modules,
         },
         root,
@@ -144,21 +207,6 @@ pub fn source_file(path: impl AsRef<Path>) -> Result<SourceFile, Diagnostics> {
         )]
     })?;
     Ok(SourceFile::with_path(SourceFileId(0), path, text))
-}
-
-impl Project {
-    pub fn module(&self, name: &str) -> Result<&ModuleInfo, Diagnostics> {
-        self.graph
-            .modules
-            .iter()
-            .find(|module| module.name == name)
-            .ok_or_else(|| {
-                vec![Diagnostic::new(
-                    DiagnosticCode::ProjectError,
-                    format!("missing module `{name}`"),
-                )]
-            })
-    }
 }
 
 fn project_root(path: &Path) -> PathBuf {
@@ -181,18 +229,38 @@ fn read_config(root: &Path) -> Result<GleamToml, Diagnostics> {
     })
 }
 
-fn dependencies(config: &GleamToml) -> Vec<Dependency> {
-    let normal = config.dependencies.iter().map(|(name, dependency)| Dependency {
-        name: name.clone(),
-        requirement: dependency.requirement(),
-        dev: false,
-    });
-    let dev = config.dev_dependencies.iter().map(|(name, dependency)| Dependency {
-        name: name.clone(),
-        requirement: dependency.requirement(),
-        dev: true,
-    });
+fn configured_dependencies(config: &GleamToml) -> Vec<(String, DependencyToml, bool)> {
+    let normal = config
+        .dependencies
+        .iter()
+        .map(|(name, dependency)| (name.clone(), dependency.clone(), false));
+    let dev = config
+        .dev_dependencies
+        .iter()
+        .map(|(name, dependency)| (name.clone(), dependency.clone(), true));
     normal.chain(dev).collect()
+}
+
+fn dependencies(config: &GleamToml) -> Vec<Dependency> {
+    let normal = config
+        .dependencies
+        .iter()
+        .map(|(name, dependency)| (name.clone(), dependency.clone(), false));
+    let dev = config
+        .dev_dependencies
+        .iter()
+        .map(|(name, dependency)| (name.clone(), dependency.clone(), true));
+    normal
+        .chain(dev)
+        .map(|(name, dependency, dev)| Dependency {
+            name,
+            requirement: dependency.requirement(),
+            dev,
+            source: DependencySource::from_toml(&dependency),
+            root: None,
+            version: dependency.version(),
+        })
+        .collect()
 }
 
 fn discover_modules(root: &Path) -> Result<(Vec<SourceFile>, Vec<ModuleInfo>), Diagnostics> {

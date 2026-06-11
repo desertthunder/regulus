@@ -5,6 +5,7 @@ pub mod ast;
 pub mod diagnostic;
 pub mod inference;
 pub mod ir;
+pub mod loader;
 pub mod naming;
 pub mod parse;
 pub mod project;
@@ -71,9 +72,8 @@ pub fn compile_source_with_options(source: SourceFile, options: CompileOptions) 
     let resolved = resolve::resolve(ast)?;
     let typed = types::check(resolved)?;
     let ir = ir::lower(typed)?;
-    let wasm = ir.emit_wasm_with_options(options.target.into())?;
 
-    Ok(CompileOutput { wasm })
+    Ok(CompileOutput { wasm: ir.emit_wasm_with_options(options.target.into())? })
 }
 
 #[cfg(test)]

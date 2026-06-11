@@ -2,7 +2,7 @@ pub mod bit_slices;
 mod closure;
 mod lowerer;
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::{
     ast::{self, Declaration as AstDeclaration, LiteralKind},
@@ -10,7 +10,7 @@ use crate::{
     naming::{
         BackendItem, BackendItemKind, BackendName, CompilerGeneratedIndex, HelperKind, ModuleName, render_backend_name,
     },
-    resolve::SymbolKind,
+    resolve::{Namespace, ReferenceTarget, SymbolKind},
     source::Span,
     stdlib,
     types::{Type, TypedModule, TypedProject},
@@ -927,7 +927,11 @@ pub fn lower(module: TypedModule) -> Result<Module, Diagnostics> {
 
 pub fn lower_project(project: TypedProject) -> Result<Module, Diagnostics> {
     let mut modules = Vec::new();
-    let mut diagnostics = Vec::new();
+    let mut diagnostics = unsupported_dependency_member_diagnostics(&project);
+
+    if !diagnostics.is_empty() {
+        return Err(diagnostics);
+    }
 
     for module in project.modules {
         match lowerer::lower_with_project_interfaces(module, &project.interfaces) {
@@ -941,6 +945,90 @@ pub fn lower_project(project: TypedProject) -> Result<Module, Diagnostics> {
     }
 
     link_modules(modules)
+}
+
+fn unsupported_dependency_member_diagnostics(project: &TypedProject) -> Diagnostics {
+    let project_modules = project
+        .modules
+        .iter()
+        .filter_map(|module| module.module_name.as_deref())
+        .collect::<HashSet<_>>();
+    let stdlib_modules = stdlib::StdlibRegistry::new()
+        .modules()
+        .map(|module| module.name)
+        .collect::<HashSet<_>>();
+    let dependency_modules = project
+        .interfaces
+        .keys()
+        .map(String::as_str)
+        .filter(|module| !project_modules.contains(module) && !stdlib_modules.contains(module))
+        .collect::<HashSet<_>>();
+
+    if dependency_modules.is_empty() {
+        return Vec::new();
+    }
+
+    let mut diagnostics = Vec::new();
+    let mut reported = HashSet::new();
+    for module in &project.modules {
+        for reference in &module.resolved.references {
+            match &reference.target {
+                ReferenceTarget::Symbol(symbol_id) => {
+                    let symbol = module.resolved.symbols.symbol(*symbol_id);
+                    if !matches!(symbol.namespace, Namespace::Value | Namespace::Constructor) {
+                        continue;
+                    }
+                    let SymbolKind::Imported { module: dependency_module, member } = &symbol.kind else {
+                        continue;
+                    };
+                    if dependency_modules.contains(dependency_module.as_str())
+                        && reported.insert((reference.name.span, dependency_module.clone(), member.clone()))
+                    {
+                        diagnostics.push(unsupported_dependency_member_diagnostic(
+                            dependency_module,
+                            member,
+                            reference.name.span,
+                        ));
+                    }
+                }
+                ReferenceTarget::QualifiedMember { module: module_symbol, member, .. } => {
+                    let symbol = module.resolved.symbols.symbol(*module_symbol);
+                    let SymbolKind::Import { module: dependency_module } = &symbol.kind else {
+                        continue;
+                    };
+                    if !dependency_modules.contains(dependency_module.as_str()) {
+                        continue;
+                    }
+                    let Some(interface) = project.interfaces.get(dependency_module) else {
+                        continue;
+                    };
+                    if !(interface.functions.contains_key(&member.text)
+                        || interface.constructors.contains_key(&member.text))
+                    {
+                        continue;
+                    }
+                    if reported.insert((member.span, dependency_module.clone(), member.text.clone())) {
+                        diagnostics.push(unsupported_dependency_member_diagnostic(
+                            dependency_module,
+                            &member.text,
+                            member.span,
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    diagnostics
+}
+
+fn unsupported_dependency_member_diagnostic(module: &str, member: &str, span: Span) -> Diagnostic {
+    Diagnostic::new(
+        DiagnosticCode::LoweringError,
+        format!(
+            "dependency member `{module}.{member}` cannot be lowered yet; dependency source compilation is not supported"
+        ),
+    )
+    .with_label(Label::primary(span, "unsupported dependency member used here"))
 }
 
 fn link_modules(modules: Vec<Module>) -> Result<Module, Diagnostics> {
@@ -1561,9 +1649,24 @@ fn visibility(public: bool) -> Visibility {
 
 #[cfg(test)]
 mod tests {
-    use crate::source::{SourceFileId, Span};
+    use std::{fs, path::Path};
+
+    use tempfile::tempdir;
+
+    use crate::{
+        project,
+        source::{SourceFileId, Span},
+        types,
+    };
 
     use super::*;
+
+    fn write(path: &Path, text: &str) {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("create parent directory");
+        }
+        fs::write(path, text).expect("write fixture");
+    }
 
     #[test]
     fn reports_generated_name_collisions_with_source_declarations() {
@@ -1595,6 +1698,60 @@ ProjectError: duplicate generated backend name `generated/run`
       `test/main.run` generated `generated/run`
   note: generated backend names must be unique after project linking
 "#);
+    }
+
+    #[test]
+    fn reports_unsupported_dependency_members_before_lowering() {
+        let dir = tempdir().expect("tempdir");
+        write(
+            &dir.path().join("gleam.toml"),
+            r#"name = "app"
+version = "1.0.0"
+
+[dependencies]
+dep_pkg = { path = "dep_pkg" }
+"#,
+        );
+        write(
+            &dir.path().join("src/app.gleam"),
+            r#"import dep/foo.{Make, Thing, answer}
+
+pub fn main() -> Int {
+  answer()
+}
+
+pub fn value() -> Thing {
+  Make(1)
+}
+"#,
+        );
+        write(
+            &dir.path().join("dep_pkg/gleam.toml"),
+            "name = \"dep_pkg\"\nversion = \"0.1.0\"\n",
+        );
+        write(
+            &dir.path().join("dep_pkg/src/dep/foo.gleam"),
+            r#"pub type Thing {
+  Make(count: Int)
+}
+
+pub fn answer() -> Int {
+  1
+}
+"#,
+        );
+
+        let project = project::load_project(dir.path()).expect("load project");
+        let typed = types::check_project(&project).expect("type check project");
+        let diagnostics = lower_project(typed).expect_err("dependency member should be unsupported");
+
+        assert_eq!(diagnostics.len(), 2);
+        let messages = diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.message.as_str())
+            .collect::<Vec<_>>();
+        assert!(messages.iter().any(|message| message.contains("`dep/foo.answer`")));
+        assert!(messages.iter().any(|message| message.contains("`dep/foo.Make`")));
     }
 
     #[test]

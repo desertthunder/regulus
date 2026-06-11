@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::ast::{self, Declaration, Expression, Pattern, Statement, UnqualifiedImportKind};
 use crate::diagnostic::{Diagnostic, DiagnosticCode, Diagnostics, Label};
-use crate::{parse, project::Project, source::Span, stdlib::StdlibRegistry, target};
+use crate::{parse, project::Project, source::Span, stdlib::StdlibRegistry, target, types};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SymbolId(pub u32);
@@ -128,6 +128,7 @@ pub fn resolve_project(project: &Project) -> Result<ResolvedProject, Diagnostics
     }
 
     let mut interfaces = stdlib_resolve_interfaces();
+    interfaces.extend(dependency_resolve_interfaces(&project.graph.dependency_interfaces));
     interfaces.extend(
         ast_modules
             .iter()
@@ -932,6 +933,46 @@ fn stdlib_resolve_interfaces() -> HashMap<String, ModuleInterface> {
         .collect()
 }
 
+fn dependency_resolve_interfaces(
+    interfaces: &HashMap<String, types::ModuleInterface>,
+) -> HashMap<String, ModuleInterface> {
+    interfaces
+        .iter()
+        .map(|(module, interface)| {
+            let mut members = HashMap::new();
+            for (name, type_) in &interface.functions {
+                members.insert(
+                    (Namespace::Value, name.clone()),
+                    ModuleMember { public: true, span: type_span(type_) },
+                );
+            }
+            for (name, declaration) in &interface.types {
+                members.insert(
+                    (Namespace::Type, name.clone()),
+                    ModuleMember { public: true, span: declaration.span },
+                );
+            }
+            for (name, constructor) in &interface.constructors {
+                members.insert(
+                    (Namespace::Constructor, name.clone()),
+                    ModuleMember { public: true, span: constructor.span },
+                );
+                for field in &constructor.fields {
+                    members.insert(
+                        (Namespace::Field, field.name.clone()),
+                        ModuleMember { public: true, span: constructor.span },
+                    );
+                }
+            }
+            (module.clone(), ModuleInterface { members })
+        })
+        .collect()
+}
+
+fn type_span(_type_: &types::Type) -> Span {
+    module_span()
+}
+
 fn module_span() -> Span {
     Span { file_id: crate::source::SourceFileId(u32::MAX), start: 0, end: 0 }
 }
@@ -1256,6 +1297,57 @@ fn main(person) { case person { Missing(age: value) -> value } }
             diagnostics
                 .iter()
                 .any(|diagnostic| diagnostic.message.contains("member `hidden` is private"))
+        );
+    }
+
+    #[test]
+    fn dependency_interface_lookup_respects_public_visibility() {
+        let dir = tempdir().expect("tempdir");
+        write(
+            &dir.path().join("gleam.toml"),
+            r#"name = "app"
+version = "1.0.0"
+
+[dependencies]
+dep_pkg = { path = "dep_pkg" }
+"#,
+        );
+        write(
+            &dir.path().join("src/app.gleam"),
+            r#"import dep/foo.{hidden, visible}
+
+pub fn main() {
+  #(visible(), hidden())
+}
+"#,
+        );
+        let dep = dir.path().join("dep_pkg");
+        write(&dep.join("gleam.toml"), "name = \"dep_pkg\"\nversion = \"0.1.0\"\n");
+        write(
+            &dep.join("src/dep/foo.gleam"),
+            r#"pub fn visible() -> Int {
+  1
+}
+
+fn hidden() -> Int {
+  2
+}
+"#,
+        );
+
+        let project = project::load_project(dir.path()).expect("load project");
+        let diagnostics = resolve_project(&project).expect_err("private dependency member should be hidden");
+
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains("module `dep/foo` has no member `hidden`")),
+            "expected hidden member lookup diagnostic, got {diagnostics:#?}"
+        );
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains("visible"))
         );
     }
 

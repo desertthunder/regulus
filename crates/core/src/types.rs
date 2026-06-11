@@ -149,6 +149,119 @@ pub struct TypedProject {
     pub interfaces: HashMap<String, ModuleInterface>,
 }
 
+pub fn interface_from_ast(module: &ast::Module) -> ModuleInterface {
+    let mut interface = ModuleInterface::default();
+    collect_interface_declarations(&module.declarations, &mut interface);
+    interface
+}
+
+fn collect_interface_declarations(declarations: &[Declaration], interface: &mut ModuleInterface) {
+    for declaration in declarations {
+        match declaration {
+            Declaration::Function(function) if function.public => {
+                if let Some(type_) = function_type_from_annotations(function) {
+                    interface.functions.insert(function.name.text.clone(), type_);
+                    interface.function_labels.insert(
+                        function.name.text.clone(),
+                        function
+                            .parameters
+                            .iter()
+                            .map(|parameter| parameter.label.as_ref().map(|label| label.text.clone()))
+                            .collect(),
+                    );
+                }
+            }
+            Declaration::Constant(constant) if constant.public => {
+                if let Some(type_) = constant
+                    .type_annotation
+                    .as_ref()
+                    .and_then(|annotation| Type::from_source(&annotation.source))
+                {
+                    interface.functions.insert(constant.name.text.clone(), type_);
+                }
+            }
+            Declaration::ExternalFunction(function) if function.public => {
+                if let Some(type_) = external_function_type_from_annotations(function) {
+                    interface.functions.insert(function.name.text.clone(), type_);
+                    interface.function_labels.insert(
+                        function.name.text.clone(),
+                        function
+                            .parameters
+                            .iter()
+                            .map(|parameter| parameter.label.as_ref().map(|label| label.text.clone()))
+                            .collect(),
+                    );
+                }
+            }
+            Declaration::ExternalType(type_) if type_.public => {
+                interface.types.insert(
+                    type_.name.text.clone(),
+                    TypeDeclaration {
+                        name: type_.name.text.clone(),
+                        parameters: Vec::new(),
+                        opaque: type_.opaque,
+                        constructors: Vec::new(),
+                        span: type_.span,
+                    },
+                );
+            }
+            Declaration::TypeDefinition(type_) if type_.public => {
+                if let Some(type_declaration) = type_definition_from_ast(type_) {
+                    let exported_constructors = !type_declaration.opaque;
+                    if exported_constructors {
+                        for constructor in &type_declaration.constructors {
+                            interface
+                                .constructors
+                                .insert(constructor.name.clone(), constructor.clone());
+                        }
+                    }
+                    interface.types.insert(type_declaration.name.clone(), type_declaration);
+                }
+            }
+            Declaration::TypeAlias(alias) if alias.public => {
+                if let Some(alias) = type_alias_from_ast(alias) {
+                    interface.types.insert(alias.name.clone(), alias);
+                }
+            }
+            Declaration::TargetGroup(group) => collect_interface_declarations(&group.declarations, interface),
+            _ => {}
+        }
+    }
+}
+
+fn function_type_from_annotations(function: &ast::Function) -> Option<Type> {
+    let params = function
+        .parameters
+        .iter()
+        .map(|parameter| {
+            parameter
+                .type_annotation
+                .as_ref()
+                .and_then(|annotation| Type::from_source(&annotation.source))
+        })
+        .collect::<Option<Vec<_>>>()?;
+    let return_type = function
+        .return_type
+        .as_ref()
+        .and_then(|annotation| Type::from_source(&annotation.source))?;
+    Some(Type::Function { params, return_type: Box::new(return_type) })
+}
+
+fn external_function_type_from_annotations(function: &ast::ExternalFunction) -> Option<Type> {
+    let params = function
+        .parameters
+        .iter()
+        .map(|parameter| {
+            parameter
+                .type_annotation
+                .as_ref()
+                .and_then(|annotation| Type::from_source(&annotation.source))
+        })
+        .collect::<Option<Vec<_>>>()?;
+    let return_type = Type::from_source(&function.return_type.source)?;
+    Some(Type::Function { params, return_type: Box::new(return_type) })
+}
+
 pub fn check(module: ResolvedModule) -> Result<TypedModule, Diagnostics> {
     TypeChecker::new(module).check()
 }
@@ -174,15 +287,18 @@ pub fn check_project(project: &Project) -> Result<TypedProject, Diagnostics> {
         .modules()
         .map(|module| (module.name.to_string(), module.interface.clone()))
         .collect::<HashMap<_, _>>();
-    interfaces.extend(stdlib_interfaces.clone());
+    let dependency_interfaces = project.graph.dependency_interfaces.clone();
+    let mut external_interfaces = stdlib_interfaces.clone();
+    external_interfaces.extend(dependency_interfaces.clone());
+    interfaces.extend(external_interfaces.clone());
 
     let external_constructors = resolved
         .modules
         .iter()
         .flat_map(|module| constructors_from_ast(&module.ast))
-        .chain(stdlib_interfaces.values().flat_map(interface_constructors))
+        .chain(external_interfaces.values().flat_map(interface_constructors))
         .collect::<HashMap<_, _>>();
-    let stdlib_values = stdlib_interfaces
+    let stdlib_values = external_interfaces
         .iter()
         .flat_map(|(module, interface)| qualified_values_from_interface(module, interface))
         .collect::<HashMap<_, _>>();
@@ -196,6 +312,11 @@ pub fn check_project(project: &Project) -> Result<TypedProject, Diagnostics> {
         .modules
         .iter()
         .flat_map(|module| function_label_map(&module.ast))
+        .chain(
+            external_interfaces
+                .iter()
+                .flat_map(|(module, interface)| qualified_function_labels_from_interface(module, interface)),
+        )
         .collect::<HashMap<_, _>>();
 
     let module_order = project_module_order(project, &resolved);
@@ -2361,6 +2482,24 @@ fn qualified_values_from_interface(module: &str, interface: &ModuleInterface) ->
             [
                 (format!("{module}.{name}"), type_.clone()),
                 (format!("{short}.{name}"), type_.clone()),
+                (name.clone(), type_.clone()),
+            ]
+        })
+        .collect()
+}
+
+fn qualified_function_labels_from_interface(
+    module: &str, interface: &ModuleInterface,
+) -> Vec<(String, Vec<Option<String>>)> {
+    let short = module.rsplit('/').next().unwrap_or(module);
+    interface
+        .function_labels
+        .iter()
+        .flat_map(|(name, labels)| {
+            [
+                (format!("{module}.{name}"), labels.clone()),
+                (format!("{short}.{name}"), labels.clone()),
+                (name.clone(), labels.clone()),
             ]
         })
         .collect()
@@ -2871,6 +3010,125 @@ fn generic(result: Outcome(Int)) { case result { Ok(value) -> value Error(_) -> 
                 .iter()
                 .any(|expression| expression.type_ == Type::String)
         );
+    }
+
+    #[test]
+    fn checks_dependency_interfaces_for_values_types_constructors_and_labels() {
+        let dir = tempdir().expect("tempdir");
+        write(
+            &dir.path().join("gleam.toml"),
+            r#"name = "app"
+version = "1.0.0"
+
+[dependencies]
+dep_pkg = { path = "dep_pkg" }
+"#,
+        );
+        write(
+            &dir.path().join("src/app.gleam"),
+            r#"import dep/foo.{Make, Thing, labelled}
+
+pub fn main() -> Int {
+  labelled(value: Make(1))
+}
+"#,
+        );
+        let dep = dir.path().join("dep_pkg");
+        write(&dep.join("gleam.toml"), "name = \"dep_pkg\"\nversion = \"0.1.0\"\n");
+        write(
+            &dep.join("src/dep/foo.gleam"),
+            r#"pub type Thing {
+  Make(count: Int)
+}
+
+pub fn labelled(value thing: Thing) -> Int {
+  1
+}
+"#,
+        );
+
+        let project = project::load_project(dir.path()).expect("load project");
+        let typed = check_project(&project).expect("type check project with dependency interface");
+
+        assert!(project.graph.dependency_interfaces.contains_key("dep/foo"));
+        let dependency_interface = typed.interfaces.get("dep/foo").expect("dependency interface");
+        assert_eq!(
+            dependency_interface.function_labels.get("labelled"),
+            Some(&vec![Some("value".into())]),
+        );
+        assert_eq!(
+            dependency_interface
+                .constructors
+                .get("Make")
+                .and_then(|constructor| constructor.fields.first())
+                .map(|field| field.name.as_str()),
+            Some("count"),
+        );
+    }
+
+    #[test]
+    fn checks_dependency_generic_schemes_and_constructor_patterns() {
+        let dir = tempdir().expect("tempdir");
+        write(
+            &dir.path().join("gleam.toml"),
+            r#"name = "app"
+version = "1.0.0"
+
+[dependencies]
+dep_pkg = { path = "dep_pkg" }
+"#,
+        );
+        write(
+            &dir.path().join("src/app.gleam"),
+            r#"import dep/box.{Box, Boxed}
+import dep/generic
+
+pub fn pair() -> #(Int, String) {
+  #(generic.identity(1), generic.identity("one"))
+}
+
+pub fn unbox(box: Boxed(Int)) -> Int {
+  case box {
+    Box(value) -> value
+  }
+}
+"#,
+        );
+        let dep = dir.path().join("dep_pkg");
+        write(&dep.join("gleam.toml"), "name = \"dep_pkg\"\nversion = \"0.1.0\"\n");
+        write(
+            &dep.join("src/dep/generic.gleam"),
+            r#"pub fn identity(value: a) -> a {
+  value
+}
+"#,
+        );
+        write(
+            &dep.join("src/dep/box.gleam"),
+            r#"pub type Boxed(a) {
+  Box(value: a)
+}
+"#,
+        );
+
+        let project = project::load_project(dir.path()).expect("load project");
+        let typed = check_project(&project).expect("type check project with dependency generics");
+
+        let app = typed
+            .modules
+            .iter()
+            .find(|module| module.module_name.as_deref() == Some("app"))
+            .expect("app module");
+        let pair = app
+            .functions
+            .iter()
+            .find(|function| function.name.text == "pair")
+            .expect("pair type");
+        assert_eq!(
+            pair.type_,
+            Type::Function { params: vec![], return_type: Box::new(Type::Tuple(vec![Type::Int, Type::String])) }
+        );
+        assert!(typed.interfaces["dep/box"].constructors.contains_key("Box"));
     }
 
     #[test]

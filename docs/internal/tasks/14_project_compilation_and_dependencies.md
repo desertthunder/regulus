@@ -77,11 +77,11 @@ The goal here is to make linked project names deterministic and collision-free.
 
 ### Dependency interfaces
 
-- [ ] Load enough dependency metadata for project compile inputs.
-- [ ] Load dependency module interfaces for values, types, constructors, and
+- [x] Load enough dependency metadata for project compile inputs.
+- [x] Load dependency module interfaces for values, types, constructors, and
       labels used by project compilation.
-- [ ] Report unsupported dependency members before lowering.
-- [ ] Add tests for dependency interface lookup, visibility, generic schemes,
+- [x] Report unsupported dependency members before lowering.
+- [x] Add tests for dependency interface lookup, visibility, generic schemes,
       constructors, and unsupported members.
 
 ### Dependency source loading
