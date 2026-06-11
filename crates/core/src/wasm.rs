@@ -1158,6 +1158,44 @@ pub fn main() -> String { load("weather") }"#,
     }
 
     #[test]
+    fn rejects_unsupported_external_parameter_abi_shapes_before_byte_emission() {
+        let diagnostics = compile_wasm_target(
+            r#"external fn bad(value: Nil) -> Int = "env" "bad"
+pub fn main() -> Int { 1 }"#,
+            CompileTarget::Wasmtime,
+        )
+        .expect_err("Nil parameter should be rejected");
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic
+                .message
+                .contains("external function `bad` parameter 1 uses unsupported ABI shape `Nil`")
+        }));
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic
+                .labels
+                .iter()
+                .any(|label| label.message.as_deref() == Some("unsupported external ABI shape here"))
+        }));
+    }
+
+    #[test]
+    fn rejects_unsupported_external_return_abi_shapes_before_byte_emission() {
+        let diagnostics = compile_wasm_target(
+            r#"external fn bad(value: Int) -> value = "env" "bad"
+pub fn main() -> Int { 1 }"#,
+            CompileTarget::Wasmtime,
+        )
+        .expect_err("generic return should be rejected");
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic
+                .message
+                .contains("external function `bad` return uses unsupported ABI shape `Generic(\"value\")`")
+        }));
+    }
+
+    #[test]
     fn validates_external_import_modules_against_target() {
         let diagnostics = compile_wasm_target(
             r#"external fn load(key: String) -> String = "browser" "localStorage.getItem"
@@ -1174,9 +1212,159 @@ pub fn main() -> String { load("weather") }"#,
     }
 
     #[test]
+    fn table_tests_selected_external_target_groups() {
+        let source = r#"if javascript {
+  external fn selected(key: String) -> String = "browser" "selected"
+}
+
+if erlang {
+  external fn selected(key: String) -> String = "env" "selected"
+}
+
+pub fn main() -> String { selected("key") }"#;
+        let cases = [
+            (
+                CompileTarget::Browser,
+                "(import \"browser\" \"selected\"",
+                "(import \"env\" \"selected\"",
+            ),
+            (
+                CompileTarget::Wasmtime,
+                "(import \"env\" \"selected\"",
+                "(import \"browser\" \"selected\"",
+            ),
+        ];
+
+        for (target, expected, absent) in cases {
+            let wasm = compile_wasm_target(source, target).expect("compile selected target group");
+            assert!(wasm.wat.contains(expected), "missing {expected} for {target:?}");
+            assert!(!wasm.wat.contains(absent), "unexpected {absent} for {target:?}");
+        }
+    }
+
+    #[test]
+    fn table_tests_unsupported_external_abi_shapes() {
+        let cases = [
+            (
+                "Nil parameter",
+                r#"external fn bad(value: Nil) -> Int = "env" "bad"
+pub fn main() -> Int { 1 }"#,
+                "external function `bad` parameter 1 uses unsupported ABI shape `Nil`",
+            ),
+            (
+                "generic parameter",
+                r#"external fn bad(value: value) -> Int = "env" "bad"
+pub fn main() -> Int { 1 }"#,
+                "external function `bad` parameter 1 uses unsupported ABI shape `Generic(\"value\")`",
+            ),
+            (
+                "generic list return",
+                r#"external fn bad() -> List(value) = "env" "bad"
+pub fn main() -> Int { 1 }"#,
+                "external function `bad` return uses unsupported ABI shape `List(Generic(\"value\"))`",
+            ),
+        ];
+
+        for (name, source, expected) in cases {
+            let diagnostics = match compile_wasm_target(source, CompileTarget::Wasmtime) {
+                Ok(_) => panic!("{name} should fail"),
+                Err(diagnostics) => diagnostics,
+            };
+            assert!(
+                diagnostics
+                    .iter()
+                    .any(|diagnostic| diagnostic.message.contains(expected)),
+                "{name} did not report {expected}; got {diagnostics:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn table_tests_supported_managed_external_abi_shapes() {
+        let cases = [
+            (
+                "string",
+                r#"external fn host(value: String) -> String = "env" "string"
+pub fn main() -> Int { 1 }"#,
+                "(import \"env\" \"string\" (func (type 0) (param i32) (result i32)))",
+            ),
+            (
+                "list",
+                r#"external fn host(value: List(String)) -> List(String) = "env" "list"
+pub fn main() -> Int { 1 }"#,
+                "(import \"env\" \"list\" (func (type 0) (param i32) (result i32)))",
+            ),
+            (
+                "tuple",
+                r#"external fn host(value: #(Int, String)) -> #(Int, String) = "env" "tuple"
+pub fn main() -> Int { 1 }"#,
+                "(import \"env\" \"tuple\" (func (type 0) (param i32) (result i32)))",
+            ),
+            (
+                "custom record",
+                r#"pub type Response { Response(status: Int, body: String) }
+external fn host(value: Response) -> Nil = "env" "record"
+pub fn main() -> Int { 1 }"#,
+                "(import \"env\" \"record\" (func (type 0) (param i32)))",
+            ),
+            (
+                "opaque handle",
+                r#"pub external type Handle
+external fn host(value: Handle) -> Handle = "env" "handle"
+pub fn main() -> Int { 1 }"#,
+                "(import \"env\" \"handle\" (func (type 0) (param i32) (result i32)))",
+            ),
+        ];
+
+        for (name, source, expected_import) in cases {
+            let wasm = compile_wasm_target(source, CompileTarget::Wasmtime)
+                .unwrap_or_else(|errors| panic!("{name} should compile: {errors:?}"));
+            assert!(
+                wasm.wat.contains(expected_import),
+                "{name} missing import {expected_import}; wat:\n{}",
+                wasm.wat
+            );
+        }
+    }
+
+    #[test]
+    fn table_tests_browser_and_worker_style_external_imports() {
+        let cases = [
+            (
+                "fetch",
+                r#"external fn host(url: String) -> String = "browser" "fetch"
+pub fn main() -> Int { 1 }"#,
+                "(import \"browser\" \"fetch\" (func (type 0) (param i32) (result i32)))",
+            ),
+            (
+                "local storage",
+                r#"external fn host(key: String) -> String = "browser" "localStorage.getItem"
+pub fn main() -> Int { 1 }"#,
+                "(import \"browser\" \"localStorage.getItem\" (func (type 0) (param i32) (result i32)))",
+            ),
+            (
+                "worker response",
+                r#"pub type Response { Response(status: Int, body: String) }
+external fn host(response: Response) -> Nil = "browser" "worker.respond"
+pub fn main() -> Int { 1 }"#,
+                "(import \"browser\" \"worker.respond\" (func (type 0) (param i32)))",
+            ),
+        ];
+
+        for (name, source, expected_import) in cases {
+            let wasm = compile_wasm_target(source, CompileTarget::Browser)
+                .unwrap_or_else(|errors| panic!("{name} should compile: {errors:?}"));
+            assert!(
+                wasm.wat.contains(expected_import),
+                "{name} missing import {expected_import}; wat:\n{}",
+                wasm.wat
+            );
+        }
+    }
+
+    #[test]
     fn emits_string_export_adapters_for_host_boundaries() {
         let wasm = compile_wasm("pub fn greeting() { \"hello\" }");
-
         assert!(wasm.wat.contains("(func $greeting__data"));
         assert!(wasm.wat.contains("(export \"greeting__data\""));
         assert!(wasm.wat.contains("(func $greeting__len"));
@@ -1188,7 +1376,6 @@ pub fn main() -> String { load("weather") }"#,
         let source = "pub fn add(x: Int) -> Int { x + 1 }";
         let first = compile_wasm(source);
         let second = compile_wasm(source);
-
         assert_eq!(first.wat, second.wat);
         assert_eq!(first.bytes, second.bytes);
     }

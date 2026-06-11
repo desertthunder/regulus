@@ -67,10 +67,10 @@ Support useful standard library modules and host calls.
 - [x] Validate external import modules against the selected target.
 - [x] Filter target-group declarations before typing and lowering so
       target-specific externals can reuse local names safely.
-- [ ] Add a centralized external ABI validator with source-spanned diagnostics
+- [x] Add a centralized external ABI validator with source-spanned diagnostics
       for unsupported parameter and return shapes.
-- [ ] Reject unsupported external function ABI shapes before byte emission.
-- [ ] Add table-driven tests for selected target groups, unsupported ABI
+- [x] Reject unsupported external function ABI shapes before byte emission.
+- [x] Add table-driven tests for selected target groups, unsupported ABI
       shapes, supported managed shapes, and browser or Worker-style imports.
 
 ### Browser and Worker adapters

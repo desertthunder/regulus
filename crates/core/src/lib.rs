@@ -1,5 +1,6 @@
 mod labels;
 
+pub mod abi;
 pub mod ast;
 pub mod diagnostic;
 pub mod inference;

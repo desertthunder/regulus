@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use super::*;
+use crate::abi::validate_extern_function_abi;
 use crate::ast::{self, Declaration as AstDeclaration, Expression as AstExpression, Pattern, Statement};
 use crate::diagnostic::{Diagnostic, DiagnosticCode, Diagnostics, Label};
 use crate::labels::{FunctionLabelMap, call_argument_order, function_label_map, use_callback_placement};
@@ -60,6 +61,7 @@ impl Lowerer {
 
     fn lower(mut self) -> Result<Module, Diagnostics> {
         self.validate_concrete_runtime_types();
+        self.validate_external_function_abis();
         if !self.diagnostics.is_empty() {
             return Err(self.diagnostics);
         }
@@ -166,6 +168,28 @@ impl Lowerer {
                     .with_label(Label::primary(expression.span, "generic expression type here")),
                 );
             }
+        }
+    }
+
+    fn validate_external_function_abis(&mut self) {
+        for declaration in self.module.resolved.ast.declarations.clone() {
+            self.validate_external_function_abi_in_declaration(&declaration);
+        }
+    }
+
+    fn validate_external_function_abi_in_declaration(&mut self, declaration: &AstDeclaration) {
+        match declaration {
+            AstDeclaration::ExternalFunction(function) => {
+                if let Some(type_) = self.function_types.get(&function.name.text) {
+                    self.diagnostics.extend(validate_extern_function_abi(function, type_));
+                }
+            }
+            AstDeclaration::TargetGroup(group) => {
+                for declaration in &group.declarations {
+                    self.validate_external_function_abi_in_declaration(declaration);
+                }
+            }
+            _ => {}
         }
     }
 
