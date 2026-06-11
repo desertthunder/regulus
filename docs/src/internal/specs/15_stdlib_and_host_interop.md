@@ -151,7 +151,7 @@ functions with documented adapters, not special cases in user code.
 
 JavaScript hosts need a stable boundary over the low-level managed-pointer ABI.
 The shared value rules, browser, bundler, and Node.js profiles, opaque handles,
-and JS glue are defined in [JS host ABI](17_js_host_abi.md).
+and JS glue are defined in [JS host ABI](16_js_host_abi.md).
 
 ## Higher-order intrinsics and runtime callbacks
 
@@ -216,4 +216,4 @@ WASM assembly.
 
 ## Active tasks
 
-See [Stdlib and host interop tasks](../tasks/14_stdlib_and_host_interop.md).
+See [Stdlib and host interop tasks](../tasks/15_stdlib_and_host_interop.md).

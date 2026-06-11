@@ -126,5 +126,5 @@ Each example must have:
 
 ## Active tasks
 
-See [Lustre weather example tasks](../tasks/16_lustre_weather_example.md) and
-[Wisp static data API tasks](../tasks/17_wisp_static_data_api_example.md).
+See [Lustre weather example tasks](../tasks/18_lustre_weather_example.md) and
+[Wisp static data API tasks](../tasks/19_wisp_static_data_api_example.md).

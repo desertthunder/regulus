@@ -124,4 +124,4 @@ before Wasm emission.
 
 ## Active tasks
 
-See [JS host ABI tasks](../tasks/18_js_host_abi.md).
+See [JS host ABI tasks](../tasks/16_js_host_abi.md).
