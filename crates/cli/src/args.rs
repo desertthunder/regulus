@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
+use compiler_core::target::CompileTarget;
 
 #[derive(Debug, Parser)]
 #[command(name = "gleam-wasm")]
@@ -89,4 +90,14 @@ pub enum Target {
     Wasmtime,
     Browser,
     Wasi,
+}
+
+impl From<Target> for CompileTarget {
+    fn from(target: Target) -> Self {
+        match target {
+            Target::Wasmtime => Self::Wasmtime,
+            Target::Browser => Self::Browser,
+            Target::Wasi => Self::Wasi,
+        }
+    }
 }

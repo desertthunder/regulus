@@ -79,6 +79,7 @@ impl WasmTarget {
     }
 }
 
+// FIXME: this implementation being here doesn't sit right with me.
 impl ir::Module {
     pub fn emit_wasm(&self) -> Result<WasmModule, Diagnostics> {
         self.emit_wasm_with_options(EmitOptions::default())
@@ -101,6 +102,7 @@ impl ir::Module {
     }
 }
 
+// FIXME: this implementation being here doesn't sit right with me.
 impl builder::Module {
     fn structured_wat(&self) -> Result<String, Diagnostics> {
         self.to_wat()
@@ -312,6 +314,7 @@ mod tests {
     fn ir_module(functions: Vec<ir::Function>, span: Span) -> ir::Module {
         ir::Module {
             span,
+            identity: None,
             imports: Vec::new(),
             declarations: Vec::new(),
             constants: Vec::new(),

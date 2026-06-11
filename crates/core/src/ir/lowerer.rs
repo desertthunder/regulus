@@ -156,7 +156,22 @@ impl Lowerer {
         functions.extend(std::mem::take(&mut self.lifted_functions));
 
         if self.diagnostics.is_empty() {
-            Ok(Module { span: ast.span, imports, declarations, constants, init, references, exports, functions })
+            Ok(Module {
+                span: ast.span,
+                identity: self
+                    .module
+                    .package_name
+                    .as_ref()
+                    .zip(self.module.module_name.as_ref())
+                    .map(|(package, module)| ModuleIdentity { package: package.clone(), module: module.clone() }),
+                imports,
+                declarations,
+                constants,
+                init,
+                references,
+                exports,
+                functions,
+            })
         } else {
             Err(self.diagnostics)
         }
@@ -793,11 +808,20 @@ impl Lowerer {
     fn qualified_function(&self, function: &AstExpression) -> Option<(String, Type)> {
         let AstExpression::FieldAccess(access) = function else { return None };
         let AstExpression::Variable(module) = access.record.as_ref() else { return None };
-        let qualified = format!("{}.{}", module.text, access.field.text);
+        let import = self.module.resolved.ast.imports.iter().find(|import| {
+            import
+                .alias
+                .as_ref()
+                .map(|alias| alias.text.as_str())
+                .unwrap_or_else(|| import.module.text.rsplit('/').next().unwrap_or(&import.module.text))
+                == module.text
+        });
+        let module_name = import.map(|import| import.module.text.as_str()).unwrap_or(&module.text);
+        let qualified = format!("{}.{}", module_name, access.field.text);
         self.function_types
             .get(&qualified)
             .cloned()
-            .map(|type_| (access.field.text.clone(), type_))
+            .map(|type_| (qualified, type_))
     }
 
     fn lower_call_with_callback(
@@ -2411,7 +2435,9 @@ impl FunctionContext {
 mod tests {
     use super::*;
     use crate::source::{SourceFile, SourceFileId};
-    use crate::{ast, parse, resolve, types};
+    use crate::{ast, parse, project, resolve, types};
+    use std::fs;
+    use tempfile::tempdir;
 
     fn lower_source(source: &str) -> Module {
         let source = SourceFile::new(SourceFileId(0), source);
@@ -2429,6 +2455,53 @@ mod tests {
         let resolved = resolve::resolve(ast).expect("resolve names");
         let typed = types::check(resolved).expect("type check source");
         lower(typed).expect_err("lowering should fail")
+    }
+
+    #[test]
+    fn lowers_project_functions_to_structured_backend_names() {
+        let dir = tempdir().expect("tempdir");
+        fs::write(
+            dir.path().join("gleam.toml"),
+            "name = \"sample-app\"\nversion = \"1.0.0\"\n",
+        )
+        .expect("write manifest");
+        fs::create_dir_all(dir.path().join("src")).expect("create src");
+        fs::write(dir.path().join("src/app.gleam"), "pub fn id(x: Int) -> Int { x }\n").expect("write app");
+        fs::write(
+            dir.path().join("src/main.gleam"),
+            "import app\npub fn id(x: Int) -> Int { x + 1 }\npub fn run() -> Int { app.id(id(1)) }\n",
+        )
+        .expect("write main");
+        let project = project::load_project(dir.path()).expect("load project");
+        let typed = types::check_project(&project).expect("type check project");
+
+        let module = lower_project(typed).expect("lower project");
+
+        let names = module
+            .functions
+            .iter()
+            .map(|function| function.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(names.len(), 3);
+        assert!(names.iter().all(|name| name.starts_with("r$pkg$")));
+        assert_eq!(names.iter().collect::<std::collections::HashSet<_>>().len(), 3);
+        let run = module
+            .functions
+            .iter()
+            .find(|function| function.name.ends_with("$fn$x72756e"))
+            .expect("run function");
+        let ExpressionKind::DirectCall(outer) = &run.body.result.kind else {
+            panic!("expected imported direct call");
+        };
+        assert!(outer.function.contains("$mod$x617070$fn$x6964"));
+        let ExpressionKind::DirectCall(inner) = &outer.arguments[0].value.kind else {
+            panic!("expected local direct call");
+        };
+        assert!(
+            inner.function.contains("$mod$x6d61696e$fn$x6964"),
+            "inner function was {}",
+            inner.function
+        );
     }
 
     #[test]

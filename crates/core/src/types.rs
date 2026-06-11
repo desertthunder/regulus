@@ -138,10 +138,13 @@ pub struct TypedModule {
     pub expressions: Vec<TypedExpression>,
     pub function_labels: FunctionLabelMap,
     pub interface: ModuleInterface,
+    pub package_name: Option<String>,
+    pub module_name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TypedProject {
+    pub package_name: String,
     pub modules: Vec<TypedModule>,
     pub interfaces: HashMap<String, ModuleInterface>,
 }
@@ -216,13 +219,21 @@ pub fn check_project(project: &Project) -> Result<TypedProject, Diagnostics> {
                     external_function_labels.insert(format!("{}.{}", module_info.name, name), labels.clone());
                 }
                 interfaces.insert(module_info.name.clone(), typed.interface.clone());
-                modules.push(typed);
+                modules.push(TypedModule {
+                    package_name: Some(project.graph.root_package.name.clone()),
+                    module_name: Some(module_info.name.clone()),
+                    ..typed
+                });
             }
             Err(mut errors) => diagnostics.append(&mut errors),
         }
     }
 
-    if diagnostics.is_empty() { Ok(TypedProject { modules, interfaces }) } else { Err(diagnostics) }
+    if diagnostics.is_empty() {
+        Ok(TypedProject { package_name: project.graph.root_package.name.clone(), modules, interfaces })
+    } else {
+        Err(diagnostics)
+    }
 }
 
 fn project_module_order(project: &Project, resolved: &resolve::ResolvedProject) -> Vec<usize> {
@@ -346,6 +357,8 @@ impl TypeChecker {
                 expressions: self.expressions,
                 function_labels: self.function_labels,
                 interface: self.interface,
+                package_name: None,
+                module_name: None,
             })
         } else {
             Err(self.diagnostics)

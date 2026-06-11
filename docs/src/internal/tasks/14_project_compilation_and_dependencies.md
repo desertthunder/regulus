@@ -29,7 +29,7 @@ The goal here is to make linked project names deterministic and collision-free.
       compiler-generated index, export names, and host import ABI names.
 - [x] Add a central backend-name renderer that escapes components without
       punctuation-sanitization collisions.
-- [ ] Assign backend names from structured compiler identity instead of raw
+- [x] Assign backend names from structured compiler identity instead of raw
       lowered declaration strings.
 - [ ] Preserve intentional public export names separately from internal backend
       names during emission.
