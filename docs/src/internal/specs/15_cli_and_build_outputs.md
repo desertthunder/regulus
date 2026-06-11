@@ -48,9 +48,8 @@ routing, and response helper code that does not require a host primitive.
 ## Targets and host profiles
 
 The CLI already accepts Wasmtime, browser, and WASI-oriented targets. Example
-projects add a Cloudflare Workers use case. The build docs should either add a
-Worker target or define a Worker host profile under the browser target, with
-stable import module names and artifact paths for the JS Worker adapter.
+projects add browser and JS-hosted server use cases. The JS host ABI should use
+browser, bundler, and Node.js profiles for JavaScript output.
 
 Target-specific project compilation should validate target groups, external
 imports, export ABI, and generated host adapter expectations before writing the

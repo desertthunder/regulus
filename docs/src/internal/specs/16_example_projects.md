@@ -1,7 +1,7 @@
 # Example projects
 
 Regulus needs real examples that prove the compiler can handle useful Gleam
-projects, browser-oriented Wasm, and Workers-oriented Wasm. The first examples
+projects, browser-oriented Wasm, and JS-hosted server Wasm. The first examples
 should be small enough to maintain, but large enough to expose missing compiler
 capabilities before they become design debt.
 
@@ -9,8 +9,8 @@ capabilities before they become design debt.
 
 1. Build a local-first Lustre single-page app that shows simple National
    Weather Service forecasts for US cities.
-2. Build a Wisp-style Wasm API deployable to Cloudflare Workers that serves a
-   small developer reference API.
+2. Build a Wisp-style Wasm API deployable to a JS-hosted server environment
+   that serves a small developer reference API.
 3. Use the examples as compiler acceptance fixtures, not as separate product
    projects.
 4. Keep host boundaries explicit and target-specific.
@@ -31,9 +31,9 @@ External functions are parsed, resolved, and type-checked, but lowering only
 materializes current stdlib host calls. General external functions need import
 lowering, target validation, and ABI diagnostics.
 
-The host ABI supports scalar values and managed pointers. Browser and Worker
-examples need stable adapter helpers for reading and writing strings, lists,
-records, result values, and request or response objects.
+The host ABI supports scalar values and managed pointers. JavaScript examples
+need stable adapter helpers for reading and writing strings, lists, records,
+result values, and host objects such as requests or responses.
 
 `gleam/dynamic`, `gleam/dynamic/decode`, `gleam/uri`, `gleam/pair`,
 `gleam/set`, `gleam/string_tree`, and `gleam/bytes_tree` are still unsupported
@@ -69,9 +69,9 @@ The example is useful when it proves:
 
 ## Wisp developer reference API
 
-The Wisp example should compile to a Wasm module that a Cloudflare Worker host
-can call for route handling or route data. The first version should serve a
-small static developer reference catalog.
+The Wisp example should compile to a Wasm module that a JS-hosted server can
+call for route handling or route data. The first version should serve a small
+static developer reference catalog.
 
 The initial route surface should stay intentionally small:
 
@@ -98,19 +98,19 @@ Static content can be embedded in Gleam source or generated into Gleam modules
 at build time. Generated sources must be deterministic and small enough for
 review.
 
-The Worker host can own the real FetchEvent, Request, and Response objects.
-The Wasm API should start with simple string inputs and structured return data,
-then graduate to opaque request and response handles only when needed. Routing,
-static data lookup, and response shaping should live in compiled Gleam code, not
-in compiler-owned special cases.
+The JS host can own the real request and response objects. The Wasm API should
+start with simple string inputs and structured return data, then graduate to
+opaque request and response handles only when needed. Routing, static data
+lookup, and response shaping should live in compiled Gleam code, not in
+compiler-owned special cases.
 
 The example is useful when it proves:
 
-1. Whole-project Workers compilation works.
+1. Whole-project JS-hosted server compilation works.
 2. Wisp dependency interfaces can be loaded or modeled.
-3. Worker target externals lower to Wasm imports.
+3. Bundler-profile externals lower to Wasm imports.
 4. Static data can be embedded without brittle manual memory handling.
-5. The CLI can emit deployable Wasm plus a minimal JS Worker adapter.
+5. The CLI can emit deployable Wasm plus minimal JS host glue.
 
 ## Acceptance
 

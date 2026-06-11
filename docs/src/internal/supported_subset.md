@@ -1,98 +1,133 @@
 # Supported subset
 
-Regulus can compile a meaningful single-file Gleam subset end to end:
+Regulus currently compiles single-file Gleam programs to WebAssembly through the
+full compiler pipeline:
 
 ```text
-Gleam source -> parse -> AST -> resolve -> type check -> IR -> WAT -> Wasm
+Gleam source -> parse -> AST -> resolve -> type check -> IR -> Wasm
 ```
 
-It can execute scalar and managed-value examples in Wasmtime tests. It is not a
-full Gleam compiler yet: project compilation, dependency packages, stdlib, and
-polished host/browser/WASI interop are still incomplete.
+This document describes the supported source language, compiler behavior, and
+known gaps.
 
-## Current behavior
+## Summary
 
-### CLI
+| Area                        | Status                          |
+| --------------------------- | ------------------------------- |
+| Single-file compilation     | Supported                       |
+| Whole-project linked output | Not supported                   |
+| Project discovery           | Partial                         |
+| Type checking               | Broad subset                    |
+| Managed runtime values      | Partial                         |
+| Standard library            | Selected modules and intrinsics |
+| Browser and JS ABI          | Incomplete                      |
+| WASI ABI                    | Incomplete                      |
+| Memory management           | Bump allocation only            |
 
-- Compile a single Gleam source file to `.wasm`.
-- Optionally write generated WAT.
-- Optionally write AST, resolved, typed, IR, and WAT debug dumps.
-- Load a Gleam project and print discovered modules.
-- Accept target selection for Wasmtime, browser, and WASI.
+## Supported today
 
-Target selection filters target-group declarations before resolution and uses
-backend target metadata for host import validation.
+### Inputs
 
-### Project model
+- Compile one Gleam source file to `.wasm`.
+- Load `gleam.toml` and discover project modules.
+- Filter target-group declarations for Wasmtime, browser, and WASI targets.
+- Emit optional debug dumps: AST, resolved AST, typed AST, IR, and WAT.
 
-- Read `gleam.toml`.
-- Model package metadata and dependency entries.
-- Discover modules under source roots.
-- Assign stable source file IDs.
-- Detect duplicate modules across roots.
-- Report missing modules.
-- Keep single-file loading available for tests and examples.
+### Language surface
 
-### Parsing and AST
+Supported syntax includes:
 
-The AST layer represents imports, functions, constants, externals, type aliases,
-custom types, attributes, target groups, comments, blocks, `let`, `let assert`,
-literals, variables, calls, captures, field access, records, record updates,
-tuples, tuple access, lists, bit arrays, operators, pipelines, `use`, anonymous
-functions, `panic`, `todo`, `assert`, `echo`, `case`, and many pattern forms.
-
-Tree-sitter parse errors are reported as diagnostics with source spans.
+- modules, imports, constants, functions, and externals
+- type aliases, custom types, and opaque types
+- blocks, `let`, and `let assert`
+- literals, variables, calls, and captures
+- records, record updates, and field access
+- tuples and tuple access
+- lists
+- bit arrays
+- unary and binary operators
+- pipelines
+- `use`
+- anonymous functions
+- `panic`, `todo`, `assert`, and `echo`
+- `case`, guards, and nested patterns
 
 ### Name resolution
 
-Resolution supports namespaced values, types, constructors, fields, modules,
-imports, unqualified imports, qualified module references, prelude type names,
-parameters, locals, shadowing, project-module visibility checks, private
-constructor restrictions, and duplicate/unknown/ambiguous-name diagnostics.
+Supported:
+
+- local variables and shadowing
+- module references
+- qualified and unqualified imports
+- values, types, constructors, and fields
+- prelude type names
+- project-module visibility checks
+- private constructor checks
+- duplicate, unknown, and ambiguous name diagnostics
 
 ### Type checking
 
-The type layer supports scalar types, tuples, lists, records, custom types,
-generic declarations, opaque types, function types, typed parameters, return
-annotations, literals, variables, local bindings, direct calls, arity checks,
-argument checks, field access, tuple access, records, constructors, record
-updates, pipelines, unary and binary operations, anonymous functions, captures,
-`use`, `case`, guards, nested patterns, simple exhaustiveness checks, module
-interfaces, and imported constructor patterns across project modules.
+Supported:
 
-The type checker infers unannotated function parameters, eligible local values,
-anonymous-function parameters, generic functions, empty and generic lists,
-generic custom-type constructors, constructor patterns, polymorphic calls, and
-imported generic functions. It reports ambiguous return types, recursive
-inferred types, and generic arity mismatches. The inference layer has reusable
-inference variables, type schemes, substitutions, constraint generation,
-unification, occurs checks, generalization, constructor schemes, and inference
-interfaces.
+- scalar types
+- tuples, lists, records, and custom types
+- generic declarations and constructors
+- function types
+- typed parameters and return annotations
+- local bindings
+- direct, imported, and external calls
+- arity and argument checks
+- field and tuple access
+- record construction and updates
+- unary and binary operations
+- pipelines
+- anonymous functions
+- captures
+- `use`
+- `case`
+- guards and nested patterns
+- basic exhaustiveness checks
+- module interfaces
+- imported constructor patterns across project modules
 
-### Core IR
+Inference supports:
 
-Core IR represents modules, imports, declarations, constants, module init
-metadata, references, exports, functions, locals, blocks, ordered instructions,
-local sets, assert-match instructions, literals, direct calls, indirect calls,
-function values, anonymous functions, pipelines, use-lowering, branches, tuples,
-lists, bit arrays, bit-array concat, bit-string deconstruction, records,
-constructors, field access, record update, list cons/deconstruction, tuple
-access, comparisons, runtime equality, memory operations, and failure paths.
+- unannotated function parameters
+- eligible local values
+- anonymous-function parameters
+- generic functions
+- empty and generic lists
+- generic custom-type constructors
+- constructor patterns
+- polymorphic calls
+- imported generic functions
 
-### Runtime and Wasm backend
+The checker reports ambiguous return types, recursive inferred types, and
+invalid generic arity.
 
-The runtime representation defines object headers, tags, sizes, alignment,
-static objects, bump allocation, and layouts for strings, bit arrays, lists,
-tuples, records, custom values, closures, opaque values, runtime errors, and
-panic values.
+### WebAssembly output
 
-The backend emits deterministic WAT and Wasm for scalar and managed values,
-locals, calls, imports, exports, arithmetic, float operations, boolean
-operators, string concat, equality, comparisons, branches, guards, pattern
-tests, pattern bindings, failure paths, memory operations, static data segments,
-runtime prelude helpers, and target-aware host imports.
+The backend emits deterministic Wasm and optional WAT for:
 
-Raw ABI mapping:
+- scalar values
+- managed heap values
+- locals
+- direct, external, and indirect calls
+- imports and exports
+- arithmetic and float operations
+- boolean operators
+- string concatenation
+- equality and comparisons
+- branches and guards
+- pattern tests and bindings
+- failure paths
+- memory operations
+- static data segments
+- selected runtime helpers
+- target-aware host imports
+- selected stdlib intrinsics
+
+ABI mapping:
 
 | Gleam type     | Wasm ABI      |
 | -------------- | ------------- |
@@ -102,43 +137,107 @@ Raw ABI mapping:
 | `Nil`          | no result     |
 | managed values | `i32` pointer |
 
-String exports with no parameters also get `<name>__data` and `<name>__len`
-adapter exports.
+String exports with no parameters also receive:
 
-## Not supported yet
+- `<name>__data`
+- `<name>__len`
+
+## Partially supported
+
+### Project model
+
+Regulus can:
+
+- read `gleam.toml`
+- model package metadata
+- model dependency entries
+- discover modules under source roots
+- assign stable source file IDs
+- detect duplicate modules
+- report missing modules
+- keep single-file loading available for tests and examples
+
+It does not yet compile a full project into linked Wasm output.
+
+### Standard library
+
+The stdlib registry models selected interfaces and lowering strategies for:
+
+- `gleam/io`
+- `gleam/int`
+- `gleam/string`
+- `gleam/list`
+- `gleam/result`
+- `gleam/option`
+- `gleam/order`
+- `gleam/bool`
+- `gleam/dict`
+- `gleam/float`
+- `gleam/function`
+- `gleam/bit_array`
+
+This is not full stdlib source compilation.
+
+### Externals and targets
+
+General non-stdlib externals lower to Wasm imports when their ABI is supported.
+
+The compiler:
+
+- preserves import module and function names
+- filters target-specific declarations
+- validates selected target modules
+- rejects unsupported ABI shapes before byte emission
+
+## Not yet supported
 
 ### Projects and dependencies
 
-- Whole-project compilation into linked Wasm output.
-- Fetching or loading Hex packages and real dependency modules.
-- Real Gleam stdlib interfaces, shims, or source compilation.
+- Whole-project linked Wasm output.
+- Fetching Hex packages.
+- Loading dependency source modules.
+- Linking compiled dependency modules.
+- Full stdlib source compilation.
 
-### Language semantics
+### Host interop
 
-No represented language-semantic group in the current task list remains a known
-placeholder. Future Gleam features may still need parser, checker, lowering, or
-backend work as the accepted source surface grows.
-
-### Host interop and targets
-
-- Complete browser and WASI host adapters.
-- Rich managed-value import/export wrappers for arbitrary function shapes.
+- Full browser, bundler, and Node.js JS ABI.
+- Complete WASI adapters.
+- Rich managed-value wrappers for arbitrary imports and exports.
+- Opaque JS handle representation and lifetime rules.
 
 ### Runtime and memory management
 
-- Freeing, garbage collection, reference counting, or heap growth checks.
+- Freeing.
+- Garbage collection.
+- Reference counting.
+- Heap growth checks.
 
-## Backend approximations to know about
+## Known approximations
 
-Some IR forms are emitted but still have intentionally small semantics:
+Some implemented forms intentionally have smaller semantics than Gleam proper:
 
 - Residual raw `Use` IR is rejected before WAT assembly.
-- `BitStringDeconstruct` supports current segment matching but is still
-  smaller than full Gleam bit-string semantics.
+- `BitStringDeconstruct` supports current segment matching, but not complete
+  Gleam bit-string semantics.
 
-## Validation coverage
+## Validation
 
-Tests cover parsing, AST construction, resolution, project loading, type
-checking, IR lowering, runtime layouts, WAT snapshots, Wasmtime execution,
-memory inspection, runtime helpers, host imports, export adapters,
-deterministic output, and unsupported ABI/target diagnostics.
+Tests cover:
+
+- parsing
+- AST construction
+- resolution
+- project loading
+- type checking
+- IR lowering
+- runtime layouts
+- WAT snapshots
+- Wasmtime execution
+- memory inspection
+- runtime helpers
+- host imports
+- export adapters
+- deterministic output
+- unsupported ABI diagnostics
+- unsupported target diagnostics

@@ -71,18 +71,7 @@ Support useful standard library modules and host calls.
       for unsupported parameter and return shapes.
 - [x] Reject unsupported external function ABI shapes before byte emission.
 - [x] Add table-driven tests for selected target groups, unsupported ABI
-      shapes, supported managed shapes, and browser or Worker-style imports.
-
-### Browser and Worker adapters
-
-- [ ] Add stable host helpers for writing host strings into guest memory.
-- [ ] Add stable host helpers for reading guest strings from managed pointers.
-- [ ] Add adapter conventions for lists of strings and small records.
-- [ ] Add adapter conventions for `Result` and `Option` values crossing the
-      host boundary.
-- [ ] Define response-shape adapters for status, headers, and body data.
-- [ ] Decide whether Cloudflare Workers are a target or browser host profile.
-- [ ] Document import module names for browser and Worker host adapters.
+      shapes, supported managed shapes, and JS host imports.
 
 ### Higher-order intrinsics and runtime callbacks
 

@@ -15,8 +15,8 @@ Make the CLI compile projects and produce useful artifacts.
 - [x] Add output path configuration.
 - [x] Add target selection for supported runtimes: Wasmtime, browser, and WASI
       where implemented.
-- [ ] Decide whether Cloudflare Workers use a dedicated target or browser host
-      profile.
+- [ ] Add CLI target or profile selection for JS host profiles: browser,
+      bundler, and Node.js.
 - [ ] Add package/dependency discovery flags or configuration once dependency
       metadata is supported.
 - [ ] Load enough dependency metadata for project compile inputs.
@@ -121,7 +121,7 @@ Make the CLI compile projects and produce useful artifacts.
 - [ ] Add CLI integration tests for diagnostics across multiple files.
 - [ ] Add tests for output path handling and optional WAT/debug artifacts.
 - [ ] Add tests for target selection and unsupported target combinations.
-- [ ] Add tests for Worker target or browser Worker-profile output.
+- [ ] Add tests for browser, bundler, and Node.js JS host profile output.
 - [ ] Add tests for dependency interface loading and unsupported dependencies.
 - [ ] Add tests that compile fixtures using records, custom types, pattern
       matching, managed values, stdlib calls, and host imports as those stages

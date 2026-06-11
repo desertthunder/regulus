@@ -1,0 +1,127 @@
+# JS host ABI
+
+Regulus targets browser-capable Wasm. Raw Wasm only passes scalar values, so
+JavaScript hosts need a stable ABI for strings, managed values, host APIs, and
+generated or handwritten JS glue.
+
+This spec defines the shared JavaScript host boundary. Browser, bundler, and
+Node.js profiles should build on this boundary instead of adding
+product-specific compiler behavior.
+
+## Scope
+
+The JS host ABI covers values and calls crossing between compiled Gleam Wasm and
+a JavaScript host. It does not define application logic, browser networking
+policy, routing, response construction semantics, or library behavior that can
+compile from Gleam source.
+
+The ABI should cover:
+
+- writing JS strings into guest memory
+- reading Gleam strings from managed pointers
+- reading common managed values from guest memory
+- passing scalar values directly through Wasm parameters and results
+- passing lists, tuples, records, custom types, `Result`, and `Option`
+- passing opaque JS handles when copying values is not appropriate
+- naming imports and exports for browser, bundler, and Node.js profiles
+- generated or documented JS glue for common host calls
+
+## Relationship to the core host ABI
+
+The core host ABI defines the low-level Wasm shapes: scalars are raw Wasm
+values, and managed Gleam values are borrowed pointers into guest memory. The JS
+host ABI is a higher-level profile over that contract for JavaScript hosts.
+
+Hosts may inspect guest-managed values through exported runtime helpers. Hosts
+must not mutate guest object memory or retain pointers across instance reset or
+any future arena reset.
+
+## JavaScript glue
+
+Browser-capable Wasm needs JS glue comparable in role to Rust's
+`wasm-bindgen`, even if Regulus starts with a smaller handwritten adapter. The
+glue should hide pointer arithmetic from example code and provide explicit
+helpers for common shapes.
+
+The first glue layer can be small and stable:
+
+- instantiate a module with target-specific imports
+- write JS strings and receive managed string pointers
+- read managed strings from exported function results
+- read tagged managed values for simple records, tuples, lists, and custom
+  types
+- call exported Gleam functions with checked argument conversion
+
+Later glue can add generated bindings from compiler metadata.
+
+## Structured values
+
+Structured data crossing the JS boundary should use one of two mechanisms:
+
+1. Copy values into or out of the guest runtime representation.
+2. Pass opaque JS handles managed by the host profile.
+
+Copied values are appropriate for strings, lists of strings, small records,
+tuples, `Result`, `Option`, and simple custom types. Opaque handles are better
+for host objects such as `Request`, `Response`, streams, DOM nodes, timers,
+promises, file handles, and sockets.
+
+The ABI must define how the host reads tags, fields, arity, string data, list
+contents, and record/custom-type metadata. Unsupported shapes should fail before
+byte emission with source-spanned diagnostics.
+
+## JS host profiles
+
+The shared ABI is independent of the JavaScript engine. Profiles describe
+module loading, generated glue shape, available host APIs, and import module
+names.
+
+The initial profiles should mirror the common `wasm-bindgen` deployment modes:
+
+- `browser`: direct use from a browser page without a bundler
+- `bundler`: ES module glue intended for Vite, Rollup, Webpack, or other
+  toolchains that package JavaScript and Wasm together
+- `nodejs`: Node.js loading and host APIs
+
+Additional JavaScript environments should start from one of these profiles
+unless they require a distinct module format, loading model, or host API set.
+Those differences should not change the core value ABI.
+
+## Browser profile
+
+The browser profile should define import module names for browser APIs used by
+examples, such as fetch, local storage, time, and online state. These imports
+are ordinary Gleam external functions with target validation and ABI checks.
+
+The compiler should not implement browser API semantics. The JS host profile
+owns the real browser calls and adapts values through the JS host ABI.
+
+## Bundler profile
+
+The bundler profile should emit or document ES module glue suitable for modern
+JS toolchains. It should avoid assumptions about global script loading and
+should expose imports and exports in a shape that bundlers can tree-shake.
+
+Server-side JS adapters should start here when they use bundled ES modules.
+Request and response objects may cross the boundary as copied data or opaque
+handles as the ABI matures, but route logic and response shaping should remain
+compiled Gleam code where possible.
+
+## Node.js profile
+
+The Node.js profile should define loading, filesystem access for `.wasm` files,
+and Node-specific host imports. It should use the same value ABI as browser and
+bundler profiles.
+
+Node support is useful for CLI smoke tests, local examples, and host-side tests
+that should not require a browser.
+
+## Diagnostics
+
+Unsupported JS host imports, exports, value shapes, opaque handle uses, target
+profiles, and glue-generation requests should produce source-spanned diagnostics
+before Wasm emission.
+
+## Active tasks
+
+See [JS host ABI tasks](../tasks/18_js_host_abi.md).

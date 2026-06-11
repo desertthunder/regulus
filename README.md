@@ -6,7 +6,8 @@ Rust.
 <img src="./docs/src/favicon.png" alt="Reggie" width="196"/>
 
 The compiler uses tree-sitter to parse Gleam source, builds compiler-owned data
-structures, and lowers a supported subset of Gleam to WAT and `.wasm`.
+structures, lowers a supported subset of Gleam to core IR, and emits `.wasm`
+with optional WAT output.
 
 ```text
 Gleam source
@@ -15,60 +16,80 @@ Gleam source
   -> name resolution
   -> type checking
   -> core IR
-  -> WAT / WebAssembly
+  -> WebAssembly module
+  -> .wasm / optional WAT
 ```
 
 ## Status
 
-Regulus is not a full Gleam compiler yet. It can compile and run small scalar
-programs, and it keeps the pipeline visible so each compiler layer can be tested
-and explained.
+Regulus is not a full Gleam compiler yet. It can compile and run small programs
+using scalar values, managed values, pattern matching, closures, selected stdlib
+modules, and host imports. The compiler pipeline is intentionally visible so
+that each layer can be tested and explained.
 
-### Compiler pipeline
+### At a glance
 
-- [x] Parse a single Gleam source file with tree-sitter
-- [x] Build a compiler-owned AST with source spans
-- [x] Report parse and compiler diagnostics with source spans
-- [x] Resolve top-level functions, imports, local bindings, and constructors
-- [x] Type check scalar expressions, direct calls, and simple `case` branches
-- [x] Lower the supported subset to a small core IR
-- [x] Emit WAT and assemble `.wasm`
-- [x] Execute exported scalar functions in Wasmtime tests
-- [ ] Compile full packages and dependencies
-- [ ] Import type information from Gleam packages
+| Area                            | Status                          |
+| ------------------------------- | ------------------------------- |
+| Single-file Gleam to Wasm       | Supported                       |
+| Type checking                   | Broad subset                    |
+| Managed runtime values          | Partial                         |
+| Standard library                | Selected modules and intrinsics |
+| Whole-project linked output     | Not supported yet               |
+| Dependency source loading       | Not supported yet               |
+| Browser, Node.js, and WASI ABIs | Incomplete                      |
 
-### Gleam language subset
+### Working today
+
+- [x] Parse Gleam source with tree-sitter
+- [x] Build an AST with source spans
+- [x] Report diagnostics with source spans
+- [x] Resolve imports, modules, locals, types, constructors, and fields
+- [x] Type check scalar values, structured values, calls, branches, and patterns
+- [x] Infer generic functions, generic constructors, closures, and list types
+- [x] Lower the supported subset to core IR
+- [x] Emit deterministic `.wasm`
+- [x] Render optional WAT
+- [x] Run scalar and managed-value exports in Wasmtime tests
+- [x] Load `gleam.toml` and discover project modules
+- [x] Lower supported externals to Wasm imports
+- [x] Validate target-aware host imports
+
+### Supported Gleam surface
 
 - [x] Public and private functions
-- [x] Typed function parameters and return annotations
-- [x] `Int`, `Float`, `Bool`, `String`, and `Nil` literals
-- [x] Local bindings with simple name and discard patterns
-- [x] Direct calls to functions in the same module
-- [x] Simple `case` expressions over scalar values
-- [x] Literal, binding, discard, and alias patterns in supported contexts
-- [x] Type declarations, aliases, constructors, fields, generics, and opaque
-      type names in name resolution and type checking
-- [x] Executable records, custom values, tuples, lists, and bit arrays
-- [x] External functions and host imports
-- [x] Advanced pattern matching over structured values
-- [x] Full generic type inference
+- [x] Function annotations and inferred parameters
+- [x] `Int`, `Float`, `Bool`, `String`, and `Nil`
+- [x] Local bindings and structured patterns
+- [x] Direct, imported, and external calls
+- [x] `case` expressions, guards, and nested patterns
+- [x] Type aliases, custom types, opaque types, generics, and constructors
+- [x] Records, custom values, tuples, lists, and bit arrays
+- [x] Anonymous functions, captures, closures, pipelines, and `use`
+- [x] Selected stdlib modules and intrinsics
 
 ### WebAssembly output
 
-- [x] Function definitions and exports
-- [x] Scalar WebAssembly signatures (`i64`, `f64`, `i32`)
-- [x] Locals, constants, local reads, and local writes
-- [x] Direct function calls
-- [x] Branches for supported `case` expressions
-- [x] Linear memory export and static string objects
-- [x] Bump allocation helper in the runtime prelude
-- [ ] Imported functions
-- [x] Runtime-managed records, lists, tuples, and custom values
-- [ ] Standard library and browser/WASI interop
+- [x] Function definitions, imports, and exports
+- [x] Scalar ABI values: `i64`, `f64`, and `i32`
+- [x] Managed values as guest-memory pointers
+- [x] Linear memory and static data segments
+- [x] Runtime objects for strings, records, lists, tuples, closures, and custom
+      values
+- [x] Branches, comparisons, equality, pattern checks, and failure paths
+- [x] Selected runtime helpers and stdlib intrinsics
 
-For more detail, see the book in [docs](./docs/src/introduction.md) and
-the current supported subset in the [supported subset](./docs/src/internal/supported_subset.md)
-page.
+### Not yet implemented
+
+- [ ] Compile full projects into linked Wasm output
+- [ ] Fetch, load, and compile dependency source modules
+- [ ] Compile the full Gleam standard library from source
+- [ ] Provide complete browser, bundler, and Node.js host ABIs
+- [ ] Provide complete WASI adapters
+- [ ] Add garbage collection, reference counting, or heap growth checks
+
+For more detail, see the book in [docs](./docs/src/introduction.md) and the
+current [supported subset](./docs/src/internal/supported_subset.md).
 
 ## Usage
 

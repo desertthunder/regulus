@@ -8,7 +8,7 @@ small developer reference catalog.
 ## Milestone 1: acceptance shape
 
 - [ ] Add `examples/wisp_static_api/` with `gleam.toml`, source layout, and a
-      minimal Worker host adapter.
+      minimal JS host adapter.
 - [ ] Include initial datasets for gitignore, gitattributes, licenses, SPDX,
       MIME types, HTTP status codes, languages, and cron presets.
 - [ ] Define routes, exported functions, and host imports in a short ABI note.
@@ -24,14 +24,14 @@ small developer reference catalog.
 - [ ] Report unsupported dependency and ABI shapes with source spans.
 - [ ] Add tests for cross-module route helpers and dependency imports.
 
-## Milestone 3: Worker ABI
+## Milestone 3: bundler-profile JS host
 
-- [ ] Add a `workers` or `browser` target decision for Cloudflare Worker Wasm.
-- [ ] Lower general external functions to Worker-compatible Wasm imports.
+- [ ] Configure the example to use the JS host bundler profile.
+- [ ] Lower general external functions to bundler-profile Wasm imports.
 - [ ] Start with string request inputs and string or tagged response outputs.
 - [ ] Add adapter helpers for status, headers, and body data when needed.
 - [ ] Add a Gleam route table fixture that returns tagged response data without
-      Worker-specific request or response handles.
+      platform-specific request or response handles.
 - [ ] Validate that unsupported request or response handles fail before emit.
 
 ## Milestone 4: static data
@@ -46,18 +46,19 @@ small developer reference catalog.
 - [ ] Add not-found and bad-request responses.
 - [ ] Add tests for route matching and returned data.
 
-## Milestone 5: deployable Worker host
+## Milestone 5: deployable JS host
 
-- [ ] Add a minimal JS Worker that loads the Wasm module and forwards requests.
-- [ ] Document local `wrangler` development and deployment commands.
-- [ ] Add a smoke test for Worker-style request handling where practical.
+- [ ] Add minimal bundler-profile JS glue that loads the Wasm module and
+      forwards request data.
+- [ ] Document local development and deployment commands.
+- [ ] Add a smoke test for bundler-profile request handling where practical.
 - [ ] Ensure the emitted Wasm artifact path is stable for the host adapter.
 
 ## Milestone 6: regression coverage
 
 - [ ] Add a compile fixture for the full static API example.
-- [ ] Snapshot import/export metadata for the Worker-target Wasm.
-- [ ] Add diagnostics tests for unsupported Worker ABI shapes.
+- [ ] Snapshot import/export metadata for the bundler-profile Wasm.
+- [ ] Add diagnostics tests for unsupported bundler-profile ABI shapes.
 - [ ] Keep unsupported follow-up work recorded in the active task file.
 
 ## Done when
