@@ -1,0 +1,4 @@
+name = "private_member_diagnostic"
+version = "1.0.0"
+description = "Project fixture that intentionally reaches a module-private member."
+licences = ["Apache-2.0"]

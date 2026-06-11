@@ -1016,7 +1016,10 @@ mod tests {
         ast, parse, project,
         source::{SourceFile, SourceFileId},
     };
-    use std::{fs, path::Path};
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+    };
     use tempfile::tempdir;
 
     fn resolve_source(source: &str) -> Result<ResolvedModule, Diagnostics> {
@@ -1029,6 +1032,13 @@ mod tests {
     fn write(path: &Path, text: &str) {
         fs::create_dir_all(path.parent().expect("fixture parent")).expect("create fixture dir");
         fs::write(path, text).expect("write fixture");
+    }
+
+    fn fixture_project(path: &str) -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join("fixtures/projects")
+            .join(path)
     }
 
     #[test]
@@ -1225,6 +1235,20 @@ fn main(person) { case person { Missing(age: value) -> value } }
             "import app\nfn main() { app.hidden() }\n",
         );
         let project = project::load_project(dir.path()).expect("load project");
+
+        let diagnostics = resolve_project(&project).expect_err("private access should fail");
+
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains("member `hidden` is private"))
+        );
+    }
+
+    #[test]
+    fn fixture_rejects_module_private_members_across_project_modules() {
+        let project = project::load_project(fixture_project("linking/private_member_diagnostic"))
+            .expect("load private member fixture");
 
         let diagnostics = resolve_project(&project).expect_err("private access should fail");
 

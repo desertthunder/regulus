@@ -1,0 +1,7 @@
+fn hidden() -> Int {
+  1
+}
+
+pub fn shown() -> Int {
+  hidden()
+}

@@ -117,8 +117,36 @@ impl Module {
             }
             writeln!(&mut out).expect("write linked IR debug dump");
         }
+
+        let mut boundary_calls = self
+            .functions
+            .iter()
+            .filter_map(|function| import_boundary_debug_line(function))
+            .collect::<Vec<_>>();
+        if !boundary_calls.is_empty() {
+            boundary_calls.sort();
+            writeln!(&mut out, "import call boundaries:").expect("write linked IR debug dump");
+            for line in boundary_calls {
+                writeln!(&mut out, "  {line}").expect("write linked IR debug dump");
+            }
+            writeln!(&mut out).expect("write linked IR debug dump");
+        }
+
         writeln!(&mut out, "{self:#?}").expect("write linked IR debug dump");
         out
+    }
+}
+
+fn import_boundary_debug_line(function: &Function) -> Option<String> {
+    match &function.abi.boundary {
+        CallBoundary::HostImport { module, name } => {
+            Some(format!("host-import wrapper={} abi={module}.{name}", function.name))
+        }
+        CallBoundary::ModuleImport { module, name } => Some(format!(
+            "dependency-interface wrapper={} abi={module}.{name}",
+            function.name
+        )),
+        CallBoundary::Internal | CallBoundary::ModuleExport => None,
     }
 }
 
@@ -798,6 +826,8 @@ pub enum MemoryOperation {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+// TODO: this (and some other types) collide with ast types need to
+// be renamed to avoid confusion. Maybe `IrLiteral`?
 pub struct Literal {
     pub kind: LiteralKind,
     pub source: String,
@@ -1568,7 +1598,7 @@ ProjectError: duplicate generated backend name `generated/run`
     }
 
     #[test]
-    fn linked_debug_dump_shows_source_and_generated_names() {
+    fn linked_debug_dump_shows_source_generated_names_and_import_boundaries() {
         let span = Span::new(SourceFileId(1), 0, 3);
         let module = Module {
             span,
@@ -1579,7 +1609,54 @@ ProjectError: duplicate generated backend name `generated/run`
             init: ModuleInit::default(),
             references: Vec::new(),
             exports: Vec::new(),
-            functions: Vec::new(),
+            functions: vec![
+                Function {
+                    name: "dep_parse".into(),
+                    public: false,
+                    closure_captures: Vec::new(),
+                    params: Vec::new(),
+                    locals: Vec::new(),
+                    return_type: Type::Int,
+                    abi: CallAbi {
+                        params: Vec::new(),
+                        return_: Some(AbiValue::from(&Type::Int)),
+                        boundary: CallBoundary::ModuleImport { module: "gleam/int".into(), name: "parse".into() },
+                    },
+                    body: Block {
+                        instructions: Vec::new(),
+                        result: Box::new(Expression {
+                            type_: Type::Nil,
+                            span,
+                            kind: ExpressionKind::Literal(Literal { kind: LiteralKind::Nil, source: "Nil".into() }),
+                        }),
+                        span,
+                    },
+                    span,
+                },
+                Function {
+                    name: "host_print".into(),
+                    public: false,
+                    closure_captures: Vec::new(),
+                    params: Vec::new(),
+                    locals: Vec::new(),
+                    return_type: Type::Nil,
+                    abi: CallAbi {
+                        params: Vec::new(),
+                        return_: None,
+                        boundary: CallBoundary::HostImport { module: "env".into(), name: "print".into() },
+                    },
+                    body: Block {
+                        instructions: Vec::new(),
+                        result: Box::new(Expression {
+                            type_: Type::Nil,
+                            span,
+                            kind: ExpressionKind::Literal(Literal { kind: LiteralKind::Nil, source: "Nil".into() }),
+                        }),
+                        span,
+                    },
+                    span,
+                },
+            ],
             linked_names: vec![LinkedName {
                 source_name: "app/main.run".into(),
                 generated_name: "generated/run".into(),
@@ -1590,6 +1667,13 @@ ProjectError: duplicate generated backend name `generated/run`
 
         let dump = module.linked_debug_dump();
 
-        assert!(dump.starts_with("linked names:\n  Function source=app/main.run generated=generated/run\n\nModule"));
+        insta::assert_snapshot!(dump.lines().take(7).collect::<Vec<_>>().join("\n"), @r#"
+linked names:
+  Function source=app/main.run generated=generated/run
+
+import call boundaries:
+  dependency-interface wrapper=dep_parse abi=gleam/int.parse
+  host-import wrapper=host_print abi=env.print
+"#);
     }
 }

@@ -71,8 +71,8 @@ The goal here is to make linked project names deterministic and collision-free.
 
 - [x] Link same-project module calls without treating them as host imports.
 - [x] Link lowered module IR into one backend module.
-- [ ] Keep dependency interface calls distinct from host imports in debug dumps.
-- [ ] Add project fixtures for cross-module calls, constructors, records,
+- [x] Keep dependency interface calls distinct from host imports in debug dumps.
+- [x] Add project fixtures for cross-module calls, constructors, records,
       patterns, and module-private members.
 
 ### Dependency interfaces

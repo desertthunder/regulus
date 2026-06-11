@@ -2607,6 +2607,41 @@ mod tests {
     }
 
     #[test]
+    fn fixture_cross_module_features_rewrite_constructors_records_and_patterns() {
+        let module = lower_project_fixture("linking/cross_module_features");
+
+        let user = module
+            .linked_names
+            .iter()
+            .find(|name| name.source_name == "domain.User")
+            .expect("User constructor name");
+        let ready = module
+            .linked_names
+            .iter()
+            .find(|name| name.source_name == "domain.Status")
+            .expect("Status constructor name");
+        assert_eq!(user.kind, LinkedNameKind::Constructor);
+        assert_eq!(ready.kind, LinkedNameKind::Constructor);
+        assert!(
+            module
+                .functions
+                .iter()
+                .any(|function| function.name.ends_with("$fn$x72756e"))
+        );
+        assert!(
+            module
+                .functions
+                .iter()
+                .any(|function| function.name.ends_with("$fn$x6269727468646179"))
+        );
+        let dump = module.linked_debug_dump();
+        assert!(dump.contains("Constructor source=domain.User generated="));
+        assert!(dump.contains("Constructor source=domain.Status generated="));
+        assert!(dump.contains("Function source=domain.private_base generated="));
+        assert!(!dump.contains("host-import wrapper"));
+    }
+
+    #[test]
     fn namespaces_project_host_import_wrappers_without_mangling_abi_names() {
         let dir = tempdir().expect("tempdir");
         fs::write(

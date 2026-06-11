@@ -1,0 +1,4 @@
+name = "cross_module_features"
+version = "1.0.0"
+description = "Linking fixture for cross-module constructors, records, and patterns."
+licences = ["Apache-2.0"]
