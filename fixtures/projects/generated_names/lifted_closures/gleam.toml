@@ -1,0 +1,4 @@
+name = "lifted_closures"
+version = "1.0.0"
+description = "Generated-name fixture with lifted anonymous closure helpers."
+licences = ["Apache-2.0"]

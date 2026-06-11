@@ -1,0 +1,4 @@
+name = "duplicate_module_basenames"
+version = "1.0.0"
+description = "Generated-name fixture with repeated file basenames in distinct modules."
+licences = ["Apache-2.0"]

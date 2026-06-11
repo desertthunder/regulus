@@ -2438,6 +2438,7 @@ mod tests {
     use crate::source::{SourceFile, SourceFileId};
     use crate::{ast, parse, project, resolve, types};
     use std::fs;
+    use std::path::{Path, PathBuf};
     use tempfile::tempdir;
 
     fn lower_source(source: &str) -> Module {
@@ -2456,6 +2457,19 @@ mod tests {
         let resolved = resolve::resolve(ast).expect("resolve names");
         let typed = types::check(resolved).expect("type check source");
         lower(typed).expect_err("lowering should fail")
+    }
+
+    fn fixture_project(path: &str) -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join("fixtures/projects")
+            .join(path)
+    }
+
+    fn lower_project_fixture(path: &str) -> Module {
+        let project = project::load_project(fixture_project(path)).expect("load project fixture");
+        let typed = types::check_project(&project).expect("type check project fixture");
+        lower_project(typed).expect("lower project fixture")
     }
 
     #[test]
@@ -2526,6 +2540,70 @@ mod tests {
             panic!("expected renamed function value");
         };
         assert!(function_value.name.contains("$mod$x6d61696e$fn$x6964"));
+    }
+
+    #[test]
+    fn fixture_duplicate_function_names_link_without_collision() {
+        let module = lower_project_fixture("generated_names/duplicate_function_names");
+
+        let id_names = module
+            .linked_names
+            .iter()
+            .filter(|name| name.source_name.ends_with(".id"))
+            .collect::<Vec<_>>();
+        assert_eq!(id_names.len(), 2);
+        assert!(id_names.iter().any(|name| name.source_name == "left.id"));
+        assert!(id_names.iter().any(|name| name.source_name == "right.id"));
+        assert_ne!(id_names[0].generated_name, id_names[1].generated_name);
+        assert_eq!(module.functions.len(), 3);
+    }
+
+    #[test]
+    fn fixture_duplicate_module_basenames_link_without_collision() {
+        let module = lower_project_fixture("generated_names/duplicate_module_basenames");
+
+        let value_names = module
+            .linked_names
+            .iter()
+            .filter(|name| name.source_name.ends_with(".value"))
+            .collect::<Vec<_>>();
+        assert_eq!(value_names.len(), 2);
+        assert!(value_names.iter().any(|name| name.source_name == "alpha/main.value"));
+        assert!(value_names.iter().any(|name| name.source_name == "beta/main.value"));
+        assert_ne!(value_names[0].generated_name, value_names[1].generated_name);
+    }
+
+    #[test]
+    fn fixture_dependency_module_name_overlap_keeps_root_package_names() {
+        let module = lower_project_fixture("generated_names/dependency_module_overlap");
+
+        assert_eq!(module.linked_names.len(), 1);
+        let name = &module.linked_names[0];
+        assert_eq!(name.source_name, "shared.value");
+        assert!(
+            name.generated_name
+                .contains("$pkg$x646570656e64656e63795f6d6f64756c655f6f7665726c6170$")
+        );
+        assert!(name.generated_name.contains("$mod$x736861726564$"));
+    }
+
+    #[test]
+    fn fixture_lifted_closures_receive_generated_helper_names() {
+        let module = lower_project_fixture("generated_names/lifted_closures");
+
+        let helper = module
+            .linked_names
+            .iter()
+            .find(|name| name.generated_name.contains("$helper$lifted$"))
+            .expect("lifted closure helper name");
+        assert_eq!(helper.kind, LinkedNameKind::Helper);
+        assert_eq!(helper.source_name, "main.__anon_0");
+        assert!(
+            module
+                .functions
+                .iter()
+                .any(|function| function.name == helper.generated_name)
+        );
     }
 
     #[test]

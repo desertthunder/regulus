@@ -42,7 +42,7 @@ The goal here is to make linked project names deterministic and collision-free.
 - [x] Detect generated-name collisions deterministically and report the source
       declarations that caused them.
 - [x] Show source names and generated names in linked IR debug dumps.
-- [ ] Add fixtures for duplicate function names in different modules, duplicate
+- [x] Add fixtures for duplicate function names in different modules, duplicate
       module basenames, dependency module name overlap, and lifted closures.
 
 ### Examples

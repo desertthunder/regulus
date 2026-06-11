@@ -1,0 +1,4 @@
+name = "duplicate_function_names"
+version = "1.0.0"
+description = "Generated-name fixture with the same function name in different modules."
+licences = ["Apache-2.0"]
