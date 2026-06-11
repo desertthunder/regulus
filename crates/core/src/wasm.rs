@@ -1108,6 +1108,51 @@ pub fn nested_option() -> Int {
     }
 
     #[test]
+    fn lowers_external_functions_to_target_host_imports() {
+        let wasm = compile_wasm(
+            r#"external fn inc(value: Int) -> Int = "env" "host_inc"
+pub fn main() -> Int { inc(41) }"#,
+        );
+
+        assert!(
+            wasm.wat
+                .contains("(import \"env\" \"host_inc\" (func (type 0) (param i64) (result i64)))")
+        );
+        assert!(wasm.wat.contains("call 0"));
+    }
+
+    #[test]
+    fn preserves_external_import_module_and_function_names() {
+        let wasm = compile_wasm_target(
+            r#"external fn load(key: String) -> String = "browser" "localStorage.getItem"
+pub fn main() -> String { load("weather") }"#,
+            CompileTarget::Browser,
+        )
+        .expect("compile browser external import");
+
+        assert!(
+            wasm.wat
+                .contains("(import \"browser\" \"localStorage.getItem\" (func (type 0) (param i32) (result i32)))")
+        );
+    }
+
+    #[test]
+    fn validates_external_import_modules_against_target() {
+        let diagnostics = compile_wasm_target(
+            r#"external fn load(key: String) -> String = "browser" "localStorage.getItem"
+pub fn main() -> String { load("weather") }"#,
+            CompileTarget::Wasmtime,
+        )
+        .expect_err("browser import should not compile for wasmtime");
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic
+                .message
+                .contains("imports host module `browser`, but target Wasmtime expects `env`")
+        }));
+    }
+
+    #[test]
     fn emits_string_export_adapters_for_host_boundaries() {
         let wasm = compile_wasm("pub fn greeting() { \"hello\" }");
 

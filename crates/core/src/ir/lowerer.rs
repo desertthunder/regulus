@@ -19,6 +19,7 @@ pub struct Lowerer {
     function_labels: FunctionLabelMap,
     constructors: HashMap<String, ConstructorInfo>,
     expression_types: HashMap<Span, Type>,
+    external_imports: HashMap<String, ExternalImport>,
     diagnostics: Diagnostics,
     pub lifted_functions: Vec<Function>,
     anonymous_counter: usize,
@@ -42,6 +43,7 @@ impl Lowerer {
             .iter()
             .map(|expression| (expression.span, expression.type_.clone()))
             .collect();
+        let external_imports = external_imports(&module.resolved.ast);
 
         Self {
             module,
@@ -49,6 +51,7 @@ impl Lowerer {
             function_labels,
             constructors,
             expression_types,
+            external_imports,
             diagnostics: Vec::new(),
             lifted_functions: Vec::new(),
             anonymous_counter: 0,
@@ -119,7 +122,8 @@ impl Lowerer {
             }
         }
 
-        let mut functions = self.lower_stdlib_host_imports(&ast);
+        let mut functions = self.lower_external_host_imports(&ast);
+        functions.extend(self.lower_stdlib_host_imports(&ast));
         for function in ast.functions {
             if let Some(function) = self.lower_function(&function) {
                 functions.push(function);
@@ -330,11 +334,14 @@ impl Lowerer {
                 }
 
                 let type_ = self.function_types.get(&name.text)?.clone();
+                let boundary = self
+                    .external_import_boundary(&name.text)
+                    .unwrap_or(CallBoundary::Internal);
                 Some(Expression {
                     span: name.span,
                     kind: ExpressionKind::FunctionValue(FunctionValue {
                         name: name.text.clone(),
-                        abi: call_abi(&type_, CallBoundary::Internal),
+                        abi: call_abi(&type_, boundary),
                     }),
                     type_,
                 })
@@ -967,13 +974,16 @@ impl Lowerer {
             let Type::Function { return_type, .. } = function_type.clone() else {
                 return None;
             };
+            let boundary = self
+                .external_import_boundary(&function_name.text)
+                .unwrap_or(CallBoundary::Internal);
             return Some(Expression {
                 type_: *return_type,
                 span: call.span,
                 kind: ExpressionKind::DirectCall(DirectCall {
                     function: function_name.text.clone(),
                     arguments: self.lower_ordered_call_arguments(context, call)?,
-                    abi: call_abi(&function_type, CallBoundary::Internal),
+                    abi: call_abi(&function_type, boundary),
                 }),
             });
         }
@@ -1763,6 +1773,80 @@ impl Lowerer {
         }
     }
 
+    fn lower_external_host_imports(&self, ast: &ast::Module) -> Vec<Function> {
+        let mut imports = Vec::new();
+        for declaration in &ast.declarations {
+            match declaration {
+                AstDeclaration::ExternalFunction(function) => {
+                    if let Some(import) = self.lower_external_host_import(function) {
+                        imports.push(import);
+                    }
+                }
+                AstDeclaration::TargetGroup(group) => {
+                    for declaration in &group.declarations {
+                        if let AstDeclaration::ExternalFunction(function) = declaration
+                            && let Some(import) = self.lower_external_host_import(function)
+                        {
+                            imports.push(import);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        imports
+    }
+
+    fn lower_external_host_import(&self, function: &ast::ExternalFunction) -> Option<Function> {
+        let type_ = self.function_types.get(&function.name.text)?.clone();
+        let Type::Function { params, return_type } = type_.clone() else {
+            return None;
+        };
+        let locals = params
+            .iter()
+            .enumerate()
+            .map(|(index, type_)| Local {
+                id: LocalId(index as u32),
+                name: function
+                    .parameters
+                    .get(index)
+                    .and_then(|parameter| parameter.name.as_ref())
+                    .map(|name| name.text.clone())
+                    .unwrap_or_else(|| format!("arg{index}")),
+                type_: type_.clone(),
+                span: function
+                    .parameters
+                    .get(index)
+                    .map(|parameter| parameter.span)
+                    .unwrap_or(function.span),
+            })
+            .collect::<Vec<_>>();
+        let boundary = CallBoundary::HostImport {
+            module: unquote(&function.body.module.source),
+            name: unquote(&function.body.function.source),
+        };
+        Some(Function {
+            name: function.name.text.clone(),
+            public: false,
+            closure_captures: Vec::new(),
+            params: locals.clone(),
+            locals,
+            return_type: *return_type,
+            abi: call_abi(&type_, boundary),
+            body: Block {
+                instructions: Vec::new(),
+                result: Box::new(self.nil_expression(function.span)),
+                span: function.span,
+            },
+            span: function.span,
+        })
+    }
+
+    fn external_import_boundary(&self, name: &str) -> Option<CallBoundary> {
+        let import = self.external_imports.get(name)?;
+        Some(CallBoundary::HostImport { module: import.module.clone(), name: import.function.clone() })
+    }
+
     fn lower_stdlib_host_imports(&self, ast: &ast::Module) -> Vec<Function> {
         let used_host_calls = ast.used_stdlib_host_calls();
         let mut imports = Vec::new();
@@ -1830,6 +1914,44 @@ impl Lowerer {
             _ => ConstantValue::Raw(format!("{expression:?}")),
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ExternalImport {
+    module: String,
+    function: String,
+}
+
+fn external_imports(module: &ast::Module) -> HashMap<String, ExternalImport> {
+    let mut imports = HashMap::new();
+    for declaration in &module.declarations {
+        collect_external_import(declaration, &mut imports);
+    }
+    imports
+}
+
+fn collect_external_import(declaration: &AstDeclaration, imports: &mut HashMap<String, ExternalImport>) {
+    match declaration {
+        AstDeclaration::ExternalFunction(function) => {
+            imports.insert(
+                function.name.text.clone(),
+                ExternalImport {
+                    module: unquote(&function.body.module.source),
+                    function: unquote(&function.body.function.source),
+                },
+            );
+        }
+        AstDeclaration::TargetGroup(group) => {
+            for declaration in &group.declarations {
+                collect_external_import(declaration, imports);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn unquote(source: &str) -> String {
+    source.trim_matches('"').to_string()
 }
 
 #[derive(Debug, Clone)]

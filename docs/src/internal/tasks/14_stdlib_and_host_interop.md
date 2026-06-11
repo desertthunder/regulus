@@ -62,11 +62,16 @@ Support useful standard library modules and host calls.
 
 ### General external functions
 
-- [ ] Lower non-stdlib external functions to Wasm imports.
-- [ ] Preserve external module and function names in import metadata.
-- [ ] Validate external import modules against the selected target.
+- [x] Lower non-stdlib external functions to Wasm imports.
+- [x] Preserve external module and function names in import metadata.
+- [x] Validate external import modules against the selected target.
+- [ ] Filter target-group declarations before typing and lowering so
+      target-specific externals can reuse local names safely.
+- [ ] Add a centralized external ABI validator with source-spanned diagnostics
+      for unsupported parameter and return shapes.
 - [ ] Reject unsupported external function ABI shapes before byte emission.
-- [ ] Add tests for browser and Worker-style external imports.
+- [ ] Add table-driven tests for selected target groups, unsupported ABI
+      shapes, supported managed shapes, and browser or Worker-style imports.
 
 ### Browser and Worker adapters
 
