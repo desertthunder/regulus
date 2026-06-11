@@ -1122,6 +1122,27 @@ pub fn main() -> Int { inc(41) }"#,
     }
 
     #[test]
+    fn target_groups_allow_external_imports_to_reuse_local_names() {
+        let source = r#"if javascript {
+  external fn load(key: String) -> String = "browser" "localStorage.getItem"
+}
+
+if erlang {
+  external fn load(key: String) -> String = "env" "load"
+}
+
+pub fn main() -> String { load("weather") }"#;
+
+        let browser = compile_wasm_target(source, CompileTarget::Browser).expect("compile browser target");
+        let wasmtime = compile_wasm_target(source, CompileTarget::Wasmtime).expect("compile wasmtime target");
+
+        assert!(browser.wat.contains("(import \"browser\" \"localStorage.getItem\""));
+        assert!(!browser.wat.contains("(import \"env\" \"load\""));
+        assert!(wasmtime.wat.contains("(import \"env\" \"load\""));
+        assert!(!wasmtime.wat.contains("(import \"browser\" \"localStorage.getItem\""));
+    }
+
+    #[test]
     fn preserves_external_import_module_and_function_names() {
         let wasm = compile_wasm_target(
             r#"external fn load(key: String) -> String = "browser" "localStorage.getItem"

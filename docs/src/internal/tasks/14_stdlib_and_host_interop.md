@@ -65,7 +65,7 @@ Support useful standard library modules and host calls.
 - [x] Lower non-stdlib external functions to Wasm imports.
 - [x] Preserve external module and function names in import metadata.
 - [x] Validate external import modules against the selected target.
-- [ ] Filter target-group declarations before typing and lowering so
+- [x] Filter target-group declarations before typing and lowering so
       target-specific externals can reuse local names safely.
 - [ ] Add a centralized external ABI validator with source-spanned diagnostics
       for unsupported parameter and return shapes.

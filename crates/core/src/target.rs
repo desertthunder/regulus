@@ -1,5 +1,5 @@
 use crate::diagnostic::{Diagnostic, DiagnosticCode, Diagnostics, Label};
-use crate::{ast, source::Span};
+use crate::{ast, project, source::Span};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum CompileTarget {
@@ -18,6 +18,13 @@ impl CompileTarget {
             Self::Wasi => "wasi",
             Self::Wasm => "wasm",
         }
+    }
+}
+
+pub fn project_compile_target(target: Option<&project::Target>) -> CompileTarget {
+    match target {
+        Some(project::Target::Javascript) => CompileTarget::Browser,
+        Some(project::Target::Erlang) | None => CompileTarget::Wasmtime,
     }
 }
 
@@ -77,11 +84,10 @@ impl TargetSelector {
 
 fn target_name(name: &str, span: Span, diagnostics: &mut Diagnostics) -> Option<CompileTarget> {
     match name {
-        "wasmtime" => Some(CompileTarget::Wasmtime),
+        "wasmtime" | "erlang" => Some(CompileTarget::Wasmtime),
         "browser" | "javascript" => Some(CompileTarget::Browser),
         "wasi" => Some(CompileTarget::Wasi),
         "wasm" => Some(CompileTarget::Wasm),
-        "erlang" => None,
         _ => {
             diagnostics.push(
                 Diagnostic::new(
@@ -89,7 +95,7 @@ fn target_name(name: &str, span: Span, diagnostics: &mut Diagnostics) -> Option<
                     format!("unsupported target group `{name}`"),
                 )
                 .with_label(Label::primary(span, "unsupported target here"))
-                .with_note("supported targets are `wasmtime`, `browser`, `wasi`, and `wasm`"),
+                .with_note("supported targets are `wasmtime`, `erlang`, `browser`, `javascript`, `wasi`, and `wasm`"),
             );
             None
         }

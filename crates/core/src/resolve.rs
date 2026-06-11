@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::ast::{self, Declaration, Expression, Pattern, Statement, UnqualifiedImportKind};
 use crate::diagnostic::{Diagnostic, DiagnosticCode, Diagnostics, Label};
-use crate::{parse, project::Project, source::Span, stdlib::StdlibRegistry};
+use crate::{parse, project::Project, source::Span, stdlib::StdlibRegistry, target};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SymbolId(pub u32);
@@ -112,8 +112,12 @@ pub fn resolve_project(project: &Project) -> Result<ResolvedProject, Diagnostics
     let mut ast_modules = Vec::new();
     let mut diagnostics = Vec::new();
 
+    let compile_target = target::project_compile_target(project.config.target.as_ref());
     for (module_info, source) in project.graph.modules.iter().zip(project.sources.iter()) {
-        match parse::parse(source.clone()).and_then(|cst| ast::build(&cst)) {
+        match parse::parse(source.clone())
+            .and_then(|cst| ast::build(&cst))
+            .and_then(|ast| target::select_module(ast, compile_target))
+        {
             Ok(ast) => ast_modules.push((module_info.name.clone(), ast)),
             Err(mut errors) => diagnostics.append(&mut errors),
         }
@@ -1229,6 +1233,43 @@ fn main(person) { case person { Missing(age: value) -> value } }
                 .iter()
                 .any(|diagnostic| diagnostic.message.contains("member `hidden` is private"))
         );
+    }
+
+    #[test]
+    fn filters_project_target_groups_before_interface_resolution() {
+        let dir = tempdir().expect("tempdir");
+        write(
+            &dir.path().join("gleam.toml"),
+            "name = \"sample\"\nversion = \"1.0.0\"\ntarget = \"javascript\"\n",
+        );
+        write(
+            &dir.path().join("src/app.gleam"),
+            r#"if javascript {
+  pub external fn load(key: String) -> String = "browser" "load"
+}
+
+if erlang {
+  pub external fn load(key: String) -> String = "env" "load"
+}"#,
+        );
+        write(
+            &dir.path().join("src/main.gleam"),
+            "import app\nfn main() { app.load(\"key\") }\n",
+        );
+        let project = project::load_project(dir.path()).expect("load project");
+
+        let resolved = resolve_project(&project).expect("resolve selected project target");
+
+        assert_eq!(resolved.modules.len(), 2);
+        assert!(resolved.modules.iter().any(|module| {
+            module.ast.declarations.iter().any(|declaration| {
+                matches!(
+                    declaration,
+                    Declaration::ExternalFunction(function)
+                        if function.body.module.source == "\"browser\""
+                )
+            })
+        }));
     }
 
     #[test]
