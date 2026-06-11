@@ -1,3 +1,6 @@
+use crate::ClosureConstants;
+use crate::wasm::{RuntimeHelperFragment, fragments, runtime_helper_fragments_from_block};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Layout {
     pub word_size: u32,
@@ -64,6 +67,56 @@ pub struct RuntimeConfig {
 
 impl RuntimeConfig {
     pub const DEFAULT: Self = Self { layout: Layout::DEFAULT, static_data_start: 1024, heap_start: 4096 };
+
+    pub fn runtime_helper_fragments(self) -> Vec<RuntimeHelperFragment> {
+        let alloc_helper = fragments::allocation::ALLOC_HELPER
+            .replace("{alignment_mask}", &(self.layout.alignment - 1).to_string())
+            .replace("{alignment}", &self.layout.alignment.to_string())
+            .replace("{allocation_failure_offset}", "64");
+        let managed_value_helpers = fragments::managed_values::MANAGED_VALUE_HELPERS
+            .replace(
+                "{closure_capture_slot_size}",
+                &u32::from(ClosureConstants::CaptureSlotSize).to_string(),
+            )
+            .replace(
+                "{closure_function_id_offset}",
+                &u32::from(ClosureConstants::FunctionIdOffset).to_string(),
+            )
+            .replace(
+                "{closure_captures_offset}",
+                &u32::from(ClosureConstants::CapturesOffset).to_string(),
+            );
+        let blocks = [
+            alloc_helper.as_str(),
+            fragments::panic::PANIC_HELPERS,
+            fragments::copy::COPY_HELPERS,
+            fragments::strings::STRING_HELPERS,
+            fragments::bit_arrays::BIT_ARRAY_HELPERS,
+            fragments::lists::LIST_HELPERS,
+            managed_value_helpers.as_str(),
+            fragments::dictionaries::DICTIONARY_HELPERS,
+            fragments::dynamic::DYNAMIC_HELPERS,
+            fragments::equality_ordering::EQUALITY_AND_ORDERING_HELPERS,
+            fragments::debug::DEBUG_HELPERS,
+            fragments::host_adapters::HOST_ADAPTER_HELPERS,
+        ];
+        let mut fragments = blocks
+            .into_iter()
+            .flat_map(runtime_helper_fragments_from_block)
+            .collect::<Vec<_>>();
+        if let Some(fragment) = fragments
+            .iter_mut()
+            .find(|fragment| fragment.name == "__float_to_string")
+        {
+            fragment.deps.insert("__float_to_string_dot_data".into());
+        }
+        for name in ["__alloc", "__allocation_fail", "__panic", "__match_fail", "__assert"] {
+            if let Some(fragment) = fragments.iter_mut().find(|fragment| fragment.name == name) {
+                fragment.deps.insert("__last_panic".into());
+            }
+        }
+        fragments
+    }
 }
 
 impl Default for RuntimeConfig {

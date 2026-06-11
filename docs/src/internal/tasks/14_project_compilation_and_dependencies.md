@@ -25,10 +25,14 @@ Compile a normal Gleam project from `gleam.toml` into one linked Wasm artifact.
 
 The goal here is to make linked project names deterministic and collision-free.
 
-- [ ] Define backend name components for package, module, member, helper kind,
-      and compiler-generated index.
+- [x] Define backend name data types for package, module, member, helper kind,
+      compiler-generated index, export names, and host import ABI names.
+- [x] Add a central backend-name renderer that escapes components without
+      punctuation-sanitization collisions.
+- [ ] Assign backend names from structured compiler identity instead of raw
+      lowered declaration strings.
 - [ ] Preserve intentional public export names separately from internal backend
-      names.
+      names during emission.
 - [ ] Rename project functions, constants, constructors, lifted closures, and
       helper functions during linking.
 - [ ] Rewrite same-project direct calls, function values, constructor names,

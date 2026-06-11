@@ -1,15 +1,31 @@
-use crate::{
-    ast::{self, Expression as AstExpression, LiteralKind},
-    source::Span,
-    types::Type,
-};
-
 use super::FunctionContext;
+use crate::ast::{self, Expression as AstExpression, LiteralKind};
+use crate::{runtime, source::Span, types::Type};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BitArrayLiteral {
     pub segments: Vec<BitArraySegment>,
     pub bit_len: u32,
+}
+
+impl BitArrayLiteral {
+    pub fn bytes(&self) -> Vec<u8> {
+        let mut bytes = vec![0; runtime::bit_array_payload_len(self.bit_len) as usize];
+        let mut offset = 0;
+        for segment in &self.segments {
+            for bit_index in 0..segment.bit_size {
+                let source_shift = segment.bit_size - bit_index - 1;
+                let bit = if source_shift < u64::BITS { (segment.value >> source_shift) & 1 } else { 0 };
+                if bit == 1 {
+                    let byte = &mut bytes[(offset / 8) as usize];
+                    let target_shift = 7 - offset % 8;
+                    *byte |= 1 << target_shift;
+                }
+                offset += 1;
+            }
+        }
+        bytes
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -52,12 +68,14 @@ pub enum BitSegmentOption {
     NativeEndian,
 }
 
+// TODO: this could be from/into
 pub fn bit_array_literal(raw: &ast::RawSyntax) -> BitArrayLiteral {
     let segments = bit_array_segments(raw);
     let bit_len = segments.iter().map(|segment| segment.bit_size).sum();
     BitArrayLiteral { segments, bit_len }
 }
 
+// TODO: this could be from/into
 pub fn ast_bit_array_literal(bit_array: &ast::BitArray) -> BitArrayLiteral {
     let segments = bit_array
         .segments
@@ -92,6 +110,17 @@ pub fn ast_bit_array_literal(bit_array: &ast::BitArray) -> BitArrayLiteral {
         .collect::<Vec<_>>();
     let bit_len = segments.iter().map(|segment| segment.bit_size).sum();
     BitArrayLiteral { segments, bit_len }
+}
+
+pub fn bit_string_pattern_segments(ctx: &mut FunctionContext, raw: &ast::RawSyntax) -> Vec<BitStringPatternSegment> {
+    let source = raw.source.trim();
+    match source.strip_prefix("<<").and_then(|source| source.strip_suffix(">>")) {
+        Some(inner) => inner
+            .split(',')
+            .map(|segment| bit_string_pattern_segment(ctx, segment.trim(), raw.span))
+            .collect(),
+        _ => Vec::new(),
+    }
 }
 
 fn bit_array_segments(raw: &ast::RawSyntax) -> Vec<BitArraySegment> {
@@ -175,23 +204,6 @@ fn bit_size_from_options(options: &[BitSegmentOption]) -> Option<u32> {
         })
         .unwrap_or(1);
     size.checked_mul(unit)
-}
-
-pub fn bit_string_pattern_segments(
-    context: &mut FunctionContext, raw: &ast::RawSyntax,
-) -> Vec<BitStringPatternSegment> {
-    let Some(inner) = raw
-        .source
-        .trim()
-        .strip_prefix("<<")
-        .and_then(|source| source.strip_suffix(">>"))
-    else {
-        return Vec::new();
-    };
-    inner
-        .split(',')
-        .map(|segment| bit_string_pattern_segment(context, segment.trim(), raw.span))
-        .collect()
 }
 
 fn bit_string_pattern_segment(context: &mut FunctionContext, source: &str, span: Span) -> BitStringPatternSegment {

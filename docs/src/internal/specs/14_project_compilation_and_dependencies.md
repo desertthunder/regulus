@@ -127,19 +127,47 @@ whose lowered names do not collide. A real project linker must assign backend
 names from stable package, module, member, and helper identity before Wasm
 emission.
 
+The compiler must keep three name classes separate:
+
+- source names, which users wrote and diagnostics should show
+- backend names, which are compiler-owned and collision-free in linked IR
+- ABI names, which are intentional Wasm export or host import names
+
+Backend names should be structured data before they are rendered as strings.
+They should contain:
+
+- owner identity: package and module, runtime, or compiler namespace
+- item kind: function, constant, constructor, type helper, or helper
+- helper kind: closure, lifted function, record update constructor, import
+  wrapper, runtime helper, stdlib helper, debug helper, or future helper
+- optional source member name
+- optional compiler-generated index assigned in deterministic traversal order
+
+Rendered backend names should use one central renderer. Each component should be
+escaped with a collision-free encoding, not by replacing punctuation with `_`.
+For example, byte-hex escaping keeps `foo-bar`, `foo_bar`, and `foo/bar`
+distinct. The exact spelling is not user-facing, but it must be deterministic
+across platforms and filesystem order.
+
 The scheme should cover:
 
 - project functions, constants, constructors, and type helpers
 - anonymous and lifted functions, including closure helpers
 - runtime and stdlib helper functions
 - dependency package members, once dependency source loading is enabled
-- host imports and module imports without changing their ABI names
+- compiler-owned wrappers around host imports and module imports
 - public exports, which should keep user-facing export names intentional
 
-Generated names should be deterministic across platforms and filesystem order.
-They should avoid collisions between modules such as `app/main.gleam` and
-`test/main.gleam`, between dependencies with the same module names, and between
-compiler-generated helpers and user declarations.
+Host import ABI pairs such as module `env` and name `clock_now` must not be
+mangled. If the compiler needs an internal wrapper for an import, only the
+wrapper receives a generated backend name. Likewise, public Wasm exports should
+store their chosen export names separately from the internal backend name.
+
+Generated names should avoid collisions between modules such as
+`app/main.gleam` and `test/main.gleam`, between dependencies with the same
+module names, and between compiler-generated helpers and user declarations. The
+linker should still collision-check rendered names and report the source
+declarations that produced any duplicate generated name.
 
 The linker should rewrite every same-project reference to the generated backend
 name and report any remaining collision as a source-spanned project diagnostic.

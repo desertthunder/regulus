@@ -457,6 +457,10 @@ pub struct Expression {
 }
 
 impl Expression {
+    pub fn new(type_: Type, span: Span, kind: ExpressionKind) -> Self {
+        Self { type_, span, kind }
+    }
+
     pub fn contains_indirect_call(&self) -> bool {
         matches!(self.kind, ExpressionKind::IndirectCall(_)) || self.children().any(Self::contains_indirect_call)
     }

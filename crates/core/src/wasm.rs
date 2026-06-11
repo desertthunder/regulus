@@ -6,8 +6,9 @@ mod binary;
 mod builder;
 mod codegen;
 mod encode;
-mod fragments;
 mod validator;
+
+pub mod fragments;
 
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
@@ -15,7 +16,7 @@ use std::fmt::Write;
 use crate::diagnostic::{Diagnostic, DiagnosticCode, Diagnostics, Label};
 use crate::ir;
 use crate::runtime;
-use crate::{ClosureConstants, target::CompileTarget};
+use crate::target::CompileTarget;
 
 /// WebAssembly output from the backend.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -136,10 +137,10 @@ impl builder::Module {
 }
 
 #[derive(Debug, Clone)]
-struct RuntimeHelperFragment {
-    name: String,
+pub struct RuntimeHelperFragment {
+    pub name: String,
     wat: String,
-    deps: HashSet<String>,
+    pub deps: HashSet<String>,
 }
 
 struct RuntimePrelude {
@@ -210,59 +211,7 @@ fn runtime_helper_wat(config: runtime::RuntimeConfig, helper_roots: &HashSet<Str
     prelude.wat
 }
 
-impl runtime::RuntimeConfig {
-    fn runtime_helper_fragments(self) -> Vec<RuntimeHelperFragment> {
-        let alloc_helper = fragments::allocation::ALLOC_HELPER
-            .replace("{alignment_mask}", &(self.layout.alignment - 1).to_string())
-            .replace("{alignment}", &self.layout.alignment.to_string())
-            .replace("{allocation_failure_offset}", "64");
-        let managed_value_helpers = fragments::managed_values::MANAGED_VALUE_HELPERS
-            .replace(
-                "{closure_capture_slot_size}",
-                &u32::from(ClosureConstants::CaptureSlotSize).to_string(),
-            )
-            .replace(
-                "{closure_function_id_offset}",
-                &u32::from(ClosureConstants::FunctionIdOffset).to_string(),
-            )
-            .replace(
-                "{closure_captures_offset}",
-                &u32::from(ClosureConstants::CapturesOffset).to_string(),
-            );
-        let blocks = [
-            alloc_helper.as_str(),
-            fragments::panic::PANIC_HELPERS,
-            fragments::copy::COPY_HELPERS,
-            fragments::strings::STRING_HELPERS,
-            fragments::bit_arrays::BIT_ARRAY_HELPERS,
-            fragments::lists::LIST_HELPERS,
-            managed_value_helpers.as_str(),
-            fragments::dictionaries::DICTIONARY_HELPERS,
-            fragments::dynamic::DYNAMIC_HELPERS,
-            fragments::equality_ordering::EQUALITY_AND_ORDERING_HELPERS,
-            fragments::debug::DEBUG_HELPERS,
-            fragments::host_adapters::HOST_ADAPTER_HELPERS,
-        ];
-        let mut fragments = blocks
-            .into_iter()
-            .flat_map(runtime_helper_fragments_from_block)
-            .collect::<Vec<_>>();
-        if let Some(fragment) = fragments
-            .iter_mut()
-            .find(|fragment| fragment.name == "__float_to_string")
-        {
-            fragment.deps.insert("__float_to_string_dot_data".into());
-        }
-        for name in ["__alloc", "__allocation_fail", "__panic", "__match_fail", "__assert"] {
-            if let Some(fragment) = fragments.iter_mut().find(|fragment| fragment.name == name) {
-                fragment.deps.insert("__last_panic".into());
-            }
-        }
-        fragments
-    }
-}
-
-fn runtime_helper_fragments_from_block(block: &str) -> Vec<RuntimeHelperFragment> {
+pub fn runtime_helper_fragments_from_block(block: &str) -> Vec<RuntimeHelperFragment> {
     let lines = block.trim_matches('\n').lines().collect::<Vec<_>>();
     let mut fragments = Vec::new();
     let mut index = 0;
@@ -316,26 +265,6 @@ fn constructor_tag(name: &str) -> u32 {
     })
 }
 
-impl ir::BitArrayLiteral {
-    fn bytes(&self) -> Vec<u8> {
-        let mut bytes = vec![0; runtime::bit_array_payload_len(self.bit_len) as usize];
-        let mut offset = 0;
-        for segment in &self.segments {
-            for bit_index in 0..segment.bit_size {
-                let source_shift = segment.bit_size - bit_index - 1;
-                let bit = if source_shift < u64::BITS { (segment.value >> source_shift) & 1 } else { 0 };
-                if bit == 1 {
-                    let byte = &mut bytes[(offset / 8) as usize];
-                    let target_shift = 7 - offset % 8;
-                    *byte |= 1 << target_shift;
-                }
-                offset += 1;
-            }
-        }
-        bytes
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -345,7 +274,7 @@ mod tests {
     use crate::source::{SourceFile, SourceFileId, Span};
     use crate::types::Type;
     use crate::{ast, ir, parse, resolve, types};
-    use wasmtime::{Caller, Engine, Instance, Linker, Module, Store};
+    use wasmtime::{Caller, Engine, Instance, Linker, Memory as WasmtimeMemory, Module, Store};
 
     fn lower_ir(source: &str) -> ir::Module {
         let source = SourceFile::new(SourceFileId(0), source);
@@ -438,6 +367,24 @@ mod tests {
             span,
         };
         ir_module(vec![imported, exported], span)
+    }
+
+    fn bit_array_expr(values: &[u64], span: Span) -> ir::Expression {
+        let segments = values
+            .iter()
+            .map(|value| ir::BitArraySegment {
+                value: *value,
+                bit_size: 8,
+                type_: ir::BitSegmentType::Integer,
+                options: Vec::new(),
+                span,
+            })
+            .collect::<Vec<_>>();
+        ir::Expression {
+            type_: Type::BitArray,
+            span,
+            kind: ExpressionKind::BitArray(ir::BitArrayLiteral { bit_len: values.len() as u32 * 8, segments }),
+        }
     }
 
     #[test]
@@ -786,7 +733,7 @@ pub fn nested_option() -> Int {
         module
     }
 
-    fn assert_source_spanned_wasm_error(module: builder::Module, expected: &str, span: Span) {
+    fn assert_source_spanned_wasm_error(module: &builder::Module, expected: &str, span: Span) {
         let errors = module
             .structured_wat()
             .expect_err("invalid module should fail before byte emission");
@@ -802,7 +749,7 @@ pub fn nested_option() -> Int {
         );
     }
 
-    fn exported_function_with_body(name: &str, return_type: Type, result: ir::Expression, span: Span) -> ir::Function {
+    fn exported_function_with_body(name: &str, return_type: &Type, result: ir::Expression, span: Span) -> ir::Function {
         ir::Function {
             closure_captures: Vec::new(),
             name: name.into(),
@@ -812,7 +759,7 @@ pub fn nested_option() -> Int {
             return_type: return_type.clone(),
             abi: ir::CallAbi {
                 params: Vec::new(),
-                return_: Some(ir::AbiValue::from(&return_type)),
+                return_: Some(ir::AbiValue::from(return_type)),
                 boundary: ir::CallBoundary::ModuleExport,
             },
             body: ir::Block { instructions: Vec::new(), result: Box::new(result), span },
@@ -820,7 +767,7 @@ pub fn nested_option() -> Int {
         }
     }
 
-    fn assert_emit_wasm_error(module: ir::Module, expected: &str, span: Span) {
+    fn assert_emit_wasm_error(module: &ir::Module, expected: &str, span: Span) {
         let errors = module.emit_wat().expect_err("invalid module should fail Wasm emission");
         assert!(
             errors.iter().any(|diagnostic| diagnostic.message.contains(expected)),
@@ -842,42 +789,25 @@ pub fn nested_option() -> Int {
             span,
             kind: ExpressionKind::Literal(ir::Literal { kind: LiteralKind::Int, source: "nope".into() }),
         };
-        let function = exported_function_with_body("bad", Type::Int, result, span);
-
-        assert_emit_wasm_error(ir_module(vec![function], span), "invalid int literal", span);
+        let function = exported_function_with_body("bad", &Type::Int, result, span);
+        assert_emit_wasm_error(&ir_module(vec![function], span), "invalid int literal", span);
     }
 
     #[test]
     fn static_value_parse_failures_report_source_spanned_diagnostics() {
         let span = Span::new(SourceFileId(0), 10, 16);
-        let bad_field = ir::Expression {
-            type_: Type::Int,
+        let bad_field = ir::Expression::new(
+            Type::Int,
             span,
-            kind: ExpressionKind::Literal(ir::Literal { kind: LiteralKind::Int, source: "nope".into() }),
-        };
-        let result =
-            ir::Expression { type_: Type::Tuple(vec![Type::Int]), span, kind: ExpressionKind::Tuple(vec![bad_field]) };
-        let function = exported_function_with_body("bad_tuple", Type::Tuple(vec![Type::Int]), result, span);
-
-        assert_emit_wasm_error(ir_module(vec![function], span), "invalid int literal", span);
-    }
-
-    fn bit_array_expr(values: &[u64], span: Span) -> ir::Expression {
-        let segments = values
-            .iter()
-            .map(|value| ir::BitArraySegment {
-                value: *value,
-                bit_size: 8,
-                type_: ir::BitSegmentType::Integer,
-                options: Vec::new(),
-                span,
-            })
-            .collect::<Vec<_>>();
-        ir::Expression {
-            type_: Type::BitArray,
+            ExpressionKind::Literal(ir::Literal { kind: LiteralKind::Int, source: "nope".into() }),
+        );
+        let result = ir::Expression::new(
+            Type::Tuple(vec![Type::Int]),
             span,
-            kind: ExpressionKind::BitArray(ir::BitArrayLiteral { bit_len: values.len() as u32 * 8, segments }),
-        }
+            ExpressionKind::Tuple(vec![bad_field]),
+        );
+        let function = exported_function_with_body("bad_tuple", &Type::Tuple(vec![Type::Int]), result, span);
+        assert_emit_wasm_error(&ir_module(vec![function], span), "invalid int literal", span);
     }
 
     #[test]
@@ -885,7 +815,7 @@ pub fn nested_option() -> Int {
         let span = Span::new(SourceFileId(0), 30, 40);
         let bit_concat = exported_function_with_body(
             "bits",
-            Type::BitArray,
+            &Type::BitArray,
             ir::Expression {
                 type_: Type::BitArray,
                 span,
@@ -898,7 +828,7 @@ pub fn nested_option() -> Int {
         );
         let bit_test = exported_function_with_body(
             "is_bits",
-            Type::Bool,
+            &Type::Bool,
             ir::Expression {
                 type_: Type::Bool,
                 span,
@@ -911,7 +841,7 @@ pub fn nested_option() -> Int {
         );
         let allocate = exported_function_with_body(
             "allocate",
-            Type::String,
+            &Type::String,
             ir::Expression {
                 type_: Type::String,
                 span,
@@ -1020,7 +950,7 @@ pub fn nested_option() -> Int {
         let span = Span::new(SourceFileId(0), 5, 9);
         let module = invalid_structured_module(span, vec![builder::Instruction::I32Const(1)]);
 
-        assert_source_spanned_wasm_error(module, "leaves stack", span);
+        assert_source_spanned_wasm_error(&module, "leaves stack", span);
     }
 
     #[test]
@@ -1035,7 +965,7 @@ pub fn nested_option() -> Int {
         );
         module.functions[0].body.push(builder::Instruction::I64Const(0));
 
-        assert_source_spanned_wasm_error(module, "call to function 0 has signature", span);
+        assert_source_spanned_wasm_error(&module, "call to function 0 has signature", span);
     }
 
     #[test]
@@ -1046,7 +976,7 @@ pub fn nested_option() -> Int {
             vec![builder::Instruction::LocalGet { local: builder::LocalId(9), type_: builder::ValueType::I64 }],
         );
 
-        assert_source_spanned_wasm_error(module, "unknown local index", span);
+        assert_source_spanned_wasm_error(&module, "unknown local index", span);
     }
 
     #[test]
@@ -1461,7 +1391,7 @@ pub fn main() -> Int { 1 }"#,
             span,
         };
         assert_emit_wasm_error(
-            ir_module(vec![function], span),
+            &ir_module(vec![function], span),
             "raw `use` IR reached the Wasm backend",
             span,
         );
@@ -1493,7 +1423,7 @@ pub fn main() -> Int { 1 }"#,
         };
         let function = exported_function_with_body(
             "main",
-            Type::Int,
+            &Type::Int,
             ir::Expression {
                 type_: Type::Int,
                 span,
@@ -1508,7 +1438,7 @@ pub fn main() -> Int { 1 }"#,
             .push(ir::Instruction::Evaluate { expression: debug, span });
 
         assert_emit_wasm_error(
-            ir_module(vec![function], span),
+            &ir_module(vec![function], span),
             "debug intrinsic does not support generic values",
             span,
         );
@@ -1526,10 +1456,10 @@ pub fn main() -> Int { 1 }"#,
                 right: Box::new(generic_expr(span)),
             },
         };
-        let function = exported_function_with_body("main", Type::Bool, result, span);
+        let function = exported_function_with_body("main", &Type::Bool, result, span);
 
         assert_emit_wasm_error(
-            ir_module(vec![function], span),
+            &ir_module(vec![function], span),
             "comparison type is not supported",
             span,
         );
@@ -1546,10 +1476,10 @@ pub fn main() -> Int { 1 }"#,
                 right: Box::new(generic_expr(span)),
             },
         };
-        let function = exported_function_with_body("main", Type::Bool, result, span);
+        let function = exported_function_with_body("main", &Type::Bool, result, span);
 
         assert_emit_wasm_error(
-            ir_module(vec![function], span),
+            &ir_module(vec![function], span),
             "runtime equality does not support generic values",
             span,
         );
@@ -2157,6 +2087,115 @@ pub fn main() {
         String::from_utf8(bytes).expect("utf-8 string")
     }
 
+    fn instantiate_debug_module(bytes: &[u8]) -> (Store<String>, Instance, WasmtimeMemory) {
+        let engine = Engine::default();
+        let module = Module::new(&engine, bytes).expect("compile wasm module");
+        let mut linker = Linker::new(&engine);
+        linker
+            .func_wrap("env", "debug_i64", |mut caller: Caller<'_, String>, value: i64| {
+                caller.data_mut().push_str(&value.to_string());
+                caller.data_mut().push('\n');
+            })
+            .expect("define debug_i64");
+        linker
+            .func_wrap("env", "debug_value", |mut caller: Caller<'_, String>, ptr: i32| {
+                let text = read_host_string(&mut caller, ptr);
+                caller.data_mut().push_str(&text);
+                caller.data_mut().push('\n');
+            })
+            .expect("define debug_value");
+        let mut store = Store::new(&engine, String::new());
+        let instance = linker.instantiate(&mut store, &module).expect("instantiate module");
+        let memory = instance.get_memory(&mut store, "memory").expect("memory export");
+        (store, instance, memory)
+    }
+
+    fn call_i64_export(instance: &Instance, store: &mut Store<String>, name: &str) -> i64 {
+        instance
+            .get_typed_func::<(), i64>(&mut *store, name)
+            .unwrap_or_else(|_| panic!("get {name} export"))
+            .call(store, ())
+            .unwrap_or_else(|_| panic!("call {name}"))
+    }
+
+    fn call_i32_export(instance: &Instance, store: &mut Store<String>, name: &str) -> i32 {
+        instance
+            .get_typed_func::<(), i32>(&mut *store, name)
+            .unwrap_or_else(|_| panic!("get {name} export"))
+            .call(store, ())
+            .unwrap_or_else(|_| panic!("call {name}"))
+    }
+
+    fn call_f64_export(instance: &Instance, store: &mut Store<String>, name: &str) -> f64 {
+        instance
+            .get_typed_func::<(), f64>(&mut *store, name)
+            .unwrap_or_else(|_| panic!("get {name} export"))
+            .call(store, ())
+            .unwrap_or_else(|_| panic!("call {name}"))
+    }
+
+    fn read_exported_bytes(
+        instance: &Instance, store: &mut Store<String>, memory: &WasmtimeMemory, name: &str, len: usize,
+    ) -> Vec<u8> {
+        let pointer = call_i32_export(instance, store, name) as usize;
+        let mut bytes = vec![0; len];
+        memory
+            .read(&*store, pointer, &mut bytes)
+            .unwrap_or_else(|_| panic!("read {name}"));
+        bytes
+    }
+
+    fn assert_string_and_debug_intrinsics(instance: &Instance, store: &mut Store<String>, memory: &WasmtimeMemory) {
+        let bytes = read_exported_bytes(instance, store, memory, "number", 16);
+        assert_eq!(u32::from_le_bytes(bytes[4..8].try_into().unwrap()), 3);
+        assert_eq!(&bytes[8..11], b"-42");
+
+        let bytes = read_exported_bytes(instance, store, memory, "text", 16);
+        assert_eq!(&bytes[8..10], b"ab");
+
+        assert_eq!(call_i64_export(instance, store, "text_len"), 3);
+        assert_eq!(call_i32_export(instance, store, "empty"), 1);
+        assert_eq!(call_i64_export(instance, store, "debugged"), 42);
+
+        let bytes = read_exported_bytes(instance, store, memory, "debugged_text", 16);
+        assert_eq!(&bytes[8..10], b"ok");
+        assert_eq!(store.data(), "42\nok\n");
+    }
+
+    fn assert_collection_and_number_intrinsics(
+        instance: &Instance, store: &mut Store<String>, memory: &WasmtimeMemory,
+    ) {
+        assert_eq!(call_i64_export(instance, store, "item_count"), 3);
+        assert_eq!(call_i64_export(instance, store, "reversed_head"), 3);
+
+        let bytes = read_exported_bytes(instance, store, memory, "bool_text", 16);
+        assert_eq!(&bytes[8..12], b"True");
+        assert_eq!(call_i64_export(instance, store, "bool_rank"), -1);
+        assert_eq!(call_i64_export(instance, store, "dict_value"), 42);
+        assert_eq!(call_i32_export(instance, store, "dict_missing"), 0);
+        assert_eq!(call_i64_export(instance, store, "dict_persistent_size"), 1);
+        assert_eq!(call_i64_export(instance, store, "float_rank"), -1);
+        assert_eq!(call_f64_export(instance, store, "float_larger"), 2.5);
+
+        let bytes = read_exported_bytes(instance, store, memory, "float_text", 16);
+        assert_eq!(&bytes[8..16], b"1.500000");
+
+        assert_eq!(call_i64_export(instance, store, "same_value"), 9);
+        assert_eq!(call_i64_export(instance, store, "constant_value"), 7);
+    }
+
+    fn assert_bit_array_intrinsics(instance: &Instance, store: &mut Store<String>, memory: &WasmtimeMemory) {
+        assert_eq!(call_i64_export(instance, store, "bits_size"), 24);
+        assert_eq!(call_i64_export(instance, store, "bytes_size"), 2);
+        assert_eq!(call_i32_export(instance, store, "bits_empty"), 1);
+        assert_eq!(call_i32_export(instance, store, "bits_start"), 1);
+        assert_eq!(call_i64_export(instance, store, "bits_append_size"), 16);
+
+        let bytes = read_exported_bytes(instance, store, memory, "bits_joined", 16);
+        assert_eq!(u32::from_le_bytes(bytes[4..8].try_into().unwrap()), 24);
+        assert_eq!(&bytes[8..11], &[1, 2, 3]);
+    }
+
     #[test]
     fn selects_browser_stdlib_io_host_imports() {
         let wasm = compile_wasm_target(
@@ -2266,151 +2305,11 @@ pub fn bits_joined() -> BitArray { bit_array.concat([<<1>>, <<2>>, <<3>>]) }
 pub fn bits_append_size() -> Int { bit_array.bit_size(bit_array.append(<<1>>, <<2>>)) }
 "#,
         );
-        let engine = Engine::default();
-        let module = Module::new(&engine, &wasm.bytes).expect("compile wasm module");
-        let mut linker = Linker::new(&engine);
-        linker
-            .func_wrap("env", "debug_i64", |mut caller: Caller<'_, String>, value: i64| {
-                caller.data_mut().push_str(&value.to_string());
-                caller.data_mut().push('\n');
-            })
-            .expect("define debug_i64");
-        linker
-            .func_wrap("env", "debug_value", |mut caller: Caller<'_, String>, ptr: i32| {
-                let text = read_host_string(&mut caller, ptr);
-                caller.data_mut().push_str(&text);
-                caller.data_mut().push('\n');
-            })
-            .expect("define debug_value");
-        let mut store = Store::new(&engine, String::new());
-        let instance = linker.instantiate(&mut store, &module).expect("instantiate module");
+        let (mut store, instance, memory) = instantiate_debug_module(&wasm.bytes);
 
-        let memory = instance.get_memory(&mut store, "memory").expect("memory export");
-        let number = instance
-            .get_typed_func::<(), i32>(&mut store, "number")
-            .expect("get number export");
-        let pointer = number.call(&mut store, ()).expect("call number") as usize;
-        let mut bytes = [0; 16];
-        memory.read(&store, pointer, &mut bytes).expect("read number string");
-        assert_eq!(u32::from_le_bytes(bytes[4..8].try_into().unwrap()), 3);
-        assert_eq!(&bytes[8..11], b"-42");
-
-        let text = instance
-            .get_typed_func::<(), i32>(&mut store, "text")
-            .expect("get text export");
-        let pointer = text.call(&mut store, ()).expect("call text") as usize;
-        memory.read(&store, pointer, &mut bytes).expect("read text string");
-        assert_eq!(&bytes[8..10], b"ab");
-
-        let text_len = instance
-            .get_typed_func::<(), i64>(&mut store, "text_len")
-            .expect("get text_len export");
-        assert_eq!(text_len.call(&mut store, ()).expect("call text_len"), 3);
-        let empty = instance
-            .get_typed_func::<(), i32>(&mut store, "empty")
-            .expect("get empty export");
-        assert_eq!(empty.call(&mut store, ()).expect("call empty"), 1);
-        let item_count = instance
-            .get_typed_func::<(), i64>(&mut store, "item_count")
-            .expect("get item_count export");
-        assert_eq!(item_count.call(&mut store, ()).expect("call item_count"), 3);
-        let reversed_head = instance
-            .get_typed_func::<(), i64>(&mut store, "reversed_head")
-            .expect("get reversed_head export");
-        assert_eq!(reversed_head.call(&mut store, ()).expect("call reversed_head"), 3);
-        let debugged = instance
-            .get_typed_func::<(), i64>(&mut store, "debugged")
-            .expect("get debugged export");
-        assert_eq!(debugged.call(&mut store, ()).expect("call debugged"), 42);
-        let debugged_text = instance
-            .get_typed_func::<(), i32>(&mut store, "debugged_text")
-            .expect("get debugged_text export");
-        let pointer = debugged_text.call(&mut store, ()).expect("call debugged_text") as usize;
-        memory
-            .read(&store, pointer, &mut bytes)
-            .expect("read debugged text string");
-        assert_eq!(&bytes[8..10], b"ok");
-        assert_eq!(store.data(), "42\nok\n");
-
-        let bool_text = instance
-            .get_typed_func::<(), i32>(&mut store, "bool_text")
-            .expect("get bool_text export");
-        let pointer = bool_text.call(&mut store, ()).expect("call bool_text") as usize;
-        memory.read(&store, pointer, &mut bytes).expect("read bool text");
-        assert_eq!(&bytes[8..12], b"True");
-        let bool_rank = instance
-            .get_typed_func::<(), i64>(&mut store, "bool_rank")
-            .expect("get bool_rank export");
-        assert_eq!(bool_rank.call(&mut store, ()).expect("call bool_rank"), -1);
-        let dict_value = instance
-            .get_typed_func::<(), i64>(&mut store, "dict_value")
-            .expect("get dict_value export");
-        assert_eq!(dict_value.call(&mut store, ()).expect("call dict_value"), 42);
-        let dict_missing = instance
-            .get_typed_func::<(), i32>(&mut store, "dict_missing")
-            .expect("get dict_missing export");
-        assert_eq!(dict_missing.call(&mut store, ()).expect("call dict_missing"), 0);
-        let dict_persistent_size = instance
-            .get_typed_func::<(), i64>(&mut store, "dict_persistent_size")
-            .expect("get dict_persistent_size export");
-        assert_eq!(
-            dict_persistent_size
-                .call(&mut store, ())
-                .expect("call dict_persistent_size"),
-            1
-        );
-        let float_rank = instance
-            .get_typed_func::<(), i64>(&mut store, "float_rank")
-            .expect("get float_rank export");
-        assert_eq!(float_rank.call(&mut store, ()).expect("call float_rank"), -1);
-        let float_larger = instance
-            .get_typed_func::<(), f64>(&mut store, "float_larger")
-            .expect("get float_larger export");
-        assert_eq!(float_larger.call(&mut store, ()).expect("call float_larger"), 2.5);
-        let float_text = instance
-            .get_typed_func::<(), i32>(&mut store, "float_text")
-            .expect("get float_text export");
-        let pointer = float_text.call(&mut store, ()).expect("call float_text") as usize;
-        memory.read(&store, pointer, &mut bytes).expect("read float text");
-        assert_eq!(&bytes[8..16], b"1.500000");
-        let same_value = instance
-            .get_typed_func::<(), i64>(&mut store, "same_value")
-            .expect("get same_value export");
-        assert_eq!(same_value.call(&mut store, ()).expect("call same_value"), 9);
-        let constant_value = instance
-            .get_typed_func::<(), i64>(&mut store, "constant_value")
-            .expect("get constant_value export");
-        assert_eq!(constant_value.call(&mut store, ()).expect("call constant_value"), 7);
-        let bits_size = instance
-            .get_typed_func::<(), i64>(&mut store, "bits_size")
-            .expect("get bits_size export");
-        assert_eq!(bits_size.call(&mut store, ()).expect("call bits_size"), 24);
-        let bytes_size = instance
-            .get_typed_func::<(), i64>(&mut store, "bytes_size")
-            .expect("get bytes_size export");
-        assert_eq!(bytes_size.call(&mut store, ()).expect("call bytes_size"), 2);
-        let bits_empty = instance
-            .get_typed_func::<(), i32>(&mut store, "bits_empty")
-            .expect("get bits_empty export");
-        assert_eq!(bits_empty.call(&mut store, ()).expect("call bits_empty"), 1);
-        let bits_start = instance
-            .get_typed_func::<(), i32>(&mut store, "bits_start")
-            .expect("get bits_start export");
-        assert_eq!(bits_start.call(&mut store, ()).expect("call bits_start"), 1);
-        let bits_append_size = instance
-            .get_typed_func::<(), i64>(&mut store, "bits_append_size")
-            .expect("get bits_append_size export");
-        assert_eq!(
-            bits_append_size.call(&mut store, ()).expect("call bits_append_size"),
-            16
-        );
-        let bits_joined = instance
-            .get_typed_func::<(), i32>(&mut store, "bits_joined")
-            .expect("get bits_joined export");
-        let pointer = bits_joined.call(&mut store, ()).expect("call bits_joined") as usize;
-        memory.read(&store, pointer, &mut bytes).expect("read joined bit array");
-        assert_eq!(u32::from_le_bytes(bytes[4..8].try_into().unwrap()), 24);
-        assert_eq!(&bytes[8..11], &[1, 2, 3]);
+        assert_string_and_debug_intrinsics(&instance, &mut store, &memory);
+        assert_collection_and_number_intrinsics(&instance, &mut store, &memory);
+        assert_bit_array_intrinsics(&instance, &mut store, &memory);
     }
 
     #[test]

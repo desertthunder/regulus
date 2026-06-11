@@ -78,6 +78,15 @@ struct FunctionSignature {
     type_: FunctionType,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct DecodeLocals {
+    result: LocalId,
+    kind: LocalId,
+    tag: LocalId,
+    field: LocalId,
+    data: LocalId,
+}
+
 #[derive(Debug)]
 enum StructuredError {
     Unsupported,
@@ -300,7 +309,7 @@ impl<'a> StructuredEmitter<'a> {
             return Ok(());
         }
         let string_result = FunctionType::new([], [ValueType::I32]);
-        let string_type = self.required_signature(&function.name)?.type_.clone();
+        let string_type = self.required_signature(&function.name)?.type_;
         let original = self.function_id_structured(&function.name);
         let memory = self.ensure_memory();
 
@@ -308,7 +317,7 @@ impl<'a> StructuredEmitter<'a> {
         let mut data = Function::new(data_type);
         data.name = Some(format!("{}__data", function.name));
         data.body = vec![
-            Instruction::Call { function: original, type_: string_type.clone() },
+            Instruction::Call { function: original, type_: string_type },
             Instruction::I32Const(8),
             Instruction::I32Add,
         ];
@@ -1320,11 +1329,7 @@ impl<'a> StructuredEmitter<'a> {
         ];
         self.decode_kind_chain(
             &mut else_body,
-            result,
-            kind,
-            tag,
-            field,
-            data,
+            DecodeLocals { result, kind, tag, field, data },
             &[(100, 0), (101, 1), (102, 2), (103, 3), (104, 4), (105, 5), (106, 6)],
         )?;
         out.push(Instruction::If { type_: BlockType::empty(), then_body, else_body });
@@ -1333,17 +1338,16 @@ impl<'a> StructuredEmitter<'a> {
     }
 
     fn decode_kind_chain(
-        &mut self, out: &mut Vec<Instruction>, result: LocalId, kind: LocalId, tag: LocalId, field: LocalId,
-        data: LocalId, cases: &[(i64, i32)],
+        &mut self, out: &mut Vec<Instruction>, locals: DecodeLocals, cases: &[(i64, i32)],
     ) -> StructuredResult<()> {
         let Some(((decoder_kind, dynamic_tag), rest)) = cases.split_first() else {
             let mut optional_then = Vec::new();
-            self.decode_optional(&mut optional_then, result, tag, data)?;
+            self.decode_optional(&mut optional_then, locals.result, locals.tag, locals.data)?;
             let mut else_body = Vec::new();
             self.decode_error(&mut else_body)?;
-            else_body.push(Instruction::LocalSet { local: result, type_: ValueType::I32 });
+            else_body.push(Instruction::LocalSet { local: locals.result, type_: ValueType::I32 });
             out.extend([
-                Instruction::LocalGet { local: kind, type_: ValueType::I64 },
+                Instruction::LocalGet { local: locals.kind, type_: ValueType::I64 },
                 Instruction::I64Const(107),
                 Instruction::I64Eq,
                 Instruction::If { type_: BlockType::empty(), then_body: optional_then, else_body },
@@ -1351,29 +1355,29 @@ impl<'a> StructuredEmitter<'a> {
             return Ok(());
         };
         let mut condition = vec![
-            Instruction::LocalGet { local: kind, type_: ValueType::I64 },
+            Instruction::LocalGet { local: locals.kind, type_: ValueType::I64 },
             Instruction::I64Const(*decoder_kind),
             Instruction::I64Eq,
         ];
         if *decoder_kind != 100 {
             condition.extend([
-                Instruction::LocalGet { local: tag, type_: ValueType::I32 },
+                Instruction::LocalGet { local: locals.tag, type_: ValueType::I32 },
                 Instruction::I32Const(*dynamic_tag),
                 Instruction::I32Eq,
                 Instruction::I32And,
             ]);
         }
         out.extend(condition);
-        let ok_value = if *decoder_kind == 100 { data } else { field };
+        let ok_value = if *decoder_kind == 100 { locals.data } else { locals.field };
         let ok_type = if *decoder_kind == 100 { ValueType::I32 } else { ValueType::I64 };
         let mut then_body = vec![Instruction::LocalGet { local: ok_value, type_: ok_type }];
         if ok_type == ValueType::I32 {
             then_body.push(Instruction::I64ExtendI32U);
         }
         self.decode_ok_from_stack(&mut then_body)?;
-        then_body.push(Instruction::LocalSet { local: result, type_: ValueType::I32 });
+        then_body.push(Instruction::LocalSet { local: locals.result, type_: ValueType::I32 });
         let mut else_body = Vec::new();
-        self.decode_kind_chain(&mut else_body, result, kind, tag, field, data, rest)?;
+        self.decode_kind_chain(&mut else_body, locals, rest)?;
         out.push(Instruction::If { type_: BlockType::empty(), then_body, else_body });
         Ok(())
     }
@@ -2216,7 +2220,7 @@ impl<'a> StructuredEmitter<'a> {
     fn extract_bit_string_binary_segment(
         &mut self, subject: &PatternSubject<'_>, offset: u32, local: ir::LocalId, out: &mut Vec<Instruction>,
     ) -> StructuredResult<()> {
-        if offset % 8 != 0 {
+        if !offset.is_multiple_of(8) {
             return Err(StructuredError::Diagnostics(vec![Diagnostic::new(
                 DiagnosticCode::WasmError,
                 "structured binary bit-string binding requires a byte-aligned offset",
@@ -2512,7 +2516,7 @@ impl<'a> StructuredEmitter<'a> {
         }
 
         let trampoline_type = FunctionType::new(trampoline_param_types.clone(), trampoline_result_types);
-        let type_id = self.module.intern_type(trampoline_type.clone());
+        let type_id = self.module.intern_type(trampoline_type);
 
         let mut body: Vec<Instruction> = Vec::new();
 

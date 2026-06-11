@@ -5,6 +5,7 @@ pub mod ast;
 pub mod diagnostic;
 pub mod inference;
 pub mod ir;
+pub mod naming;
 pub mod parse;
 pub mod project;
 pub mod resolve;
