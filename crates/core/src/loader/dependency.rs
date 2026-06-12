@@ -75,16 +75,18 @@ pub fn dependency_nodes(packages: &[DependencyPackage], configured: Vec<Dependen
 }
 
 fn dependency_root(root: &Path, name: &str, dependency: &DependencyToml) -> Option<PathBuf> {
-    match dependency.path() {
-        Some(path) => {
-            let path = PathBuf::from(path);
-            Some(if path.is_absolute() { path } else { root.join(path) })
-        }
-        None => {
-            let hex_root = root.join("build").join("packages").join(name);
-            hex_root.is_dir().then_some(hex_root)
-        }
-    }
+    path_dependency_root(root, dependency).or_else(|| {
+        let hex_root = root.join("build").join("packages").join(name);
+        hex_root.is_dir().then_some(hex_root)
+    })
+}
+
+fn path_dependency_root(root: &Path, dependency: &DependencyToml) -> Option<PathBuf> {
+    dependency.path().map(|path| {
+        let path = PathBuf::from(path);
+        let path = if path.is_absolute() { path } else { root.join(path) };
+        path.canonicalize().unwrap_or(path)
+    })
 }
 
 fn load_pkg_interfaces(
@@ -156,4 +158,98 @@ fn collect_gleam_files(dir: &Path, paths: &mut Vec<PathBuf>) -> Result<(), Diagn
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::Path;
+
+    use super::*;
+
+    #[test]
+    fn path_dependency_source_is_loaded_from_declared_path() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let root = temp.path().join("app");
+        let path_dep = temp.path().join("path_dep");
+        write(
+            &path_dep.join("gleam.toml"),
+            "name = \"path_dep\"\nversion = \"2.0.0\"\n",
+        );
+        write(
+            &path_dep.join("src/path_dep.gleam"),
+            "pub fn from_path() -> Int { 1 }\n",
+        );
+        write(
+            &root.join("build/packages/path_dep/src/path_dep.gleam"),
+            "pub fn from_hex_cache() -> Int { 1 }\n",
+        );
+
+        let interfaces = load_dependency_interfaces(
+            &root,
+            &[(
+                "path_dep".to_string(),
+                DependencyToml::Options { version: None, path: Some("../path_dep".to_string()), git: None },
+                false,
+            )],
+            target::CompileTarget::Wasmtime,
+        )
+        .expect("dependency interfaces");
+
+        assert_eq!(interfaces.packages.len(), 1);
+        assert_eq!(interfaces.packages[0].source, DependencySource::Path);
+        assert_eq!(
+            interfaces.packages[0].root,
+            path_dep.canonicalize().expect("canonical path dep")
+        );
+        assert_eq!(interfaces.packages[0].version.as_deref(), Some("2.0.0"));
+        let interface = interfaces.modules.get("path_dep").expect("path_dep interface");
+        assert!(interface.functions.contains_key("from_path"));
+        assert!(!interface.functions.contains_key("from_hex_cache"));
+    }
+
+    #[test]
+    fn absolute_path_dependency_source_is_loaded_directly() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let root = temp.path().join("app");
+        let path_dep = temp.path().join("absolute_dep");
+        write(
+            &path_dep.join("src/absolute_dep.gleam"),
+            "pub fn from_absolute_path() -> Int { 1 }\n",
+        );
+
+        let interfaces = load_dependency_interfaces(
+            &root,
+            &[(
+                "absolute_dep".to_string(),
+                DependencyToml::Options {
+                    version: Some("1.2.3".to_string()),
+                    path: Some(path_dep.to_string_lossy().to_string()),
+                    git: None,
+                },
+                false,
+            )],
+            target::CompileTarget::Wasmtime,
+        )
+        .expect("dependency interfaces");
+
+        assert_eq!(
+            interfaces.packages[0].root,
+            path_dep.canonicalize().expect("canonical path dep")
+        );
+        assert_eq!(interfaces.packages[0].version.as_deref(), Some("1.2.3"));
+        assert!(
+            interfaces
+                .modules
+                .get("absolute_dep")
+                .expect("absolute_dep interface")
+                .functions
+                .contains_key("from_absolute_path")
+        );
+    }
+
+    fn write(path: &Path, contents: &str) {
+        fs::create_dir_all(path.parent().expect("parent directory")).expect("create parent directory");
+        fs::write(path, contents).expect("write file");
+    }
 }

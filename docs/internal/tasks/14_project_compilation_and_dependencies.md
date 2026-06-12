@@ -98,7 +98,7 @@ The goal here is to make linked project names deterministic and collision-free.
 - [x] Write package extraction stamps with name, version, checksum, source, and
       cache schema version.
 - [x] Replace stale extracted package directories when stamps do not match.
-- [ ] Load path dependency source without network access.
+- [x] Load path dependency source without network access.
 - [ ] Add CLI progress output: `Resolving dependencies`, `Downloading ...`,
       `Using cached ...`, and `Extracting ...`.
 - [ ] Keep quiet output deterministic and put URLs, checksums, cache paths, and
