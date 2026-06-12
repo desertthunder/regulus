@@ -11,6 +11,7 @@ use super::{EmitOptions, WasmTarget};
 use crate::ast::LiteralKind;
 use crate::diagnostic::{Diagnostic, DiagnosticCode, Diagnostics, Label};
 use crate::ir::{self, ExpressionKind};
+use crate::source::Span;
 use crate::{ClosureConstants, runtime, stdlib::STDLIB_IO_HOST_MODULE, types::Type};
 
 #[derive(Debug, Clone, Copy)]
@@ -435,7 +436,7 @@ impl<'a> StructuredEmitter<'a> {
         );
     }
 
-    fn stdlib_io_import(&self, name: &str, span: crate::source::Span) -> StructuredResult<(String, String)> {
+    fn stdlib_io_import(&self, name: &str, span: Span) -> StructuredResult<(String, String)> {
         match self.options.target {
             WasmTarget::Wasmtime => Ok(("env".into(), name.into())),
             WasmTarget::Browser | WasmTarget::Bundler => Ok(("browser".into(), name.into())),
@@ -772,9 +773,7 @@ impl<'a> StructuredEmitter<'a> {
         }
     }
 
-    fn literal(
-        &mut self, literal: &ir::Literal, span: crate::source::Span, out: &mut Vec<Instruction>,
-    ) -> StructuredResult<()> {
+    fn literal(&mut self, literal: &ir::Literal, span: Span, out: &mut Vec<Instruction>) -> StructuredResult<()> {
         match literal.kind {
             LiteralKind::Int => {
                 let value = literal
@@ -1945,7 +1944,7 @@ impl<'a> StructuredEmitter<'a> {
     }
 
     fn branch(
-        &mut self, branch: &ir::Branch, type_: &Type, span: crate::source::Span, out: &mut Vec<Instruction>,
+        &mut self, branch: &ir::Branch, type_: &Type, span: Span, out: &mut Vec<Instruction>,
     ) -> StructuredResult<()> {
         let results = result_types(type_, span)?;
         let body = self.branch_clause(branch, 0, type_, span, results)?;
@@ -1954,7 +1953,7 @@ impl<'a> StructuredEmitter<'a> {
     }
 
     fn branch_clause(
-        &mut self, branch: &ir::Branch, index: usize, type_: &Type, span: crate::source::Span, results: Vec<ValueType>,
+        &mut self, branch: &ir::Branch, index: usize, type_: &Type, span: Span, results: Vec<ValueType>,
     ) -> StructuredResult<Vec<Instruction>> {
         let Some(clause) = branch.clauses.get(index) else {
             let mut failure = Vec::new();
@@ -2199,7 +2198,7 @@ impl<'a> StructuredEmitter<'a> {
     }
 
     fn validate_bit_string_pattern_segments(
-        &self, segments: &[ir::BitStringPatternSegment], span: crate::source::Span,
+        &self, segments: &[ir::BitStringPatternSegment], span: Span,
     ) -> StructuredResult<()> {
         for (index, segment) in segments.iter().enumerate() {
             match segment.type_ {
@@ -2414,9 +2413,7 @@ impl<'a> StructuredEmitter<'a> {
         Ok(())
     }
 
-    fn slot_bits_to_value(
-        &mut self, type_: &Type, span: crate::source::Span, out: &mut Vec<Instruction>,
-    ) -> StructuredResult<()> {
+    fn slot_bits_to_value(&mut self, type_: &Type, span: Span, out: &mut Vec<Instruction>) -> StructuredResult<()> {
         match value_type(type_, span)? {
             ValueType::I64 => {}
             ValueType::I32 => out.push(Instruction::I32WrapI64),
@@ -2826,7 +2823,7 @@ impl<'a> StructuredEmitter<'a> {
         })
     }
 
-    fn local(&self, local: ir::LocalId, span: crate::source::Span) -> StructuredResult<LocalId> {
+    fn local(&self, local: ir::LocalId, span: Span) -> StructuredResult<LocalId> {
         self.local_indices.get(&local).copied().ok_or_else(|| {
             StructuredError::Diagnostics(vec![
                 Diagnostic::new(DiagnosticCode::WasmError, "unknown local in structured Wasm emitter")
@@ -2868,9 +2865,7 @@ fn invariant_diagnostics(module: &ir::Module, message: &str) -> Diagnostics {
     ]
 }
 
-fn literal_parse_diagnostic(
-    literal: &ir::Literal, span: crate::source::Span, expected: &'static str,
-) -> StructuredError {
+fn literal_parse_diagnostic(literal: &ir::Literal, span: Span, expected: &'static str) -> StructuredError {
     let kind = match literal.kind {
         LiteralKind::Int => "int",
         LiteralKind::Float => "float",
@@ -2900,7 +2895,7 @@ fn literal_type(literal: &ir::Literal) -> Type {
     }
 }
 
-fn result_types(type_: &Type, span: crate::source::Span) -> StructuredResult<Vec<ValueType>> {
+fn result_types(type_: &Type, span: Span) -> StructuredResult<Vec<ValueType>> {
     if matches!(type_, Type::Nil) { Ok(Vec::new()) } else { Ok(vec![value_type(type_, span)?]) }
 }
 
@@ -2949,7 +2944,7 @@ fn validate_js_host_function_shape(
             function,
             boundary,
             target,
-            format!("parameter {}", index + 1),
+            &format!("parameter {}", index + 1),
             &param.type_,
             param.span,
         ));
@@ -2960,7 +2955,7 @@ fn validate_js_host_function_shape(
             function,
             boundary,
             target,
-            "return".into(),
+            "return",
             &function.return_type,
             function.span,
         ));
@@ -2968,15 +2963,14 @@ fn validate_js_host_function_shape(
 }
 
 fn js_host_abi_diagnostic(
-    function: &ir::Function, boundary: JsAbiBoundary<'_>, target: WasmTarget, position: String, type_: &Type,
-    span: crate::source::Span,
+    func: &ir::Function, boundary: JsAbiBoundary<'_>, target: WasmTarget, pos: &str, type_: &Type, span: Span,
 ) -> Diagnostic {
     let (message, note) = match boundary {
         JsAbiBoundary::Import { module, name } => (
             format!(
                 "JS host import `{}` {} uses unsupported ABI shape `{:?}` for target `{}`",
-                function.name,
-                position,
+                func.name,
+                pos,
                 type_,
                 target.name()
             ),
@@ -2987,7 +2981,7 @@ fn js_host_abi_diagnostic(
         JsAbiBoundary::Export { name } => (
             format!(
                 "JS host export `{name}` {} uses unsupported ABI shape `{:?}` for target `{}`",
-                position,
+                pos,
                 type_,
                 target.name()
             ),
@@ -3004,7 +2998,7 @@ fn is_supported_js_host_abi_value(type_: &Type, nil_allowed: bool) -> bool {
     matches!(type_, Type::Int | Type::Float | Type::Bool | Type::String) || (nil_allowed && matches!(type_, Type::Nil))
 }
 
-fn value_type(type_: &Type, span: crate::source::Span) -> StructuredResult<ValueType> {
+fn value_type(type_: &Type, span: Span) -> StructuredResult<ValueType> {
     maybe_value_type(type_).ok_or_else(|| {
         StructuredError::Diagnostics(vec![
             Diagnostic::new(DiagnosticCode::WasmError, "unsupported host ABI")

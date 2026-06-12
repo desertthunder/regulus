@@ -114,7 +114,7 @@ The public ABI contract lives in
 - [ ] Emit or package deterministic JS host adapter files for browser, bundler,
       and Node.js profiles.
 - [ ] Include import and export metadata needed by JS glue in debug output.
-- [ ] Generate or expose typed JS wrappers from import and export metadata.
+- [x] Generate or expose typed JS wrappers from import and export metadata.
 - [ ] Add CLI tests for stable JS adapter artifact paths.
 
 ## Done when

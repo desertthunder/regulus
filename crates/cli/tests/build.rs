@@ -85,9 +85,18 @@ fn compile_bundler_target_emits_adapter_and_runs_string_smoke_test() {
     fs::write(
         &input,
         r#"external fn request_text(input: String) -> String = "regulus/js" "request_text"
+external fn describe(count: Int, ratio: Float, enabled: Bool, input: String) -> String = "regulus/js" "describe"
 
 pub fn main(input: String) -> String {
   request_text(input)
+}
+
+pub fn describe_from_js(count: Int, ratio: Float, enabled: Bool, input: String) -> String {
+  describe(count, ratio, enabled, input)
+}
+
+pub fn keep_bool(value: Bool) -> Bool {
+  value
 }
 "#,
     )
@@ -114,12 +123,23 @@ pub fn main(input: String) -> String {
 
     fs::write(
         out_dir.join("smoke.mjs"),
-        r#"import { init, callString } from "./app.mjs";
+        // TODO: embed this
+        r#"import { abi, call, init, callString } from "./app.mjs";
+
+if (abi.exports.describe_from_js.result !== "String") {
+  throw new Error("missing export ABI metadata");
+}
+if (abi.imports["regulus/js.describe"].params.join(",") !== "Int,Float,Bool,String") {
+  throw new Error("missing import ABI metadata");
+}
 
 await init(new URL("./app.wasm", import.meta.url), {
   "regulus/js": {
     request_text(input) {
       return `${input} from JS`;
+    },
+    describe(count, ratio, enabled, input) {
+      return `${input}:${count}:${ratio}:${enabled}`;
     },
   },
 });
@@ -127,6 +147,16 @@ await init(new URL("./app.wasm", import.meta.url), {
 const result = callString("main", "hello");
 if (result !== "hello from JS") {
   throw new Error(`unexpected result: ${result}`);
+}
+
+const described = call("describe_from_js", 7n, 2.5, true, "shape");
+if (described !== "shape:7:2.5:true") {
+  throw new Error(`unexpected described result: ${described}`);
+}
+
+const kept = call("keep_bool", true);
+if (kept !== true) {
+  throw new Error(`unexpected bool result: ${kept}`);
 }
 "#,
     )

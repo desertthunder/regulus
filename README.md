@@ -118,11 +118,32 @@ artifacts, and `run`.
 
 ## Development
 
+Use the Rust workspace from the repository root:
+
 ```sh
 cargo fmt
 cargo test
-mdbook build docs/book
+cargo clippy --workspace --all-targets
+```
 
+To run examples & tests:
+
+```sh
+cargo test -p compiler_core
+cargo test -p compiler_cli
+```
+
+```sh
+cargo run -q -p compiler_cli -- compile fixtures/e2e/public_id.gleam \
+  --out-dir .sandbox --emit wasm,wat
+cargo run -q -p compiler_cli -- run fixtures/e2e/public_id.gleam
+cargo run -q -p compiler_cli -- build examples/scalar_project \
+  --target bundler --out-dir .sandbox
+```
+
+### Documentation
+
+```sh
 cd docs/website
 pnpm install
 pnpm docs:dev
