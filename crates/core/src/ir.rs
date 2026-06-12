@@ -177,6 +177,7 @@ pub enum LinkedNameKind {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Import {
+    pub package: Option<String>,
     pub module: String,
     pub alias: Option<String>,
     pub unqualified: Vec<UnqualifiedImport>,
@@ -981,7 +982,7 @@ fn unsupported_dependency_member_diagnostics(project: &TypedProject) -> Diagnost
                     if !matches!(symbol.namespace, Namespace::Value | Namespace::Constructor) {
                         continue;
                     }
-                    let SymbolKind::Imported { module: dependency_module, member } = &symbol.kind else {
+                    let SymbolKind::Imported { module: dependency_module, member, .. } = &symbol.kind else {
                         continue;
                     };
                     if dependency_modules.contains(dependency_module.as_str())
@@ -996,17 +997,17 @@ fn unsupported_dependency_member_diagnostics(project: &TypedProject) -> Diagnost
                 }
                 ReferenceTarget::QualifiedMember { module: module_symbol, member, .. } => {
                     let symbol = module.resolved.symbols.symbol(*module_symbol);
-                    let SymbolKind::Import { module: dependency_module } = &symbol.kind else {
+                    let SymbolKind::Import { module: dependency_module, .. } = &symbol.kind else {
                         continue;
                     };
                     if !dependency_modules.contains(dependency_module.as_str()) {
                         continue;
                     }
-                    let Some(interface) = project.interfaces.get(dependency_module) else {
+                    let Some(entry) = project.interfaces.get(dependency_module) else {
                         continue;
                     };
-                    if !(interface.functions.contains_key(&member.text)
-                        || interface.constructors.contains_key(&member.text))
+                    if !(entry.interface.functions.contains_key(&member.text)
+                        || entry.interface.constructors.contains_key(&member.text))
                     {
                         continue;
                     }
@@ -1079,26 +1080,12 @@ fn link_modules(modules: Vec<Module>) -> Result<Module, Diagnostics> {
 
 struct BackendRenamePlan {
     renames: HashMap<String, String>,
-    module_packages: HashMap<String, Vec<String>>,
     linked_names: Vec<LinkedName>,
 }
 
 fn global_backend_renames(modules: &[Module]) -> BackendRenamePlan {
     let mut renames = HashMap::new();
-    let mut module_packages: HashMap<String, Vec<String>> = HashMap::new();
     let mut linked_names = Vec::new();
-    for module in modules {
-        if let Some(identity) = &module.identity {
-            module_packages
-                .entry(identity.module.clone())
-                .or_default()
-                .push(identity.package.clone());
-        }
-    }
-    for packages in module_packages.values_mut() {
-        packages.sort();
-        packages.dedup();
-    }
     for module in modules {
         let Some(identity) = &module.identity else { continue };
         let module_name = ModuleName::from_path(&identity.module);
@@ -1203,7 +1190,7 @@ fn global_backend_renames(modules: &[Module]) -> BackendRenamePlan {
             }
         }
     }
-    BackendRenamePlan { renames, module_packages, linked_names }
+    BackendRenamePlan { renames, linked_names }
 }
 
 fn backend_key(package: &str, module: &str, member: &str) -> String {
@@ -1299,16 +1286,17 @@ fn module_backend_renames(module: &Module, plan: &BackendRenamePlan) -> HashMap<
                 .unwrap_or(import.module.as_str())
                 .to_string()
         });
-        let Some(package) = imported_module_package(identity, &import.module, plan) else {
-            continue;
-        };
+        let package = import.package.as_deref().unwrap_or(identity.package.as_str());
         let prefix = backend_key(package, &import.module, "");
+        let package_qualified_prefix = backend_key(package, &import.module, "");
         for (source, backend) in global {
             let Some(member) = source.strip_prefix(&prefix) else {
                 continue;
             };
+            renames.insert(source.clone(), backend.clone());
             renames.insert(format!("{local}.{member}"), backend.clone());
             renames.insert(format!("{}.{}", import.module, member), backend.clone());
+            renames.insert(format!("{package_qualified_prefix}{member}"), backend.clone());
             if import
                 .unqualified
                 .iter()
@@ -1322,21 +1310,11 @@ fn module_backend_renames(module: &Module, plan: &BackendRenamePlan) -> HashMap<
     renames
 }
 
-fn imported_module_package<'a>(
-    current: &'a ModuleIdentity, imported_module: &str, plan: &'a BackendRenamePlan,
-) -> Option<&'a str> {
-    let packages = plan.module_packages.get(imported_module)?;
-    if packages.iter().any(|package| package == &current.package) {
-        return Some(current.package.as_str());
-    }
-    packages.first().map(String::as_str)
-}
-
 fn anonymous_function_index(name: &str) -> Option<u32> {
     name.strip_prefix("__anon_")?.parse().ok()
 }
 
-fn rewrite_module_backend_names(module: &mut Module, renames: &HashMap<String, String>, plan: &BackendRenamePlan) {
+fn rewrite_module_backend_names(module: &mut Module, renames: &HashMap<String, String>, _plan: &BackendRenamePlan) {
     for constant in &mut module.constants {
         rewrite_name(&mut constant.name, renames);
     }
@@ -1346,7 +1324,7 @@ fn rewrite_module_backend_names(module: &mut Module, renames: &HashMap<String, S
         }
     }
     for reference in &mut module.references {
-        rewrite_reference(reference, module.identity.as_ref(), renames, plan);
+        rewrite_reference(reference, renames);
     }
     for export in &mut module.exports {
         if matches!(
@@ -1366,29 +1344,17 @@ fn rewrite_module_backend_names(module: &mut Module, renames: &HashMap<String, S
     }
 }
 
-fn rewrite_reference(
-    reference: &mut Reference, identity: Option<&ModuleIdentity>, renames: &HashMap<String, String>,
-    plan: &BackendRenamePlan,
-) {
+fn rewrite_reference(reference: &mut Reference, renames: &HashMap<String, String>) {
     rewrite_name(&mut reference.name, renames);
     match &mut reference.target {
-        ReferenceTargetName::LocalSymbol { package, module, name, .. } => {
-            if package.is_none()
-                && let (Some(identity), Some(module)) = (identity, module.as_deref())
-                && let Some(owner) = imported_module_package(identity, module, plan)
-            {
-                *package = Some(owner.to_string());
-            }
+        ReferenceTargetName::LocalSymbol { name, .. } => {
             rewrite_name(name, renames);
         }
         ReferenceTargetName::QualifiedMember { package, module, member, resolved } => {
-            if package.is_none()
-                && let Some(identity) = identity
-                && let Some(owner) = imported_module_package(identity, module, plan)
-            {
-                *package = Some(owner.to_string());
-            }
-            let qualified = format!("{module}.{member}");
+            let qualified = package
+                .as_deref()
+                .map(|package| backend_key(package, module, member))
+                .unwrap_or_else(|| format!("{module}.{member}"));
             if let Some(backend) = renames.get(&qualified).cloned() {
                 *member = backend.clone();
                 *resolved = Some(backend);

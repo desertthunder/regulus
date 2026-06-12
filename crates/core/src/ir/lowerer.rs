@@ -15,7 +15,7 @@ pub fn lower(module: TypedModule) -> Result<Module, Diagnostics> {
 }
 
 pub fn lower_with_project_interfaces(
-    module: TypedModule, interfaces: &HashMap<String, crate::types::ModuleInterface>,
+    module: TypedModule, interfaces: &HashMap<String, crate::types::InterfaceEntry>,
 ) -> Result<Module, Diagnostics> {
     Lowerer::new(module).with_project_interfaces(interfaces).lower()
 }
@@ -67,8 +67,9 @@ impl Lowerer {
         }
     }
 
-    fn with_project_interfaces(mut self, interfaces: &HashMap<String, crate::types::ModuleInterface>) -> Self {
-        for (module, interface) in interfaces {
+    fn with_project_interfaces(mut self, interfaces: &HashMap<String, crate::types::InterfaceEntry>) -> Self {
+        for (module, entry) in interfaces {
+            let interface = &entry.interface;
             for (name, type_) in &interface.functions {
                 self.function_types
                     .entry(format!("{module}.{name}"))
@@ -81,9 +82,10 @@ impl Lowerer {
             }
         }
         for import in &self.module.resolved.ast.imports {
-            let Some(interface) = interfaces.get(&import.module.text) else {
+            let Some(entry) = interfaces.get(&import.module.text) else {
                 continue;
             };
+            let interface = &entry.interface;
             for imported in &import.unqualified {
                 if !matches!(imported.kind, ast::UnqualifiedImportKind::Value) {
                     continue;
@@ -93,9 +95,11 @@ impl Lowerer {
                     self.function_types
                         .entry(local.clone())
                         .or_insert_with(|| type_.clone());
-                    self.imported_functions
-                        .entry(local.clone())
-                        .or_insert_with(|| format!("{}.{}", import.module.text, imported.name.text));
+                    let lowered_name = self
+                        .import_package(import)
+                        .map(|package| format!("{package}:{}.{}", import.module.text, imported.name.text))
+                        .unwrap_or_else(|| format!("{}.{}", import.module.text, imported.name.text));
+                    self.imported_functions.entry(local.clone()).or_insert(lowered_name);
                 }
                 if let Some(labels) = interface.function_labels.get(&imported.name.text) {
                     self.function_labels.entry(local).or_insert_with(|| labels.clone());
@@ -117,6 +121,7 @@ impl Lowerer {
             .imports
             .iter()
             .map(|import| Import {
+                package: self.import_package(import),
                 module: import.module.text.clone(),
                 alias: import.alias.as_ref().map(|alias| alias.text.clone()),
                 unqualified: import
@@ -286,13 +291,17 @@ impl Lowerer {
                     ReferenceTarget::Symbol(id) => {
                         let symbol = self.module.resolved.symbols.symbol(*id);
                         let (module, name) = match &symbol.kind {
-                            crate::resolve::SymbolKind::Imported { module, member } => {
+                            crate::resolve::SymbolKind::Imported { module, member, .. } => {
                                 (Some(module.clone()), member.clone())
                             }
                             _ => (None, symbol.name.clone()),
                         };
+                        let package = match &symbol.kind {
+                            crate::resolve::SymbolKind::Imported { package, .. } => package.clone(),
+                            _ => None,
+                        };
                         ReferenceTargetName::LocalSymbol {
-                            package: None,
+                            package,
                             module,
                             name,
                             kind: ReferenceKind::from(&symbol.kind),
@@ -301,8 +310,12 @@ impl Lowerer {
                     ReferenceTarget::QualifiedMember { module, member, symbol } => {
                         let module_symbol = self.module.resolved.symbols.symbol(*module);
                         let resolved = symbol.map(|id| self.module.resolved.symbols.symbol(id).name.clone());
+                        let package = match &module_symbol.kind {
+                            crate::resolve::SymbolKind::Import { package, .. } => package.clone(),
+                            _ => None,
+                        };
                         ReferenceTargetName::QualifiedMember {
-                            package: None,
+                            package,
                             module: module_symbol.name.clone(),
                             member: member.text.clone(),
                             resolved,
@@ -839,23 +852,56 @@ impl Lowerer {
         }
     }
 
+    fn import_local_name(&self, import: &ast::Import) -> String {
+        import
+            .alias
+            .as_ref()
+            .map(|alias| alias.text.clone())
+            .unwrap_or_else(|| {
+                import
+                    .module
+                    .text
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or(&import.module.text)
+                    .to_string()
+            })
+    }
+
+    fn import_package(&self, import: &ast::Import) -> Option<String> {
+        let local = self.import_local_name(import);
+        self.module
+            .resolved
+            .symbols
+            .symbols
+            .iter()
+            .find(|symbol| symbol.namespace == crate::resolve::Namespace::Module && symbol.name == local)
+            .and_then(|symbol| match &symbol.kind {
+                crate::resolve::SymbolKind::Import { package, .. } => package.clone(),
+                _ => None,
+            })
+    }
+
     fn qualified_function(&self, function: &AstExpression) -> Option<(String, Type)> {
         let AstExpression::FieldAccess(access) = function else { return None };
         let AstExpression::Variable(module) = access.record.as_ref() else { return None };
-        let import = self.module.resolved.ast.imports.iter().find(|import| {
-            import
-                .alias
-                .as_ref()
-                .map(|alias| alias.text.as_str())
-                .unwrap_or_else(|| import.module.text.rsplit('/').next().unwrap_or(&import.module.text))
-                == module.text
-        });
+        let import = self
+            .module
+            .resolved
+            .ast
+            .imports
+            .iter()
+            .find(|import| self.import_local_name(import) == module.text);
         let module_name = import.map(|import| import.module.text.as_str()).unwrap_or(&module.text);
         let qualified = format!("{}.{}", module_name, access.field.text);
+        let lowered = import
+            .and_then(|import| self.import_package(import))
+            .map(|package| format!("{package}:{qualified}"))
+            .unwrap_or_else(|| qualified.clone());
         self.function_types
             .get(&qualified)
             .cloned()
-            .map(|type_| (qualified, type_))
+            .map(|type_| (lowered, type_))
     }
 
     fn lower_call_with_callback(
@@ -2655,6 +2701,37 @@ mod tests {
                 .iter()
                 .all(|name| name.generated_name.contains("$mod$x736861726564$"))
         );
+
+        let root_shared = value_names
+            .iter()
+            .find(|name| name.source_name == "dependency_module_overlap:shared.value")
+            .expect("root shared value")
+            .generated_name
+            .clone();
+        let dependency_shared = value_names
+            .iter()
+            .find(|name| name.source_name == "overlap_dep:shared.value")
+            .expect("dependency shared value")
+            .generated_name
+            .clone();
+        let root_caller = module
+            .functions
+            .iter()
+            .find(|function| function.name.ends_with("$fn$x726f6f745f76616c7565"))
+            .expect("root caller");
+        let dependency_caller = module
+            .functions
+            .iter()
+            .find(|function| function.name.ends_with("$fn$x646570656e64656e63795f76616c7565"))
+            .expect("dependency caller");
+        assert!(matches!(
+            root_caller.body.result.kind,
+            ExpressionKind::DirectCall(DirectCall { ref function, .. }) if function == &root_shared
+        ));
+        assert!(matches!(
+            dependency_caller.body.result.kind,
+            ExpressionKind::DirectCall(DirectCall { ref function, .. }) if function == &dependency_shared
+        ));
     }
 
     #[test]

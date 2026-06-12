@@ -35,7 +35,7 @@ impl Project {
 pub struct PackageGraph {
     pub root_package: PackageNode,
     pub dependencies: Vec<Dependency>,
-    pub dependency_interfaces: HashMap<String, types::ModuleInterface>,
+    pub dependency_interfaces: HashMap<String, types::InterfaceEntry>,
     pub dependency_sources: Vec<dependency::DependencySourcePackage>,
     pub modules: Vec<ModuleInfo>,
 }

@@ -77,13 +77,13 @@ The goal here is to make linked project names deterministic and collision-free.
 
 ### Package-owned interfaces
 
-- [ ] Add an `InterfaceEntry` wrapper with package, module, and interface data.
-- [ ] Store dependency, project, and stdlib interfaces as owner-aware entries.
-- [ ] Resolve imports and imported symbols to concrete interface owners.
-- [ ] Lower references and calls from resolver-owned `package:module.member`
+- [x] Add an `InterfaceEntry` wrapper with package, module, and interface data.
+- [x] Store dependency, project, and stdlib interfaces as owner-aware entries.
+- [x] Resolve imports and imported symbols to concrete interface owners.
+- [x] Lower references and calls from resolver-owned `package:module.member`
       identities.
-- [ ] Remove linker-side package-owner inference for imported modules.
-- [ ] Add overlap fixtures where root and dependency packages expose the same
+- [x] Remove linker-side package-owner inference for imported modules.
+- [x] Add overlap fixtures where root and dependency packages expose the same
       module and member names.
 
 ### Dependency interfaces
@@ -130,7 +130,7 @@ The goal here is to make linked project names deterministic and collision-free.
 - [ ] Support `--emit` values for `wasm`, `wat`, and useful debug artifacts.
 - [ ] Emit optional per-module debug dumps for AST, resolved AST, typed output,
       IR, and WAT where useful.
-- [ ] Avoid writing partial final artifacts after failed compilation unless the
+- [ ] Don't writing partial final artifacts after failed compilation unless the
       user explicitly requested debug dumps.
 
 ## Definition of Done

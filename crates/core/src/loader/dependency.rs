@@ -6,7 +6,7 @@ use serde::Deserialize;
 use crate::diagnostic::{Diagnostic, DiagnosticCode, Diagnostics};
 use crate::project::{Dependency, DependencySource, DependencyToml, ModuleInfo, ProjectLoadProgress, SourceRoot};
 use crate::source::{SourceFile, SourceFileId};
-use crate::types::ModuleInterface;
+use crate::types::{InterfaceEntry, ModuleInterface};
 use crate::{ast, parse, target};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -20,7 +20,7 @@ pub struct DependencyPackage {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct DependencyInterfaces {
     pub packages: Vec<DependencyPackage>,
-    pub modules: HashMap<String, ModuleInterface>,
+    pub modules: HashMap<String, InterfaceEntry>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -84,7 +84,7 @@ pub fn load_dependency_interfaces_with_progress(
                 }
                 let pkg = DependencyPackage { name: name.clone(), version, root: pkg_root.clone(), source };
                 output.packages.push(pkg);
-                match load_pkg_interfaces(&pkg_root, compile_target) {
+                match load_pkg_interfaces(name, &pkg_root, compile_target) {
                     Ok(interfaces) => output.modules.extend(interfaces),
                     Err(mut errs) => diagnostics.append(&mut errs),
                 }
@@ -174,8 +174,8 @@ fn path_dependency_root(root: &Path, dependency: &DependencyToml) -> Option<Path
 }
 
 fn load_pkg_interfaces(
-    pkg_root: &Path, compile_target: target::CompileTarget,
-) -> Result<HashMap<String, ModuleInterface>, Diagnostics> {
+    package: &str, pkg_root: &Path, compile_target: target::CompileTarget,
+) -> Result<HashMap<String, InterfaceEntry>, Diagnostics> {
     let mut paths = Vec::new();
     collect_gleam_files(&pkg_root.join("src"), &mut paths)?;
     paths.sort();
@@ -187,7 +187,11 @@ fn load_pkg_interfaces(
         let module_name = module_name_from_path(&pkg_root.join("src"), &path);
         match parse_module(&path, source_id, compile_target) {
             Ok(module) => {
-                interfaces.insert(module_name, ModuleInterface::from(&module));
+                let interface = ModuleInterface::from(&module);
+                interfaces.insert(
+                    module_name.clone(),
+                    InterfaceEntry::new(package, module_name, interface),
+                );
             }
             Err(mut errors) => diagnostics.append(&mut errors),
         }
@@ -295,8 +299,10 @@ mod tests {
         );
         assert_eq!(interfaces.packages[0].version.as_deref(), Some("2.0.0"));
         let interface = interfaces.modules.get("path_dep").expect("path_dep interface");
-        assert!(interface.functions.contains_key("from_path"));
-        assert!(!interface.functions.contains_key("from_hex_cache"));
+        assert_eq!(interface.package, "path_dep");
+        assert_eq!(interface.module, "path_dep");
+        assert!(interface.interface.functions.contains_key("from_path"));
+        assert!(!interface.interface.functions.contains_key("from_hex_cache"));
     }
 
     #[test]
@@ -440,6 +446,7 @@ mod tests {
                 .modules
                 .get("absolute_dep")
                 .expect("absolute_dep interface")
+                .interface
                 .functions
                 .contains_key("from_absolute_path")
         );

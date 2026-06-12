@@ -22,16 +22,36 @@ pub enum Namespace {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SymbolKind {
-    Function { public: bool },
-    Constant { public: bool },
-    ExternalFunction { public: bool },
-    Import { module: String },
-    Imported { module: String, member: String },
+    Function {
+        public: bool,
+    },
+    Constant {
+        public: bool,
+    },
+    ExternalFunction {
+        public: bool,
+    },
+    Import {
+        package: Option<String>,
+        module: String,
+    },
+    Imported {
+        package: Option<String>,
+        module: String,
+        member: String,
+    },
     Parameter,
     Local,
-    Type { public: bool, opaque: bool },
-    Constructor { public: bool },
-    Field { public: bool },
+    Type {
+        public: bool,
+        opaque: bool,
+    },
+    Constructor {
+        public: bool,
+    },
+    Field {
+        public: bool,
+    },
     Label,
     Prelude,
 }
@@ -118,6 +138,7 @@ pub fn resolve_project(project: &Project) -> Result<ResolvedProject, Diagnostics
     }
 
     let interfaces = ResolveInterfaceRegistry::for_project(
+        &project.graph.root_package.name,
         &project.graph.dependency_interfaces,
         ast_modules.iter().map(|(name, module)| (name, module)),
     );
@@ -215,7 +236,13 @@ impl Resolver {
                 scope,
                 &module_symbol_name,
                 Namespace::Module,
-                SymbolKind::Import { module: import.module.text.clone() },
+                SymbolKind::Import {
+                    package: self
+                        .interfaces
+                        .get(&import.module.text)
+                        .and_then(|interface| interface.package.clone()),
+                    module: import.module.text.clone(),
+                },
             );
 
             for imported in &import.unqualified {
@@ -337,7 +364,14 @@ impl Resolver {
             scope,
             name,
             namespace,
-            SymbolKind::Imported { module: module.into(), member: member.into() },
+            SymbolKind::Imported {
+                package: self
+                    .interfaces
+                    .get(module)
+                    .and_then(|interface| interface.package.clone()),
+                module: module.into(),
+                member: member.into(),
+            },
         );
     }
 
@@ -638,7 +672,7 @@ impl Resolver {
 
     fn resolve_type_name(&mut self, scope: ScopeId, name: &ast::Name) {
         if let Some(symbol) = self.lookup(scope, Namespace::Type, &name.text) {
-            if let SymbolKind::Imported { module, member } = &self.symbols[symbol.0 as usize].kind.clone() {
+            if let SymbolKind::Imported { module, member, .. } = &self.symbols[symbol.0 as usize].kind.clone() {
                 self.resolve_project_member(
                     module,
                     Namespace::Type,
@@ -714,7 +748,8 @@ impl Resolver {
             );
             return false;
         };
-        let SymbolKind::Import { module: module_name } = &self.symbols[module_symbol.0 as usize].kind.clone() else {
+        let SymbolKind::Import { module: module_name, .. } = &self.symbols[module_symbol.0 as usize].kind.clone()
+        else {
             return false;
         };
         let symbol = self.resolve_project_member(module_name, namespace, member);
@@ -867,7 +902,7 @@ impl Resolver {
             .or_else(|| self.lookup(scope, Namespace::Constructor, &name.text))
         {
             Some(symbol) => {
-                if let SymbolKind::Imported { module, member } = &self.symbols[symbol.0 as usize].kind.clone() {
+                if let SymbolKind::Imported { module, member, .. } = &self.symbols[symbol.0 as usize].kind.clone() {
                     self.resolve_project_member(
                         module,
                         Namespace::Value,

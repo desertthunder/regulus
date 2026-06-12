@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::ast::{self, Declaration};
-use crate::types::{ConstructorInfo, ModuleInterface, Type};
+use crate::types::{ConstructorInfo, InterfaceEntry, ModuleInterface, Type};
 use crate::{labels::FunctionLabelMap, resolve::Namespace};
 use crate::{source::Span, stdlib::StdlibRegistry};
 
@@ -17,14 +17,14 @@ impl ResolveInterfaceRegistry {
     }
 
     pub fn for_project<'a>(
-        dependency_interfaces: &HashMap<String, ModuleInterface>,
+        root_package: &str, dependency_interfaces: &HashMap<String, InterfaceEntry>,
         modules: impl IntoIterator<Item = (&'a String, &'a ast::Module)>,
     ) -> Self {
         Self::default()
             .with_prelude_interface()
             .with_stdlib_interfaces()
             .with_dependency_interfaces(dependency_interfaces)
-            .with_project_interfaces(modules)
+            .with_project_interfaces(root_package, modules)
     }
 
     fn with_prelude_interface(mut self) -> Self {
@@ -37,14 +37,20 @@ impl ResolveInterfaceRegistry {
         self
     }
 
-    fn with_dependency_interfaces(mut self, interfaces: &HashMap<String, ModuleInterface>) -> Self {
+    fn with_dependency_interfaces(mut self, interfaces: &HashMap<String, InterfaceEntry>) -> Self {
         self.modules.extend(dependency_resolve_interfaces(interfaces));
         self
     }
 
-    fn with_project_interfaces<'a>(mut self, modules: impl IntoIterator<Item = (&'a String, &'a ast::Module)>) -> Self {
-        self.modules
-            .extend(modules.into_iter().map(|(name, module)| (name.clone(), module.into())));
+    fn with_project_interfaces<'a>(
+        mut self, root_package: &str, modules: impl IntoIterator<Item = (&'a String, &'a ast::Module)>,
+    ) -> Self {
+        self.modules.extend(modules.into_iter().map(|(name, module)| {
+            (
+                name.clone(),
+                ResolveModuleInterface::from_project(root_package, name, module),
+            )
+        }));
         self
     }
 
@@ -81,6 +87,8 @@ pub struct ResolveModuleMember {
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ResolveModuleInterface {
+    pub package: Option<String>,
+    pub module: String,
     pub members: HashMap<(Namespace, String), ResolveModuleMember>,
 }
 
@@ -95,7 +103,14 @@ impl ResolveModuleInterface {
                 )
             })
             .collect();
-        Self { members }
+        Self { package: None, module: "prelude".to_string(), members }
+    }
+
+    fn from_project(package: &str, name: &str, module: &ast::Module) -> Self {
+        let mut interface = Self::from(module);
+        interface.package = Some(package.to_string());
+        interface.module = name.to_string();
+        interface
     }
 }
 
@@ -170,13 +185,13 @@ impl From<&ast::Module> for ResolveModuleInterface {
             }
         }
 
-        Self { members }
+        Self { package: None, module: String::new(), members }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct TypeInterfaceRegistry {
-    pub modules: HashMap<String, ModuleInterface>,
+    pub modules: HashMap<String, InterfaceEntry>,
     prelude: ModuleInterface,
 }
 
@@ -186,14 +201,14 @@ impl TypeInterfaceRegistry {
     }
 
     pub fn for_project<'a>(
-        dependency_interfaces: &HashMap<String, ModuleInterface>,
+        root_package: &str, dependency_interfaces: &HashMap<String, InterfaceEntry>,
         project_modules: impl IntoIterator<Item = (&'a str, &'a ast::Module)>,
     ) -> Self {
         Self::default()
             .with_prelude_interface()
             .with_stdlib_interfaces()
             .with_dependency_interfaces(dependency_interfaces)
-            .with_project_interfaces(project_modules)
+            .with_project_interfaces(root_package, project_modules)
     }
 
     fn with_prelude_interface(mut self) -> Self {
@@ -202,35 +217,40 @@ impl TypeInterfaceRegistry {
     }
 
     fn with_stdlib_interfaces(mut self) -> Self {
-        self.modules.extend(
-            StdlibRegistry::new()
-                .modules()
-                .map(|module| (module.name.to_string(), module.interface.clone())),
-        );
+        self.modules.extend(StdlibRegistry::new().modules().map(|module| {
+            (
+                module.name.to_string(),
+                InterfaceEntry::new("gleam_stdlib", module.name, module.interface.clone()),
+            )
+        }));
         self
     }
 
-    fn with_dependency_interfaces(mut self, interfaces: &HashMap<String, ModuleInterface>) -> Self {
+    fn with_dependency_interfaces(mut self, interfaces: &HashMap<String, InterfaceEntry>) -> Self {
         self.modules.extend(interfaces.clone());
         self
     }
 
-    fn with_project_interfaces<'a>(mut self, modules: impl IntoIterator<Item = (&'a str, &'a ast::Module)>) -> Self {
-        self.modules.extend(
-            modules
-                .into_iter()
-                .map(|(name, module)| (name.to_string(), ModuleInterface::from(module))),
-        );
+    fn with_project_interfaces<'a>(
+        mut self, root_package: &str, modules: impl IntoIterator<Item = (&'a str, &'a ast::Module)>,
+    ) -> Self {
+        self.modules.extend(modules.into_iter().map(|(name, module)| {
+            (
+                name.to_string(),
+                InterfaceEntry::new(root_package, name, ModuleInterface::from(module)),
+            )
+        }));
         self
     }
 
     pub fn get(&self, module: &str) -> Option<&ModuleInterface> {
-        self.modules.get(module)
+        self.modules.get(module).map(|entry| &entry.interface)
     }
 
     pub fn constructors(&self) -> HashMap<String, ConstructorInfo> {
         self.modules
             .values()
+            .map(|entry| &entry.interface)
             .chain(std::iter::once(&self.prelude))
             .flat_map(|i| i.interface_constructors())
             .collect()
@@ -239,14 +259,14 @@ impl TypeInterfaceRegistry {
     pub fn values(&self) -> HashMap<String, Type> {
         self.modules
             .iter()
-            .flat_map(|(module, interface)| interface.qualified_values(module))
+            .flat_map(|(module, entry)| entry.interface.qualified_values(module))
             .collect()
     }
 
     pub fn function_labels(&self) -> FunctionLabelMap {
         self.modules
             .iter()
-            .flat_map(|(module, interface)| interface.qualified_function_labels(module))
+            .flat_map(|(module, entry)| entry.interface.qualified_function_labels(module))
             .collect()
     }
 }
@@ -274,17 +294,25 @@ fn stdlib_resolve_interfaces() -> HashMap<String, ResolveModuleInterface> {
                     ResolveModuleMember { public: true, span: ModuleInterface::module_span() },
                 );
             }
-            (module.name.to_string(), ResolveModuleInterface { members })
+            (
+                module.name.to_string(),
+                ResolveModuleInterface {
+                    package: Some("gleam_stdlib".to_string()),
+                    module: module.name.to_string(),
+                    members,
+                },
+            )
         })
         .collect()
 }
 
 fn dependency_resolve_interfaces(
-    interfaces: &HashMap<String, ModuleInterface>,
+    interfaces: &HashMap<String, InterfaceEntry>,
 ) -> HashMap<String, ResolveModuleInterface> {
     interfaces
         .iter()
-        .map(|(module, interface)| {
+        .map(|(module, entry)| {
+            let interface = &entry.interface;
             let mut members = HashMap::new();
             for name in interface.functions.keys() {
                 members.insert(
@@ -310,7 +338,10 @@ fn dependency_resolve_interfaces(
                     );
                 }
             }
-            (module.clone(), ResolveModuleInterface { members })
+            (
+                module.clone(),
+                ResolveModuleInterface { package: Some(entry.package.clone()), module: entry.module.clone(), members },
+            )
         })
         .collect()
 }

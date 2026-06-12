@@ -118,6 +118,19 @@ pub struct ModuleInterface {
     pub constructors: HashMap<String, ConstructorInfo>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InterfaceEntry {
+    pub package: String,
+    pub module: String,
+    pub interface: ModuleInterface,
+}
+
+impl InterfaceEntry {
+    pub fn new(package: impl Into<String>, module: impl Into<String>, interface: ModuleInterface) -> Self {
+        Self { package: package.into(), module: module.into(), interface }
+    }
+}
+
 impl From<&ast::Module> for ModuleInterface {
     fn from(module: &ast::Module) -> Self {
         let mut interface = ModuleInterface::default();
@@ -218,7 +231,7 @@ pub struct TypedModule {
 pub struct TypedProject {
     pub package_name: String,
     pub modules: Vec<TypedModule>,
-    pub interfaces: HashMap<String, ModuleInterface>,
+    pub interfaces: HashMap<String, InterfaceEntry>,
 }
 
 fn collect_interface_declarations(declarations: &[Declaration], interface: &mut ModuleInterface) {
@@ -363,6 +376,7 @@ pub fn check_project(project: &Project) -> Result<TypedProject, Diagnostics> {
     let resolved = resolve::resolve_project(project)?;
 
     let type_interfaces = TypeInterfaceRegistry::for_project(
+        &project.graph.root_package.name,
         &project.graph.dependency_interfaces,
         project
             .graph
@@ -398,7 +412,14 @@ pub fn check_project(project: &Project) -> Result<TypedProject, Diagnostics> {
                     external_function_labels.insert(name.clone(), labels.clone());
                     external_function_labels.insert(format!("{}.{}", module_info.name, name), labels.clone());
                 }
-                interfaces.insert(module_info.name.clone(), typed.interface.clone());
+                interfaces.insert(
+                    module_info.name.clone(),
+                    InterfaceEntry::new(
+                        project.graph.root_package.name.clone(),
+                        module_info.name.clone(),
+                        typed.interface.clone(),
+                    ),
+                );
                 modules.push(TypedModule {
                     package_name: Some(project.graph.root_package.name.clone()),
                     module_name: Some(module_info.name.clone()),
@@ -2932,7 +2953,7 @@ fn main() -> Int {
         let app = typed.interfaces.get("app").expect("app interface");
 
         assert_eq!(
-            app.function_labels.get("with_value"),
+            app.interface.function_labels.get("with_value"),
             Some(&vec![Some("callback".into()), Some("value".into())])
         );
     }
@@ -3111,11 +3132,12 @@ pub fn labelled(value thing: Thing) -> Int {
         assert!(project.graph.dependency_interfaces.contains_key("dep/foo"));
         let dependency_interface = typed.interfaces.get("dep/foo").expect("dependency interface");
         assert_eq!(
-            dependency_interface.function_labels.get("labelled"),
+            dependency_interface.interface.function_labels.get("labelled"),
             Some(&vec![Some("value".into())]),
         );
         assert_eq!(
             dependency_interface
+                .interface
                 .constructors
                 .get("Make")
                 .and_then(|constructor| constructor.fields.first())
@@ -3186,7 +3208,7 @@ pub fn unbox(box: Boxed(Int)) -> Int {
             pair.type_,
             Type::Function { params: vec![], return_type: Box::new(Type::Tuple(vec![Type::Int, Type::String])) }
         );
-        assert!(typed.interfaces["dep/box"].constructors.contains_key("Box"));
+        assert!(typed.interfaces["dep/box"].interface.constructors.contains_key("Box"));
     }
 
     #[test]

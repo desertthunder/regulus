@@ -4,4 +4,4 @@ description = "Generated-name fixture with project and dependency module-name ov
 licences = ["Apache-2.0"]
 
 [dependencies]
-overlap_dep = { path = "build/packages/overlap_dep" }
+overlap_dep = { path = "packages/overlap_dep" }

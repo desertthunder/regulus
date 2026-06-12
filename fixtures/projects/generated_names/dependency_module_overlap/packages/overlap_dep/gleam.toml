@@ -1,0 +1,4 @@
+name = "overlap_dep"
+version = "1.0.0"
+description = "Dependency fixture with a module that overlaps the root package."
+licences = ["Apache-2.0"]
