@@ -30,13 +30,13 @@ reset point.
 | tuples           | managed `i32` pointer          | Read through value helpers.            |
 | records          | managed `i32` pointer          | Read through value helpers.            |
 | custom types     | managed `i32` pointer          | Read through value helpers.            |
-| lists            | managed `i32` pointer          | Planned                                |
+| lists            | managed `i32` pointer          | Read as JavaScript arrays.             |
 | opaque externals | managed or host handle pointer | Deferred to the opaque-handle ABI.     |
 | functions        | none                           | Unsupported across the JS host ABI.    |
 
-The first stable ergonomic conversion layer is scalar and string focused.
-Managed structured values are represented as borrowed pointers until the reader
-helper contract is complete.
+The first stable call conversion layer is scalar and string focused. Managed
+structured values can be read from borrowed pointers with explicit reader
+shapes. Writing structured JavaScript values into Gleam is deferred.
 
 ## Runtime helpers
 
@@ -87,8 +87,81 @@ after the object header. For custom, error, and panic payloads, field index `0`
 starts after the constructor or reason tag.
 
 Scalar `Int` fields are the signed `i64` value. `Bool` fields use `0n` and
-`1n`. Managed fields store a borrowed pointer in the low 32 bits. Glue should
+`1n`. `Float` fields are the raw IEEE-754 bits reinterpreted from the `i64`
+slot. Managed fields store a borrowed pointer in the low 32 bits. Glue should
 convert those pointer fields before recursively reading them.
+
+## Structured readers
+
+Generated or packaged JS glue exposes reader helpers over borrowed managed
+pointers. All readers require an explicit shape because raw runtime objects do
+not store source field names or type parameters.
+
+Tuple readers return arrays. Tuple shape items are in tuple field order:
+
+```js
+readTuple(ptr, ["Int", "String"])
+// => [1n, "text"]
+```
+
+Record readers return plain objects. Record field shapes are in constructor
+declaration order:
+
+```js
+readRecord(ptr, [
+  { name: "status", type: "Int" },
+  { name: "body", type: "String" },
+])
+// => { status: 200n, body: "ok" }
+```
+
+Custom-type readers return `{ tag, fields }`. When the shape includes variant
+names, `tag` is the constructor name. Otherwise `tag` is the numeric constructor
+tag. Positional variant fields return an array. Named variant fields return an
+object.
+
+```js
+readCustom(ptr, {
+  Created: { fields: [{ name: "id", type: "String" }] },
+  Deleted: { fields: ["String"] },
+})
+// => { tag: "Created", fields: { id: "abc" } }
+```
+
+List readers follow tag-2 cons cells until the null pointer `0`, which is the
+empty list. They return JavaScript arrays and recursively read each head with
+the item shape. A list of strings uses the normal string shape:
+
+```js
+readList(ptr, "String")
+// => ["a", "b", "c"]
+```
+
+`Result(a, e)` values are tag-5 custom objects with `Ok` or `Error`
+constructor tags. JS readers return tagged objects:
+
+```js
+readResult(ptr, "String", "Int")
+// => { tag: "Ok", value: "done" }
+// => { tag: "Error", value: 404n }
+```
+
+`Option(a)` values are tag-5 custom objects with `Some` or `None` constructor
+tags. JS readers return tagged objects:
+
+```js
+readOption(ptr, "String")
+// => { tag: "Some", value: "found" }
+// => { tag: "None" }
+```
+
+The generic `readValue(ptr, shape)` helper accepts scalar names and structured
+shape objects:
+
+```js
+readValue(ptr, { kind: "List", item: "String" })
+readValue(ptr, { kind: "Result", ok: "String", error: "Int" })
+```
 
 ## Import modules
 
@@ -128,10 +201,11 @@ Supported imported return shapes are:
 - `String`
 - `Nil`
 
-Structured managed values may lower as borrowed pointers internally, but stable
-JS conversion is not part of this milestone. Opaque types, generic values, and
-function values are unsupported across JS host imports until their ABI contracts
-are defined.
+Structured managed values may lower as borrowed pointers internally. Stable JS
+conversion for imported structured parameters and returns is deferred until
+structured writers and generated import metadata are complete. Opaque types,
+generic values, and function values are unsupported across JS host imports until
+their ABI contracts are defined.
 
 ## Exported functions
 
@@ -145,7 +219,7 @@ Supported exported parameter shapes are:
 - `Bool`
 - `String`
 
-Supported exported return shapes are:
+Supported exported return shapes for checked call wrappers are:
 
 - `Int`
 - `Float`
@@ -153,8 +227,12 @@ Supported exported return shapes are:
 - `String`
 - `Nil`
 
-Glue should expose checked wrappers for these shapes so application code does
-not perform pointer arithmetic.
+Structured exported values may be read by calling a raw export and then passing
+the returned pointer to the reader helpers. Checked wrappers will accept
+structured return metadata once structured export metadata is generated.
+
+Glue should expose checked wrappers for stable call shapes so application code
+does not perform pointer arithmetic.
 
 ## Diagnostics
 
@@ -177,8 +255,8 @@ type, or public function annotation that caused the unsupported shape.
 
 This contract intentionally does not define:
 
-- structured managed value readers
-- `Result` and `Option` conversion
+- writing structured JavaScript values into Gleam
+- generated metadata for structured exported values
 - opaque JS handle representation and lifetime
 - browser API semantics
 - Node.js loading semantics

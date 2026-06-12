@@ -145,6 +145,154 @@ export function readString(ptr) {
 }
 
 /**
+ * Read a borrowed managed pointer using a structured JS ABI shape.
+ *
+ * Shapes may be scalar names or objects such as `{ kind: "List", item }`,
+ * `{ kind: "Tuple", items }`, `{ kind: "Record", fields }`,
+ * `{ kind: "Result", ok, error }`, and `{ kind: "Option", some }`.
+ *
+ * @param {number} ptr Borrowed managed pointer.
+ * @param {string|object} shape ABI reader shape.
+ * @returns {unknown} Decoded JavaScript value.
+ */
+export function readValue(ptr, shape) {
+  return fromWasmValue(shape, ptr);
+}
+
+/**
+ * Read a tuple pointer as a JavaScript array.
+ *
+ * @param {number} ptr Borrowed tuple pointer.
+ * @param {Array<string|object>} items Field shapes in tuple order.
+ * @returns {unknown[]} Tuple fields.
+ */
+export function readTuple(ptr, items) {
+  ensureValueTag(ptr, 3, "tuple");
+  const arity = instance.exports.__regulus_value_arity(ptr);
+  if (arity !== items.length) {
+    throw new Error(`Regulus tuple arity ${arity} does not match shape arity ${items.length}`);
+  }
+  return items.map((item, index) => readField(ptr, index, item));
+}
+
+/**
+ * Read a record pointer as a JavaScript object keyed by field name.
+ *
+ * @param {number} ptr Borrowed record pointer.
+ * @param {Array<{ name: string, type: string|object }>} fields Field shapes in
+ *   declaration order.
+ * @returns {Record<string, unknown>} Record object.
+ */
+export function readRecord(ptr, fields) {
+  ensureValueTag(ptr, 4, "record");
+  const arity = instance.exports.__regulus_value_arity(ptr);
+  if (arity !== fields.length) {
+    throw new Error(`Regulus record arity ${arity} does not match shape arity ${fields.length}`);
+  }
+  const out = {};
+  fields.forEach((field, index) => {
+    out[field.name] = readField(ptr, index, field.type);
+  });
+  return out;
+}
+
+/**
+ * Read a custom value pointer as `{ tag, fields }`.
+ *
+ * If `variants` maps constructor names to field shapes, the returned `tag` is
+ * the constructor name. Otherwise `tag` is the numeric constructor tag.
+ *
+ * @param {number} ptr Borrowed custom value pointer.
+ * @param {Record<string, { fields?: Array<string|object|{ name: string, type: string|object }> }}=} variants
+ *   Optional variant shape map.
+ * @returns {{ tag: string|number, fields: unknown[]|Record<string, unknown> }}
+ *   Decoded custom value.
+ */
+export function readCustom(ptr, variants = {}) {
+  ensureValueTag(ptr, 5, "custom value");
+  const constructorTag = instance.exports.__regulus_value_constructor(ptr) >>> 0;
+  const entry = Object.entries(variants).find(([name]) => constructorHash(name) === constructorTag);
+  const name = entry?.[0];
+  const variant = entry?.[1] ?? {};
+  const fieldShapes = variant.fields ?? [];
+  const arity = instance.exports.__regulus_value_arity(ptr);
+  if (fieldShapes.length && arity !== fieldShapes.length) {
+    throw new Error(`Regulus custom arity ${arity} does not match shape arity ${fieldShapes.length}`);
+  }
+  const shapes = fieldShapes.length ? fieldShapes : Array.from({ length: arity }, () => "Int");
+  const hasNamedFields = shapes.some((field) => typeof field === "object" && "name" in field);
+  const fields = hasNamedFields ? {} : [];
+  shapes.forEach((field, index) => {
+    const fieldShape = field && typeof field === "object" && "type" in field ? field.type : field;
+    const value = readField(ptr, index, fieldShape);
+    if (hasNamedFields) {
+      fields[field.name ?? String(index)] = value;
+    } else {
+      fields.push(value);
+    }
+  });
+  return { tag: name ?? constructorTag, fields };
+}
+
+/**
+ * Read a Gleam list pointer as a JavaScript array.
+ *
+ * @param {number} ptr Borrowed list pointer, or `0` for the empty list.
+ * @param {string|object} item Item shape. Use `"String"` for lists of strings.
+ * @returns {unknown[]} List items.
+ */
+export function readList(ptr, item) {
+  const out = [];
+  let cursor = ptr;
+  while (cursor !== 0) {
+    ensureValueTag(cursor, 2, "list cons cell");
+    out.push(readField(cursor, 0, item));
+    cursor = pointerFromSlot(instance.exports.__regulus_value_field(cursor, 1));
+  }
+  return out;
+}
+
+/**
+ * Read a Gleam `Result(a, e)` pointer.
+ *
+ * @param {number} ptr Borrowed custom value pointer.
+ * @param {string|object} ok Shape for the `Ok` payload.
+ * @param {string|object} error Shape for the `Error` payload.
+ * @returns {{ tag: "Ok", value: unknown }|{ tag: "Error", value: unknown }}
+ *   Decoded result.
+ */
+export function readResult(ptr, ok, error) {
+  ensureValueTag(ptr, 5, "Result");
+  const tag = instance.exports.__regulus_value_constructor(ptr) >>> 0;
+  if (tag === constructorHash("Ok")) {
+    return { tag: "Ok", value: readField(ptr, 0, ok) };
+  }
+  if (tag === constructorHash("Error")) {
+    return { tag: "Error", value: readField(ptr, 0, error) };
+  }
+  throw new Error(`Regulus custom value is not a Result constructor: ${tag}`);
+}
+
+/**
+ * Read a Gleam `Option(a)` pointer.
+ *
+ * @param {number} ptr Borrowed custom value pointer.
+ * @param {string|object} some Shape for the `Some` payload.
+ * @returns {{ tag: "Some", value: unknown }|{ tag: "None" }} Decoded option.
+ */
+export function readOption(ptr, some) {
+  ensureValueTag(ptr, 5, "Option");
+  const tag = instance.exports.__regulus_value_constructor(ptr) >>> 0;
+  if (tag === constructorHash("Some")) {
+    return { tag: "Some", value: readField(ptr, 0, some) };
+  }
+  if (tag === constructorHash("None")) {
+    return { tag: "None" };
+  }
+  throw new Error(`Regulus custom value is not an Option constructor: ${tag}`);
+}
+
+/**
  * Convert host imports into raw Wasm functions using compiler metadata.
  *
  * @param {Record<string, Record<string, Function|object>>} imports User imports.
@@ -255,6 +403,24 @@ function toWasmValue(type, value) {
  * @returns {unknown} JavaScript value.
  */
 function fromWasmValue(type, value) {
+  if (type && typeof type === "object") {
+    switch (type.kind) {
+      case "Tuple":
+        return readTuple(value, type.items ?? []);
+      case "Record":
+        return readRecord(value, type.fields ?? []);
+      case "Custom":
+        return readCustom(value, type.variants ?? {});
+      case "List":
+        return readList(value, type.item);
+      case "Result":
+        return readResult(value, type.ok, type.error);
+      case "Option":
+        return readOption(value, type.some);
+      default:
+        throw new Error(`Unsupported Regulus JS ABI shape "${type.kind}"`);
+    }
+  }
   switch (type) {
     case "Int":
       return value;
@@ -269,6 +435,80 @@ function fromWasmValue(type, value) {
     default:
       throw new Error(`Unsupported Regulus JS ABI type "${type}"`);
   }
+}
+
+/**
+ * Read one raw object field and convert it through a shape.
+ *
+ * @param {number} ptr Borrowed managed pointer.
+ * @param {number} index Field index.
+ * @param {string|object} shape Field shape.
+ * @returns {unknown} Converted field value.
+ */
+function readField(ptr, index, shape) {
+  const slot = instance.exports.__regulus_value_field(ptr, index);
+  if (shape === "String" || (shape && typeof shape === "object")) {
+    return fromWasmValue(shape, pointerFromSlot(slot));
+  }
+  if (shape === "Float") {
+    return floatFromSlot(slot);
+  }
+  return fromWasmValue(shape, slot);
+}
+
+/**
+ * Assert that a pointer has the expected runtime object tag.
+ *
+ * @param {number} ptr Borrowed managed pointer.
+ * @param {number} expected Expected runtime object tag.
+ * @param {string} name Human-readable shape name.
+ * @returns {void}
+ */
+function ensureValueTag(ptr, expected, name) {
+  if (ptr === 0) {
+    throw new Error(`Regulus ${name} reader received null pointer`);
+  }
+  const actual = instance.exports.__regulus_value_tag(ptr);
+  if (actual !== expected) {
+    throw new Error(`Regulus ${name} reader expected tag ${expected}, got ${actual}`);
+  }
+}
+
+/**
+ * Convert an i64 field slot containing a pointer in the low bits to a number.
+ *
+ * @param {bigint} slot Raw field slot.
+ * @returns {number} Managed pointer.
+ */
+function pointerFromSlot(slot) {
+  return Number(slot & 0xffff_ffffn);
+}
+
+/**
+ * Reinterpret an i64 field slot as an IEEE-754 Float.
+ *
+ * @param {bigint} slot Raw field slot.
+ * @returns {number} JavaScript number.
+ */
+function floatFromSlot(slot) {
+  const buffer = new ArrayBuffer(8);
+  const view = new DataView(buffer);
+  view.setBigUint64(0, BigInt.asUintN(64, slot), true);
+  return view.getFloat64(0, true);
+}
+
+/**
+ * Compute the stable constructor tag used by the Wasm backend.
+ *
+ * @param {string} name Constructor name.
+ * @returns {number} Unsigned 32-bit constructor tag.
+ */
+function constructorHash(name) {
+  let hash = 0x811c_9dc5;
+  for (const char of new TextEncoder().encode(name)) {
+    hash = Math.imul(hash, 0x0100_0193) ^ char;
+  }
+  return hash >>> 0;
 }
 
 /**

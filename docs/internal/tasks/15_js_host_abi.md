@@ -44,11 +44,11 @@ The public ABI contract lives in
 
 - [x] Export stable helpers for reading managed value tags, arity, and fields.
 - [x] Define the JS reader contract for tuples, records, and custom types.
-- [ ] Define the JS reader contract for lists and lists of strings.
-- [ ] Define the JS reader contract for `Result` and `Option` values.
-- [ ] Implement JS adapter readers for tuples, records, and custom types.
-- [ ] Implement JS adapter readers for lists and lists of strings.
-- [ ] Implement JS adapter readers for `Result` and `Option` values.
+- [x] Define the JS reader contract for lists and lists of strings.
+- [x] Define the JS reader contract for `Result` and `Option` values.
+- [x] Implement JS adapter readers for tuples, records, and custom types.
+- [x] Implement JS adapter readers for lists and lists of strings.
+- [x] Implement JS adapter readers for `Result` and `Option` values.
 - [ ] Add export metadata for structured values consumed by JS readers.
 - [ ] Allow supported structured return shapes for JS exports once typed readers
       are available.
@@ -58,8 +58,8 @@ The public ABI contract lives in
 ### Opaque JS handles
 
 - [ ] Define the runtime representation for opaque host handles.
-- [ ] Define ownership and lifetime rules for JS handles passed to Gleam.
 - [ ] Implement the runtime representation for opaque host handles.
+- [ ] Define ownership and lifetime rules for JS handles passed to Gleam.
 - [ ] Implement JS handle table ownership and release behavior.
 - [ ] Add ABI validation for externals that accept or return opaque handles.
 - [ ] Add JS adapter conversion for opaque handle imports and exports.
