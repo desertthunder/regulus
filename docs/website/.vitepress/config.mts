@@ -82,5 +82,11 @@ export default defineConfig({
     },
     socialLinks: [{ icon: "github", link: "https://github.com/desertthunder/regulus" }],
   },
-  head: [["link", { rel: "icon", href: "/favicon.svg" }]],
+  head: [
+    ["link", { rel: "icon", href: "/favicon.svg" }],
+    ["meta", { property: "og:image", content: "/og.png" }],
+    ["meta", { property: "og:image:type", content: "image/png" }],
+    ["meta", { name: "twitter:card", content: "summary_large_image" }],
+    ["meta", { name: "twitter:image", content: "/og.png" }],
+  ],
 });

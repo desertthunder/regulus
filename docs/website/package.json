@@ -5,13 +5,15 @@
   "scripts": {
     "docs:dev": "vitepress dev .",
     "docs:build": "vitepress build .",
-    "docs:preview": "vitepress preview ."
+    "docs:preview": "vitepress preview .",
+    "docs:deploy": "pnpm docs:build && wrangler pages deploy"
   },
   "devDependencies": {
     "@catppuccin/vitepress": "^0.1.2",
     "@fontsource-variable/ibm-plex-sans": "^5.2.8",
     "@fontsource-variable/lexend": "^5.2.11",
     "@fontsource/ibm-plex-mono": "^5.2.7",
-    "vitepress": "^1.6.4"
+    "vitepress": "^1.6.4",
+    "wrangler": "^4.100.0"
   }
 }
