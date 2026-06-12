@@ -2,7 +2,8 @@ use std::collections::HashMap;
 
 use crate::ast::{self, Declaration, Expression, Pattern, Statement, UnqualifiedImportKind};
 use crate::diagnostic::{Diagnostic, DiagnosticCode, Diagnostics, Label};
-use crate::{parse, project::Project, source::Span, stdlib::StdlibRegistry, target, types};
+use crate::loader::registry::ResolveInterfaceRegistry;
+use crate::{parse, project::Project, source::Span, target};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SymbolId(pub u32);
@@ -93,102 +94,6 @@ pub struct ResolvedProject {
     pub modules: Vec<ResolvedModule>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-struct ModuleInterfaceRegistry {
-    modules: HashMap<String, ModuleInterface>,
-    prelude: ModuleInterface,
-}
-
-impl ModuleInterfaceRegistry {
-    fn for_single_file() -> Self {
-        Self::default().with_prelude_interface().with_stdlib_interfaces()
-    }
-
-    fn for_project<'a>(
-        dependency_interfaces: &HashMap<String, types::ModuleInterface>,
-        modules: impl IntoIterator<Item = (&'a String, &'a ast::Module)>,
-    ) -> Self {
-        Self::default()
-            .with_prelude_interface()
-            .with_stdlib_interfaces()
-            .with_dependency_interfaces(dependency_interfaces)
-            .with_project_interfaces(modules)
-    }
-
-    fn with_prelude_interface(mut self) -> Self {
-        self.prelude = ModuleInterface::prelude_resolve();
-        self
-    }
-
-    fn with_stdlib_interfaces(mut self) -> Self {
-        self.modules.extend(stdlib_resolve_interfaces());
-        self
-    }
-
-    fn with_dependency_interfaces(mut self, interfaces: &HashMap<String, types::ModuleInterface>) -> Self {
-        self.modules.extend(dependency_resolve_interfaces(interfaces));
-        self
-    }
-
-    fn with_project_interfaces<'a>(mut self, modules: impl IntoIterator<Item = (&'a String, &'a ast::Module)>) -> Self {
-        self.modules
-            .extend(modules.into_iter().map(|(name, module)| (name.clone(), module.into())));
-        self
-    }
-
-    fn get(&self, module: &str) -> Option<&ModuleInterface> {
-        self.modules.get(module)
-    }
-
-    fn member(&self, module: &str, namespace: Namespace, name: &str) -> Option<&ModuleMember> {
-        self.get(module)?.members.get(&(namespace, name.to_string()))
-    }
-
-    fn has_public_member(&self, namespace: Namespace, name: &str) -> bool {
-        self.modules
-            .values()
-            .chain(std::iter::once(&self.prelude))
-            .any(|interface| {
-                interface
-                    .members
-                    .get(&(namespace, name.to_string()))
-                    .is_some_and(|member| member.public)
-            })
-    }
-
-    fn prelude_members(&self) -> impl Iterator<Item = (&(Namespace, String), &ModuleMember)> {
-        self.prelude.members.iter()
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-struct ModuleInterface {
-    members: HashMap<(Namespace, String), ModuleMember>,
-}
-
-impl ModuleInterface {
-    fn prelude_resolve() -> ModuleInterface {
-        let members = [
-            "Int", "Float", "String", "BitArray", "Bool", "Nil", "List", "Result", "Option", "Order",
-        ]
-        .into_iter()
-        .map(|name| {
-            (
-                (Namespace::Type, name.to_string()),
-                ModuleMember { public: true, span: module_span() },
-            )
-        })
-        .collect();
-        ModuleInterface { members }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct ModuleMember {
-    public: bool,
-    span: Span,
-}
-
 pub fn resolve(module: ast::Module) -> Result<ResolvedModule, Diagnostics> {
     Resolver::new(module).with_stdlib_interfaces().resolve()
 }
@@ -212,7 +117,7 @@ pub fn resolve_project(project: &Project) -> Result<ResolvedProject, Diagnostics
         return Err(diagnostics);
     }
 
-    let interfaces = ModuleInterfaceRegistry::for_project(
+    let interfaces = ResolveInterfaceRegistry::for_project(
         &project.graph.dependency_interfaces,
         ast_modules.iter().map(|(name, module)| (name, module)),
     );
@@ -231,7 +136,7 @@ pub fn resolve_project(project: &Project) -> Result<ResolvedProject, Diagnostics
 struct Resolver {
     module: ast::Module,
     module_name: Option<String>,
-    interfaces: ModuleInterfaceRegistry,
+    interfaces: ResolveInterfaceRegistry,
     symbols: Vec<Symbol>,
     scopes: Vec<Scope>,
     references: Vec<ResolvedReference>,
@@ -243,7 +148,7 @@ impl Resolver {
         Self {
             module,
             module_name: None,
-            interfaces: ModuleInterfaceRegistry::default(),
+            interfaces: ResolveInterfaceRegistry::default(),
             symbols: Vec::new(),
             scopes: Vec::new(),
             references: Vec::new(),
@@ -251,12 +156,12 @@ impl Resolver {
         }
     }
 
-    fn with_project(module: ast::Module, module_name: String, interfaces: ModuleInterfaceRegistry) -> Self {
+    fn with_project(module: ast::Module, module_name: String, interfaces: ResolveInterfaceRegistry) -> Self {
         Self { module_name: Some(module_name), interfaces, ..Self::new(module) }
     }
 
     fn with_stdlib_interfaces(mut self) -> Self {
-        self.interfaces = ModuleInterfaceRegistry::for_single_file();
+        self.interfaces = ResolveInterfaceRegistry::for_single_file();
         self
     }
 
@@ -1025,153 +930,6 @@ impl Resolver {
     }
 }
 
-fn stdlib_resolve_interfaces() -> HashMap<String, ModuleInterface> {
-    StdlibRegistry::new()
-        .modules()
-        .map(|module| {
-            let mut members = HashMap::new();
-            for name in module.interface.functions.keys() {
-                members.insert(
-                    (Namespace::Value, name.clone()),
-                    ModuleMember { public: true, span: module_span() },
-                );
-            }
-            for name in module.interface.types.keys() {
-                members.insert(
-                    (Namespace::Type, name.clone()),
-                    ModuleMember { public: true, span: module_span() },
-                );
-            }
-            for name in module.interface.constructors.keys() {
-                members.insert(
-                    (Namespace::Constructor, name.clone()),
-                    ModuleMember { public: true, span: module_span() },
-                );
-            }
-            (module.name.to_string(), ModuleInterface { members })
-        })
-        .collect()
-}
-
-fn dependency_resolve_interfaces(
-    interfaces: &HashMap<String, types::ModuleInterface>,
-) -> HashMap<String, ModuleInterface> {
-    interfaces
-        .iter()
-        .map(|(module, interface)| {
-            let mut members = HashMap::new();
-            for (name, type_) in &interface.functions {
-                members.insert(
-                    (Namespace::Value, name.clone()),
-                    ModuleMember { public: true, span: type_span(type_) },
-                );
-            }
-            for (name, declaration) in &interface.types {
-                members.insert(
-                    (Namespace::Type, name.clone()),
-                    ModuleMember { public: true, span: declaration.span },
-                );
-            }
-            for (name, constructor) in &interface.constructors {
-                members.insert(
-                    (Namespace::Constructor, name.clone()),
-                    ModuleMember { public: true, span: constructor.span },
-                );
-                for field in &constructor.fields {
-                    members.insert(
-                        (Namespace::Field, field.name.clone()),
-                        ModuleMember { public: true, span: constructor.span },
-                    );
-                }
-            }
-            (module.clone(), ModuleInterface { members })
-        })
-        .collect()
-}
-
-fn type_span(_type_: &types::Type) -> Span {
-    module_span()
-}
-
-fn module_span() -> Span {
-    Span { file_id: crate::source::SourceFileId(u32::MAX), start: 0, end: 0 }
-}
-
-impl From<&ast::Module> for ModuleInterface {
-    fn from(value: &ast::Module) -> Self {
-        let mut members = HashMap::new();
-
-        for function in &value.functions {
-            members.insert(
-                (Namespace::Value, function.name.text.clone()),
-                ModuleMember { public: function.public, span: function.name.span },
-            );
-        }
-
-        for declaration in &value.declarations {
-            match declaration {
-                Declaration::Constant(constant) => {
-                    members.insert(
-                        (Namespace::Value, constant.name.text.clone()),
-                        ModuleMember { public: constant.public, span: constant.span },
-                    );
-                }
-                Declaration::ExternalFunction(function) => {
-                    members.insert(
-                        (Namespace::Value, function.name.text.clone()),
-                        ModuleMember { public: function.public, span: function.span },
-                    );
-                }
-                Declaration::ExternalType(type_) => {
-                    members.insert(
-                        (Namespace::Type, type_.name.text.clone()),
-                        ModuleMember { public: type_.public, span: type_.span },
-                    );
-                }
-                Declaration::TypeDefinition(type_) => {
-                    members.insert(
-                        (Namespace::Type, type_.name.text.clone()),
-                        ModuleMember { public: type_.public, span: type_.span },
-                    );
-                    let exported_details = type_.public && !type_.opaque;
-                    for constructor in &type_.constructors {
-                        members.insert(
-                            (Namespace::Constructor, constructor.name.text.clone()),
-                            ModuleMember { public: exported_details, span: constructor.span },
-                        );
-                        for argument in &constructor.arguments {
-                            if let Some(label) = &argument.label {
-                                members.insert(
-                                    (Namespace::Field, label.text.clone()),
-                                    ModuleMember { public: exported_details, span: label.span },
-                                );
-                            }
-                        }
-                    }
-                }
-                Declaration::TypeAlias(alias) => {
-                    members.insert(
-                        (Namespace::Type, alias.name.text.clone()),
-                        ModuleMember { public: alias.public, span: alias.span },
-                    );
-                }
-                Declaration::TargetGroup(group) => {
-                    let nested = Self::from(&ast::Module {
-                        span: group.span,
-                        declarations: group.declarations.clone(),
-                        imports: Vec::new(),
-                        functions: Vec::new(),
-                    });
-                    members.extend(nested.members);
-                }
-                _ => {}
-            }
-        }
-
-        Self { members }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1409,6 +1167,59 @@ fn main(person) { case person { Missing(age: value) -> value } }
             diagnostic
                 .message
                 .contains("module `gleam/int` has no member `missing`")
+        }));
+    }
+
+    #[test]
+    fn resolves_prelude_names_from_interface_registry() {
+        let resolved = resolve_source("fn main(values: List(Int)) -> Int { 1 }").expect("resolve prelude types");
+
+        assert!(
+            resolved
+                .references
+                .iter()
+                .any(|reference| reference.name.text == "List")
+        );
+        assert!(resolved.references.iter().any(|reference| reference.name.text == "Int"));
+    }
+
+    #[test]
+    fn resolves_project_stdlib_dependency_and_unqualified_imports_through_registry() {
+        let dir = tempdir().expect("tempdir");
+        write(
+            &dir.path().join("gleam.toml"),
+            r#"name = "app"
+version = "1.0.0"
+
+[dependencies]
+dep_pkg = { path = "dep_pkg" }
+"#,
+        );
+        write(&dir.path().join("src/app.gleam"), "pub fn id(x: Int) -> Int { x }\n");
+        write(
+            &dir.path().join("src/main.gleam"),
+            r#"import app.{id}
+import dep/foo.{dep_id}
+import gleam/int.{to_string}
+
+pub fn main() -> String {
+  to_string(id(dep_id(1)))
+}
+"#,
+        );
+        let dep = dir.path().join("dep_pkg");
+        write(&dep.join("gleam.toml"), "name = \"dep_pkg\"\nversion = \"0.1.0\"\n");
+        write(&dep.join("src/dep/foo.gleam"), "pub fn dep_id(x: Int) -> Int { x }\n");
+        let project = project::load_project(dir.path()).expect("load project");
+
+        let resolved = resolve_project(&project).expect("resolve registry imports");
+
+        assert_eq!(resolved.modules.len(), 2);
+        assert!(resolved.modules.iter().any(|module| {
+            module
+                .references
+                .iter()
+                .any(|reference| reference.name.text == "to_string")
         }));
     }
 

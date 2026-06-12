@@ -7,7 +7,7 @@ use crate::diagnostic::{Diagnostic, DiagnosticCode, Diagnostics};
 use crate::project::{Dependency, DependencySource, DependencyToml};
 use crate::source::{SourceFile, SourceFileId};
 use crate::types::ModuleInterface;
-use crate::{ast, parse, target, types};
+use crate::{ast, parse, target};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DependencyPackage {
@@ -108,7 +108,7 @@ fn load_pkg_interfaces(
             .join("/");
         match parse_module(&path, source_id, compile_target) {
             Ok(module) => {
-                interfaces.insert(module_name, types::interface_from_ast(&module));
+                interfaces.insert(module_name, ModuleInterface::from(&module));
             }
             Err(mut errors) => diagnostics.append(&mut errors),
         }

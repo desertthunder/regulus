@@ -19,10 +19,10 @@ use crate::{
         TypeTerm, UnificationError, Unifier,
     },
     labels::{ArgumentLabelError, FunctionLabelMap, call_argument_order, function_label_map, use_callback_placement},
+    loader::registry::TypeInterfaceRegistry,
     project::Project,
     resolve::{self, ResolvedModule},
-    source::Span,
-    stdlib::StdlibRegistry,
+    source::{SourceFileId, Span},
 };
 
 /// A type known to the compiler.
@@ -118,6 +118,78 @@ pub struct ModuleInterface {
     pub constructors: HashMap<String, ConstructorInfo>,
 }
 
+impl From<&ast::Module> for ModuleInterface {
+    fn from(module: &ast::Module) -> Self {
+        let mut interface = ModuleInterface::default();
+        collect_interface_declarations(&module.declarations, &mut interface);
+        interface
+    }
+}
+
+impl ModuleInterface {
+    pub fn prelude_type_names() -> [&'static str; 10] {
+        [
+            "Int", "Float", "String", "BitArray", "Bool", "Nil", "List", "Result", "Option", "Order",
+        ]
+    }
+
+    pub fn module_span() -> Span {
+        Span { file_id: SourceFileId(u32::MAX), start: 0, end: 0 }
+    }
+
+    pub fn prelude() -> ModuleInterface {
+        let mut interface = ModuleInterface::default();
+        for name in Self::prelude_type_names() {
+            interface.types.insert(
+                name.to_string(),
+                TypeDeclaration {
+                    name: name.to_string(),
+                    parameters: Vec::new(),
+                    opaque: false,
+                    constructors: Vec::new(),
+                    span: Self::module_span(),
+                },
+            );
+        }
+        interface
+    }
+
+    pub fn interface_constructors(&self) -> Vec<(String, ConstructorInfo)> {
+        self.constructors
+            .iter()
+            .map(|(name, constructor)| (name.clone(), constructor.clone()))
+            .collect()
+    }
+
+    pub fn qualified_values(&self, module: &str) -> Vec<(String, Type)> {
+        let short = module.rsplit('/').next().unwrap_or(module);
+        self.functions
+            .iter()
+            .flat_map(|(name, type_)| {
+                [
+                    (format!("{module}.{name}"), type_.clone()),
+                    (format!("{short}.{name}"), type_.clone()),
+                    (name.clone(), type_.clone()),
+                ]
+            })
+            .collect()
+    }
+
+    pub fn qualified_function_labels(&self, module: &str) -> Vec<(String, Vec<Option<String>>)> {
+        let short = module.rsplit('/').next().unwrap_or(module);
+        self.function_labels
+            .iter()
+            .flat_map(|(name, labels)| {
+                [
+                    (format!("{module}.{name}"), labels.clone()),
+                    (format!("{short}.{name}"), labels.clone()),
+                    (name.clone(), labels.clone()),
+                ]
+            })
+            .collect()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TypedExpression {
     pub span: Span,
@@ -147,12 +219,6 @@ pub struct TypedProject {
     pub package_name: String,
     pub modules: Vec<TypedModule>,
     pub interfaces: HashMap<String, ModuleInterface>,
-}
-
-pub fn interface_from_ast(module: &ast::Module) -> ModuleInterface {
-    let mut interface = ModuleInterface::default();
-    collect_interface_declarations(&module.declarations, &mut interface);
-    interface
 }
 
 fn collect_interface_declarations(declarations: &[Declaration], interface: &mut ModuleInterface) {
@@ -267,10 +333,12 @@ pub fn check(module: ResolvedModule) -> Result<TypedModule, Diagnostics> {
 }
 
 fn check_with_externals(
-    module: ResolvedModule, external_constructors: HashMap<String, ConstructorInfo>,
-    external_values: HashMap<String, Type>, external_function_labels: FunctionLabelMap,
+    module: ResolvedModule, module_interfaces: TypeInterfaceRegistry,
+    external_constructors: HashMap<String, ConstructorInfo>, external_values: HashMap<String, Type>,
+    external_function_labels: FunctionLabelMap,
 ) -> Result<TypedModule, Diagnostics> {
     TypeChecker::new(module)
+        .with_module_interfaces(module_interfaces)
         .with_external_constructors(external_constructors)
         .with_external_values(external_values)
         .with_external_function_labels(external_function_labels)
@@ -283,41 +351,20 @@ pub fn check_project(project: &Project) -> Result<TypedProject, Diagnostics> {
     let mut interfaces = HashMap::new();
     let mut diagnostics = Vec::new();
 
-    let stdlib_interfaces = StdlibRegistry::new()
-        .modules()
-        .map(|module| (module.name.to_string(), module.interface.clone()))
-        .collect::<HashMap<_, _>>();
-    let dependency_interfaces = project.graph.dependency_interfaces.clone();
-    let mut external_interfaces = stdlib_interfaces.clone();
-    external_interfaces.extend(dependency_interfaces.clone());
-    interfaces.extend(external_interfaces.clone());
+    let type_interfaces = TypeInterfaceRegistry::for_project(
+        &project.graph.dependency_interfaces,
+        project
+            .graph
+            .modules
+            .iter()
+            .zip(resolved.modules.iter())
+            .map(|(module_info, module)| (module_info.name.as_str(), &module.ast)),
+    );
+    interfaces.extend(type_interfaces.modules.clone());
 
-    let external_constructors = resolved
-        .modules
-        .iter()
-        .flat_map(|module| constructors_from_ast(&module.ast))
-        .chain(external_interfaces.values().flat_map(interface_constructors))
-        .collect::<HashMap<_, _>>();
-    let stdlib_values = external_interfaces
-        .iter()
-        .flat_map(|(module, interface)| qualified_values_from_interface(module, interface))
-        .collect::<HashMap<_, _>>();
-    let mut external_values = resolved
-        .modules
-        .iter()
-        .flat_map(|module| values_from_ast(&module.ast))
-        .chain(stdlib_values)
-        .collect::<HashMap<_, _>>();
-    let mut external_function_labels = resolved
-        .modules
-        .iter()
-        .flat_map(|module| function_label_map(&module.ast))
-        .chain(
-            external_interfaces
-                .iter()
-                .flat_map(|(module, interface)| qualified_function_labels_from_interface(module, interface)),
-        )
-        .collect::<HashMap<_, _>>();
+    let external_constructors = type_interfaces.constructors();
+    let mut external_values = type_interfaces.values();
+    let mut external_function_labels = type_interfaces.function_labels();
 
     let module_order = project_module_order(project, &resolved);
     let mut resolved_modules = resolved.modules.into_iter().map(Some).collect::<Vec<_>>();
@@ -326,6 +373,7 @@ pub fn check_project(project: &Project) -> Result<TypedProject, Diagnostics> {
         let module = resolved_modules[index].take().expect("resolved module checked once");
         match check_with_externals(
             module,
+            type_interfaces.clone(),
             external_constructors.clone(),
             external_values.clone(),
             external_function_labels.clone(),
@@ -412,6 +460,7 @@ struct TypeChecker {
     external_values: HashMap<String, Type>,
     constructors: HashMap<String, ConstructorInfo>,
     function_labels: HashMap<String, Vec<Option<String>>>,
+    module_interfaces: TypeInterfaceRegistry,
     interface: ModuleInterface,
     functions: Vec<TypedFunction>,
     expressions: Vec<TypedExpression>,
@@ -430,6 +479,7 @@ impl TypeChecker {
             external_values: HashMap::new(),
             constructors: HashMap::new(),
             function_labels,
+            module_interfaces: TypeInterfaceRegistry::for_single_file(),
             interface: ModuleInterface::default(),
             functions: Vec::new(),
             expressions: Vec::new(),
@@ -438,6 +488,11 @@ impl TypeChecker {
             inference_substitutions: Substitutions::new(),
             next_inference_variable: 0,
         }
+    }
+
+    fn with_module_interfaces(mut self, interfaces: TypeInterfaceRegistry) -> Self {
+        self.module_interfaces = interfaces;
+        self
     }
 
     fn with_external_constructors(mut self, constructors: HashMap<String, ConstructorInfo>) -> Self {
@@ -457,7 +512,7 @@ impl TypeChecker {
 
     fn check(mut self) -> Result<TypedModule, Diagnostics> {
         self.collect_type_declarations();
-        self.collect_imported_stdlib_interfaces();
+        self.collect_imported_interfaces();
         self.collect_annotated_function_types();
         self.collect_external_function_types();
         self.collect_constant_types();
@@ -524,10 +579,9 @@ impl TypeChecker {
         }
     }
 
-    fn collect_imported_stdlib_interfaces(&mut self) {
-        let registry = StdlibRegistry::new();
+    fn collect_imported_interfaces(&mut self) {
         for import in &self.module.ast.imports {
-            let Some(interface) = registry.interface(&import.module.text) else {
+            let Some(interface) = self.module_interfaces.get(&import.module.text) else {
                 continue;
             };
             self.interface.types.extend(interface.types.clone());
@@ -551,12 +605,19 @@ impl TypeChecker {
                 self.external_values
                     .insert(format!("{module_name}.{name}"), type_.clone());
             }
+            for (name, labels) in &interface.function_labels {
+                self.function_labels
+                    .insert(format!("{module_name}.{name}"), labels.clone());
+            }
             for imported in &import.unqualified {
                 let local_name = imported.alias.as_ref().unwrap_or(&imported.name).text.clone();
                 match imported.kind {
                     ast::UnqualifiedImportKind::Value => {
                         if let Some(type_) = interface.functions.get(&imported.name.text) {
-                            self.external_values.insert(local_name, type_.clone());
+                            self.external_values.insert(local_name.clone(), type_.clone());
+                        }
+                        if let Some(labels) = interface.function_labels.get(&imported.name.text) {
+                            self.function_labels.insert(local_name, labels.clone());
                         }
                     }
                     ast::UnqualifiedImportKind::TypeOrConstructor => {
@@ -2424,104 +2485,6 @@ fn bit_string_pattern_bindings(raw: &ast::RawSyntax) -> Vec<ast::Name> {
         .collect()
 }
 
-fn values_from_ast(module: &ast::Module) -> Vec<(String, Type)> {
-    let mut checker = TypeChecker::new(ResolvedModule {
-        ast: module.clone(),
-        symbols: resolve::SymbolTable { symbols: Vec::new(), scopes: Vec::new() },
-        references: Vec::new(),
-    });
-    let mut values = Vec::new();
-    for declaration in &module.declarations {
-        match declaration {
-            Declaration::Function(function) => {
-                if let Some(type_) = checker.function_type_from_annotations(function) {
-                    values.push((function.name.text.clone(), type_.clone()));
-                    values.push((format!("{}.{}", module_name(module), function.name.text), type_));
-                }
-            }
-            Declaration::ExternalFunction(function) => {
-                if let Some(type_) = checker.external_function_type(function) {
-                    values.push((function.name.text.clone(), type_.clone()));
-                    values.push((format!("{}.{}", module_name(module), function.name.text), type_));
-                }
-            }
-            Declaration::Constant(constant) => {
-                if let Some(type_) = checker.constant_type(constant) {
-                    values.push((constant.name.text.clone(), type_.clone()));
-                    values.push((format!("{}.{}", module_name(module), constant.name.text), type_));
-                }
-            }
-            _ => {}
-        }
-    }
-    values
-}
-
-fn module_name(module: &ast::Module) -> String {
-    module
-        .imports
-        .first()
-        .map(|import| import.module.text.clone())
-        .unwrap_or_else(|| "module".into())
-}
-
-fn interface_constructors(interface: &ModuleInterface) -> Vec<(String, ConstructorInfo)> {
-    interface
-        .constructors
-        .iter()
-        .map(|(name, constructor)| (name.clone(), constructor.clone()))
-        .collect()
-}
-
-fn qualified_values_from_interface(module: &str, interface: &ModuleInterface) -> Vec<(String, Type)> {
-    let short = module.rsplit('/').next().unwrap_or(module);
-    interface
-        .functions
-        .iter()
-        .flat_map(|(name, type_)| {
-            [
-                (format!("{module}.{name}"), type_.clone()),
-                (format!("{short}.{name}"), type_.clone()),
-                (name.clone(), type_.clone()),
-            ]
-        })
-        .collect()
-}
-
-fn qualified_function_labels_from_interface(
-    module: &str, interface: &ModuleInterface,
-) -> Vec<(String, Vec<Option<String>>)> {
-    let short = module.rsplit('/').next().unwrap_or(module);
-    interface
-        .function_labels
-        .iter()
-        .flat_map(|(name, labels)| {
-            [
-                (format!("{module}.{name}"), labels.clone()),
-                (format!("{short}.{name}"), labels.clone()),
-                (name.clone(), labels.clone()),
-            ]
-        })
-        .collect()
-}
-
-fn constructors_from_ast(module: &ast::Module) -> Vec<(String, ConstructorInfo)> {
-    module
-        .declarations
-        .iter()
-        .filter_map(|declaration| match declaration {
-            Declaration::TypeDefinition(raw) => type_definition_from_ast(raw),
-            _ => None,
-        })
-        .flat_map(|declaration| {
-            declaration
-                .constructors
-                .into_iter()
-                .map(|constructor| (constructor.name.clone(), constructor))
-        })
-        .collect()
-}
-
 fn empty_use_continuation_diagnostic(span: Span) -> Diagnostic {
     Diagnostic::new(DiagnosticCode::TypeError, "use has no continuation")
         .with_label(Label::primary(span, "nothing follows this use expression"))
@@ -3010,6 +2973,52 @@ fn generic(result: Outcome(Int)) { case result { Ok(value) -> value Error(_) -> 
                 .iter()
                 .any(|expression| expression.type_ == Type::String)
         );
+    }
+
+    #[test]
+    fn type_checks_project_stdlib_dependency_and_unqualified_imports_from_registry() {
+        let dir = tempdir().expect("tempdir");
+        write(
+            &dir.path().join("gleam.toml"),
+            r#"name = "app"
+version = "1.0.0"
+
+[dependencies]
+dep_pkg = { path = "dep_pkg" }
+"#,
+        );
+        write(&dir.path().join("src/app.gleam"), "pub fn id(x: Int) -> Int { x }\n");
+        write(
+            &dir.path().join("src/main.gleam"),
+            r#"import app as numbers
+import dep/foo.{Make, labelled}
+import gleam/int as integer
+
+pub fn main() -> String {
+  integer.to_string(numbers.id(labelled(value: Make(1))))
+}
+"#,
+        );
+        let dep = dir.path().join("dep_pkg");
+        write(&dep.join("gleam.toml"), "name = \"dep_pkg\"\nversion = \"0.1.0\"\n");
+        write(
+            &dep.join("src/dep/foo.gleam"),
+            r#"pub type Thing {
+  Make(count: Int)
+}
+
+pub fn labelled(value thing: Thing) -> Int {
+  1
+}
+"#,
+        );
+
+        let project = project::load_project(dir.path()).expect("load project");
+        let typed = check_project(&project).expect("type check registry-backed imports");
+
+        assert!(typed.interfaces.contains_key("app"));
+        assert!(typed.interfaces.contains_key("dep/foo"));
+        assert!(typed.interfaces.contains_key("gleam/int"));
     }
 
     #[test]
