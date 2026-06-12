@@ -1,12 +1,16 @@
-import { defineConfig } from "vitepress";
+import { type DefaultTheme, defineConfig } from "vitepress";
 
-const sidebar = [
+const sidebar: DefaultTheme.Config["sidebar"] = [
   {
     text: "Guide",
     items: [
       { text: "Overview", link: "/guide/" },
       { text: "Installation", link: "/guide/installation" },
-      { text: "Usage", link: "/guide/usage" },
+      {
+        text: "Usage",
+        link: "/guide/usage/",
+        items: [{ text: "CLI", link: "/guide/usage/cli" }],
+      },
       { text: "Examples", link: "/guide/examples" },
     ],
   },

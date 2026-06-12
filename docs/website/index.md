@@ -14,9 +14,8 @@ hero:
 
 features:
   - title: Use the compiler
-    details: Build & compile your Gleam projects
-      compiler dumps.
-    link: /guide/usage
+    details: Build projects, compile files, run exports, and inspect dumps.
+    link: /guide/usage/
   - title: Check support
     details: See the supported language subset, runtime shape, and current
       limitations.

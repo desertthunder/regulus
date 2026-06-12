@@ -7,9 +7,6 @@ full compiler pipeline:
 Gleam source -> parse -> AST -> resolve -> type check -> IR -> Wasm
 ```
 
-This document describes the supported source language, compiler behavior, and
-known gaps.
-
 ## Summary
 
 | Area                        | Status                          |

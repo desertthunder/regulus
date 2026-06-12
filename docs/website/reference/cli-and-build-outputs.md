@@ -12,8 +12,8 @@ that project root, and a `gleam.toml` argument builds the owning project.
 The command writes `build/<package>.wasm` by default. `--output` writes the
 final Wasm artifact to an exact path. `--out-dir` writes compiler-named
 artifacts such as `<package>.wasm` and `<package>.wat` into the given
-directory. `--emit` accepts comma-separated artifact kinds, including `wasm`
-and `wat`.
+directory. `--emit` accepts comma-separated artifact kinds: `wasm`, `wat`,
+`ast`, `resolved`, `typed`, and `ir`.
 
 `gleam-wasm compile <input>` compiles one Gleam source file. It runs the same
 single-file pipeline used by tests:
@@ -39,7 +39,7 @@ contract:
 - `examples/browser_scalar` builds a browser-target artifact with JS glue.
 - `examples/diagnostics/duplicate_modules` documents a failing project shape.
 
-See `docs/website/guide/usage.md` for user-facing commands.
+See `docs/website/guide/usage/cli.md` for user-facing commands.
 
 ## Targets
 
@@ -54,7 +54,7 @@ and configures backend host import validation.
 
 `--dump-dir <dir>` writes deterministic debug files. Single-file compilation
 writes AST, resolved AST, typed output, IR, and WAT dumps. Project builds write
-linked IR and WAT dumps today.
+per-module AST, resolved AST, typed output, linked IR, and WAT dumps.
 
 These dumps are for contributor inspection. Normal CLI output stays focused on
 the final artifact path, optional WAT path, and diagnostics.

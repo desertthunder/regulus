@@ -1,7 +1,17 @@
-# Usage
+# CLI
 
-Regulus provides two compiler entry points: project builds and single-file
-compilation.
+The CLI binary is named `gleam-wasm`. When running from a checkout, prefix
+commands with Cargo:
+
+```sh
+cargo run -q -p compiler_cli -- build
+```
+
+Installed binaries can be run directly:
+
+```sh
+gleam-wasm build
+```
 
 ## Build a project
 
@@ -95,25 +105,41 @@ gleam-wasm compile path/to/module.gleam --target wasmtime
 Supported target values are `wasmtime`, `browser`, and `wasi`. Project builds
 use the target from `gleam.toml` when `--target` is not provided.
 
-## Artifacts and debug dumps
+## Artifacts
 
 `--emit` selects emitted artifact kinds:
 
 ```sh
 gleam-wasm build examples/scalar_project --emit wasm,wat
+gleam-wasm build examples/scalar_project --emit wat,ast,resolved,typed,ir
 ```
 
-`wasm` is the normal binary output. `wat` writes WebAssembly text next to the
-Wasm output, or into `--out-dir` when that option is used.
+Supported emit values are:
 
-`--dump-dir` writes compiler debug dumps for contributor inspection:
+| Value      | Output                                  |
+| ---------- | --------------------------------------- |
+| `wasm`     | Final WebAssembly binary.               |
+| `wat`      | WebAssembly text for the linked module. |
+| `ast`      | Per-module AST debug dumps.             |
+| `resolved` | Per-module resolved AST debug dumps.    |
+| `typed`    | Per-module typed-module debug dumps.    |
+| `ir`       | Linked IR debug dump.                   |
+
+`wasm` is the default. `wat` writes next to the Wasm output, or into
+`--out-dir` when that option is used. Debug emit values write deterministic
+files beside the selected output path unless `--dump-dir` is set.
+
+Use `--dump-dir` to write all compiler debug dumps into a separate directory:
 
 ```sh
 gleam-wasm build examples/multi_module_project --dump-dir build/dumps
 ```
 
 Single-file dumps include AST, resolved AST, typed output, IR, and WAT. Project
-build dumps currently include linked IR and WAT.
+dumps include per-module AST, resolved AST, typed output, linked IR, and WAT.
+
+If compilation fails, Regulus does not write the final Wasm artifact. Debug
+artifacts are only written when the requested compiler phase completes.
 
 ## List project modules
 
@@ -125,6 +151,6 @@ gleam-wasm list examples/multi_module_project
 
 ## Current limitations
 
-Project compilation is still growing. Full Hex resolution, broad dependency
-language coverage, general external functions, and richer host ABI adapters are
-tracked in `docs/internal`.
+Project compilation is still growing. Broad Hex dependency language coverage,
+general external functions, and richer host ABI adapters are tracked in
+`docs/internal`.

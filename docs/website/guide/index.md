@@ -8,6 +8,7 @@ Regulus supports today.
 ## Common paths
 
 - Install or run the CLI locally: [Installation](./installation.md)
-- Compile Gleam to Wasm: [Usage](./usage.md)
+- Compile Gleam to Wasm: [Usage](./usage/)
+- Review CLI commands and flags: [CLI](./usage/cli.md)
 - Try checked fixtures and examples: [Examples](./examples.md)
 - Check language support: [Supported subset](../reference/supported-subset.md)

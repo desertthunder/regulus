@@ -35,8 +35,8 @@ that each layer can be tested and explained.
 | Type checking                   | Broad subset                    |
 | Managed runtime values          | Partial                         |
 | Standard library                | Selected modules and intrinsics |
-| Whole-project linked output     | Not supported yet               |
-| Dependency source loading       | Not supported yet               |
+| Whole-project linked output     | Supported subset                |
+| Dependency source loading       | Selected Hex and path packages  |
 | Browser, Node.js, and WASI ABIs | Incomplete                      |
 
 ### Working today
@@ -52,6 +52,8 @@ that each layer can be tested and explained.
 - [x] Render optional WAT
 - [x] Run scalar and managed-value exports in Wasmtime tests
 - [x] Load `gleam.toml` and discover project modules
+- [x] Compile supported projects into linked Wasm output
+- [x] Load selected Hex and path dependency sources
 - [x] Lower supported externals to Wasm imports
 - [x] Validate target-aware host imports
 
@@ -81,8 +83,8 @@ that each layer can be tested and explained.
 
 ### Not yet implemented
 
-- [ ] Compile full projects into linked Wasm output
-- [ ] Fetch, load, and compile dependency source modules
+- [ ] Compile every valid Gleam project shape
+- [ ] Compile broad dependency source modules without subset limits
 - [ ] Compile the full Gleam standard library from source
 - [ ] Provide complete browser, bundler, and Node.js host ABIs
 - [ ] Provide complete WASI adapters
@@ -94,18 +96,25 @@ For more detail, see the case-study book in
 
 ## Usage
 
-Compile a Gleam source file to WebAssembly:
+Build a Gleam project into one linked Wasm artifact:
+
+```sh
+cargo run -q -p compiler_cli -- build examples/scalar_project
+```
+
+Compile a single Gleam source file:
 
 ```sh
 cargo run -q -p compiler_cli -- compile fixtures/e2e/public_id.gleam \
   -o .sandbox/public_id.wasm \
-  --wat \
+  --emit wasm,wat \
   --dump-dir .sandbox/dumps
 ```
 
-The `--wat` flag also writes WebAssembly text format. The `--dump-dir` flag
-writes debug output for compiler stages such as AST, resolved names, typed
-expressions, IR, and WAT.
+`--emit` selects artifacts such as `wasm`, `wat`, `ast`, `resolved`, `typed`,
+and `ir`. The `--dump-dir` flag writes debug output for compiler stages. See
+[CLI usage](./docs/website/guide/usage/cli.md) for project builds, targets,
+artifacts, and `run`.
 
 ## Development
 
