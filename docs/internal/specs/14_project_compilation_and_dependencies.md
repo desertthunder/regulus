@@ -103,6 +103,48 @@ The second layer should load selected Hex and path dependency source modules and
 compile them through the same pipeline as project modules. This is preferred
 when the package code uses the supported language subset.
 
+Hex loading should follow the public Hex repository API used by Gleam:
+
+- package metadata: `GET https://repo.hex.pm/packages/{name}`
+- package tarball: `GET https://repo.hex.pm/tarballs/{name}-{version}.tar`
+- optional full version index: `GET https://repo.hex.pm/versions`
+
+Repository metadata responses are gzip-compressed signed protobuf payloads and
+must be verified before use. Tarballs should be checksum-verified from the lock
+metadata, then cached by checksum under:
+
+```text
+$HOME/.regulus/store/hex/tarballs/{outer-checksum}.tar
+```
+
+The global registry cache is immutable and shared across projects. Project
+builds should extract packages into disposable project-local build directories:
+
+```text
+{project}/build/packages/packages.toml
+{project}/build/packages/{package-name}/
+```
+
+The outer tarball contains `contents.tar.gz`, which holds source files,
+`gleam.toml`, and package metadata. The compiler should extract that inner
+archive into the project package directory. A small stamp file in each extracted
+package should record name, version, checksum, source, and cache schema version.
+If the stamp does not match, the package directory should be replaced.
+
+Path dependencies should be loaded from their declared path without network
+access. The build should make clear progress output when resolving, downloading,
+using cached packages, and extracting sources:
+
+```text
+Resolving dependencies
+Downloading gleam_stdlib 0.50.0
+Using cached gleam_erlang 1.3.0
+Extracting gleam_stdlib 0.50.0
+```
+
+Quiet output should stay stable. `--verbose` may print source URLs, checksums,
+cache paths, package build paths, and source paths.
+
 ### Unsupported dependencies
 
 Unsupported dependency members, modules, syntax, runtime primitives, or ABI
