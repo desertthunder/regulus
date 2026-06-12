@@ -3,12 +3,12 @@
 Reference pages describe the compiler surface and internal models in a stable,
 lookup-friendly form.
 
-## User-facing reference
+## Usage Reference
 
 - [Supported subset](./supported-subset.md)
 - [CLI and build outputs](./cli-and-build-outputs.md)
 
-## Compiler reference
+## Compiler Internals & Project Reference
 
 - [Project model](./project-model-and-modules.md)
 - [Gleam syntax](./full-gleam-syntax.md)

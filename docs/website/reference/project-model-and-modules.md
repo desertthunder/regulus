@@ -58,7 +58,7 @@ no source span exists and normal spans once a source file is available.
 `fixtures/projects/scalar_app` is the small project fixture for current compiler
 behavior. It should grow as language support grows.
 
-The checked examples cover project shapes at a user-facing level:
+The checked examples cover usable project shapes:
 
 - `examples/scalar_project` is the smallest working project build.
 - `examples/multi_module_project` exercises same-project imports.

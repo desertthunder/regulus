@@ -31,15 +31,14 @@ an inspection command and does not write artifacts.
 
 ## Examples
 
-The `examples/` directory keeps user-facing projects aligned with this CLI
-contract:
+The `examples/` directory should be kept aligned with this CLI contract:
 
 - `examples/scalar_project` builds the smallest project Wasm artifact.
 - `examples/multi_module_project` builds linked same-project modules.
 - `examples/browser_scalar` builds a browser-target artifact with JS glue.
 - `examples/diagnostics/duplicate_modules` documents a failing project shape.
 
-See `docs/website/guide/usage/cli.md` for user-facing commands.
+See `docs/website/guide/usage/cli.md` for a usage guide/manual.
 
 ## Targets
 
