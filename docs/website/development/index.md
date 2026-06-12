@@ -23,4 +23,5 @@ Gleam source
 - [Runtime representation](./runtime-representation.md)
 - [Runtime memory](./runtime-memory.md)
 - [Wasm backend and runtime](./wasm-backend-and-runtime.md)
+- [JavaScript host ABI contract](./js_abi_contract.md)
 - [Project model](../reference/project-model-and-modules.md)

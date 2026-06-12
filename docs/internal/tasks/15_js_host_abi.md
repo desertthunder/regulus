@@ -5,6 +5,9 @@
 Define and implement the first usable JavaScript host ABI for Regulus. This is
 the primary usability milestone before broad stdlib completion.
 
+The public ABI contract lives in
+[JavaScript host ABI contract](../../website/development/js_abi_contract.md).
+
 ## Milestone slice
 
 - [x] Compile a Gleam project with one selected JavaScript external.
@@ -18,12 +21,12 @@ the primary usability milestone before broad stdlib completion.
 
 ### ABI shape
 
-- [ ] Define the JS host ABI document for scalar and managed values.
-- [ ] Define import module names for shared JS, browser, bundler, and Node.js
+- [x] Define the JS host ABI document for scalar and managed values.
+- [x] Define import module names for shared JS, browser, bundler, and Node.js
       profiles.
 - [x] Add a profile-selection check that accepts browser, bundler, and Node.js
       and rejects unknown JS host profiles.
-- [ ] Define supported exported function parameter and return shapes for JS
+- [x] Define supported exported function parameter and return shapes for JS
       hosts.
 - [ ] Add source-spanned diagnostics for unsupported JS import and export
       shapes.

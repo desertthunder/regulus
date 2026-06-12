@@ -44,6 +44,7 @@ const sidebar: DefaultTheme.Config["sidebar"] = [
       },
       { text: "Runtime memory", link: "/development/runtime-memory" },
       { text: "Wasm backend", link: "/development/wasm-backend-and-runtime" },
+      { text: "JS host ABI", link: "/development/js_abi_contract" },
     ],
   },
   {
