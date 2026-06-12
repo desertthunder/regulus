@@ -2,7 +2,16 @@
 
 ## Goal
 
-Support useful standard library modules and host calls.
+Support useful standard library modules and host calls without making broad
+stdlib completion block the JS host ABI milestone.
+
+## Direction
+
+- [ ] Keep explicit stdlib intrinsics limited to compiler/runtime primitives.
+- [ ] Prefer compiled Gleam source or bodyless externals for library behavior.
+- [ ] Use the JS host ABI for JavaScript-backed stdlib and dependency calls.
+- [ ] Treat remaining stdlib modules as follow-on work driven by examples and
+      dependency gaps, not as a prerequisite for usable JS output.
 
 ## Tasks
 
@@ -138,9 +147,10 @@ Support useful standard library modules and host calls.
 - [ ] Support `gleam/pair`.
 - [ ] Support `gleam/set`.
 - [ ] Support `gleam/uri`.
-- [ ] Prefer compiling stdlib Gleam source for Group 2 where possible.
+- [ ] Prefer compiling stdlib Gleam source or using bodyless externals for
+      Group 2 where possible.
 - [ ] Add target-specific intrinsics or host adapters only when source
-      compilation is not enough.
+      compilation and the JS host ABI are not enough.
 
 ## Done when
 

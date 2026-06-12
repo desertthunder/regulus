@@ -2,7 +2,17 @@
 
 ## Goal
 
-Define and implement a JavaScript host ABI for browser-capable Wasm.
+Define and implement the first usable JavaScript host ABI for Regulus. This is
+the primary usability milestone before broad stdlib completion.
+
+## Milestone slice
+
+- [ ] Compile a Gleam project with one selected JavaScript external.
+- [ ] Emit or package bundler-oriented ES module glue for the Wasm artifact.
+- [ ] Pass a JavaScript string into Gleam through the glue.
+- [ ] Return a Gleam string to JavaScript through the glue.
+- [ ] Add one smoke test that runs the whole path without handwritten pointer
+      arithmetic in application code.
 
 ## Tasks
 
@@ -43,6 +53,18 @@ Define and implement a JavaScript host ABI for browser-capable Wasm.
 - [ ] Add ABI validation for externals that accept or return opaque handles.
 - [ ] Add tests for passing a handle through Gleam without exposing JS object
       internals to guest memory.
+
+### Bodyless externals
+
+- [ ] Parse bodyless `@external` declarations from project and dependency
+      source.
+- [ ] Represent bodyless externals in AST, resolver interfaces, and typed
+      module interfaces.
+- [ ] Select the target-specific external before lowering.
+- [ ] Lower selected JavaScript externals through the same ABI as handwritten
+      project externals.
+- [ ] Add diagnostics for missing selected externals and unsupported external
+      ABI shapes.
 
 ### Browser profile
 

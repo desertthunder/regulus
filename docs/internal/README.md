@@ -8,8 +8,8 @@ The public/user docs live in `docs/website`. The teaching book lives in
 ## Specs
 
 - [Project compilation and dependencies][project-spec]
-- [Stdlib and host interop](specs/15_stdlib_and_host_interop.md)
-- [JS host ABI](specs/16_js_host_abi.md)
+- [JS host ABI](specs/15_js_host_abi.md)
+- [Stdlib and host interop](specs/16_stdlib_and_host_interop.md)
 - [CLI and build outputs](specs/17_cli_and_build_outputs.md)
 - [Example projects](specs/18_example_projects.md)
 - [Runtime memory hardening](specs/19_runtime_memory_hardening.md)
@@ -18,8 +18,8 @@ The public/user docs live in `docs/website`. The teaching book lives in
 ## Task Trackers
 
 - [Project compilation and dependencies][project-task]
-- [Stdlib and host interop](tasks/15_stdlib_and_host_interop.md)
-- [JS host ABI](tasks/16_js_host_abi.md)
+- [JS host ABI](tasks/15_js_host_abi.md)
+- [Stdlib and host interop](tasks/16_stdlib_and_host_interop.md)
 - [CLI and build outputs](tasks/17_cli_and_build_outputs.md)
 - [Lustre weather SPA](tasks/18_lustre_weather_example.md)
 - [Wisp Dev API](tasks/19_wisp_static_data_api_example.md)

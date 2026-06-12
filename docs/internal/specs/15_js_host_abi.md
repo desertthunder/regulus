@@ -8,6 +8,22 @@ This spec defines the shared JavaScript host boundary. Browser, bundler, and
 Node.js profiles should build on this boundary instead of adding
 product-specific compiler behavior.
 
+The JS host ABI is the next usability milestone for Regulus. Broad stdlib
+coverage should not block this work. A small, documented JS boundary is more
+important than reimplementing library behavior in the compiler.
+
+## Priority
+
+Regulus should first prove that a Gleam project can compile to Wasm plus JS
+glue, call a JS external, pass a JS string into Gleam, return a Gleam string to
+JS, and run through a bundler-oriented smoke test. Browser and Node.js profiles
+should reuse the same value ABI after that path works.
+
+Stdlib and dependency support should use this interop substrate wherever
+possible. Runtime intrinsics remain appropriate only for compiler-owned value
+representations, allocation, closure dispatch, structural equality, failure
+payloads, and narrow primitives that cannot be expressed in Gleam source.
+
 ## Scope
 
 The JS host ABI covers values and calls crossing between compiled Gleam Wasm and
@@ -45,6 +61,7 @@ helpers for common shapes.
 
 The first glue layer can be small and stable:
 
+- load a bundler-oriented ES module wrapper for a `.wasm` artifact
 - instantiate a module with target-specific imports
 - write JS strings and receive managed string pointers
 - read managed strings from exported function results
@@ -124,4 +141,4 @@ before Wasm emission.
 
 ## Active tasks
 
-See [JS host ABI tasks](../tasks/16_js_host_abi.md).
+See [JS host ABI tasks](../tasks/15_js_host_abi.md).

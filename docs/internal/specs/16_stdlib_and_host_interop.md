@@ -1,8 +1,13 @@
-# Open standard library and host interop
+# Standard library and host interop
 
 The backend has a raw scalar and managed-pointer ABI for current tests. This
 spec tracks the work needed for useful standard library modules and concrete
 host interfaces for Wasmtime, WASI, and the browser.
+
+This is now a foundation and follow-on track, not the next product milestone.
+The JS host ABI should come first. Stdlib support should increasingly ride on
+normal source compilation, bodyless externals, and JS host interop rather than
+bespoke compiler implementations.
 
 ## Strategies
 
@@ -15,7 +20,11 @@ Possible standard library strategies include:
 
 The strategy can vary by module, but it should be explicit and tested.
 
-Regulus should support the stdlib in two groups.
+Regulus should keep explicit stdlib support narrow and transitional. It exists
+to bootstrap common programs, expose compiler-owned primitives, and provide
+clear diagnostics while ordinary source and external support matures.
+
+The current stdlib surface is tracked in two groups.
 
 ### Group 1: initial useful stdlib
 
@@ -52,8 +61,8 @@ import, compiled Gleam source, or adapter around a host import.
 
 ### Group 2: remaining stdlib
 
-Group 2 is the rest of the Gleam stdlib. It should be finished after Group 1,
-the host ABI, and the target adapters are stable.
+Group 2 is the rest of the Gleam stdlib. It should be expanded after the JS
+host ABI and target adapters are useful enough to host real examples.
 
 The remaining modules are:
 
@@ -75,9 +84,9 @@ intrinsics and host adapters should be reserved for functions that require
 special ABI support, target capabilities, or efficient runtime primitives.
 
 The compiler should not reimplement library behavior when the same behavior can
-be compiled from Gleam source. Unsupported library code should identify the
-missing language, dependency, runtime, or ABI feature that blocks ordinary
-compilation.
+be compiled from Gleam source or expressed through bodyless externals and the JS
+host ABI. Unsupported library code should identify the missing language,
+dependency, runtime, or ABI feature that blocks ordinary compilation.
 
 ## Host ABI
 
@@ -151,7 +160,7 @@ functions with documented adapters, not special cases in user code.
 
 JavaScript hosts need a stable boundary over the low-level managed-pointer ABI.
 The shared value rules, browser, bundler, and Node.js profiles, opaque handles,
-and JS glue are defined in [JS host ABI](./16_js_host_abi.md).
+and JS glue are defined in [JS host ABI](./15_js_host_abi.md).
 
 ## Higher-order intrinsics and runtime callbacks
 
@@ -216,4 +225,4 @@ WASM assembly.
 
 ## Active tasks
 
-See [Stdlib and host interop tasks](../tasks/15_stdlib_and_host_interop.md).
+See [Stdlib and host interop tasks](../tasks/16_stdlib_and_host_interop.md).
