@@ -776,6 +776,10 @@ pub fn main(input: String) -> String { request_text(input) }"#,
         "__regulus_string_new",
         "__regulus_string_len",
         "__regulus_string_data",
+        "__regulus_value_tag",
+        "__regulus_value_arity",
+        "__regulus_value_constructor",
+        "__regulus_value_field",
     ] {
         assert!(
             wasm.wat.contains(&format!("(export \"{name}\"")),

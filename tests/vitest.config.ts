@@ -4,5 +4,6 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["js_host_abi/**/*.test.ts"],
+    testTimeout: 30_000,
   },
 });

@@ -381,6 +381,55 @@ impl<'a> StructuredEmitter<'a> {
     call $__string_data
   )
   (export "__regulus_string_data" (func $__regulus_string_data))
+  (func $__regulus_value_tag (param $ptr i32) (result i32)
+    local.get $ptr
+    i32.load
+  )
+  (export "__regulus_value_tag" (func $__regulus_value_tag))
+  (func $__regulus_value_arity (param $ptr i32) (result i32)
+    local.get $ptr
+    i32.const 4
+    i32.add
+    i32.load
+  )
+  (export "__regulus_value_arity" (func $__regulus_value_arity))
+  (func $__regulus_value_constructor (param $ptr i32) (result i32)
+    local.get $ptr
+    i32.const 8
+    i32.add
+    i32.load
+  )
+  (export "__regulus_value_constructor" (func $__regulus_value_constructor))
+  (func $__regulus_value_field (param $ptr i32) (param $index i32) (result i64)
+    (local $tag i32)
+    local.get $ptr
+    i32.load
+    local.set $tag
+    local.get $ptr
+    local.get $tag
+    i32.const 5
+    i32.eq
+    local.get $tag
+    i32.const 9
+    i32.eq
+    i32.or
+    local.get $tag
+    i32.const 10
+    i32.eq
+    i32.or
+    if (result i32)
+      i32.const 12
+    else
+      i32.const 8
+    end
+    i32.add
+    local.get $index
+    i32.const 8
+    i32.mul
+    i32.add
+    i64.load
+  )
+  (export "__regulus_value_field" (func $__regulus_value_field))
 "#
             .into(),
         );

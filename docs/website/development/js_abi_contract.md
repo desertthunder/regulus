@@ -1,4 +1,4 @@
-# JavaScript host ABI contract
+# JavaScript Host ABI
 
 Regulus targets browser-capable WebAssembly. Raw Wasm only passes scalar values,
 so JavaScript hosts need a stable contract for strings, managed values, imports,
@@ -27,9 +27,9 @@ reset point.
 | `Bool`           | `i32`                          | `0` is `false`; `1` is `true`.         |
 | `Nil` return     | no result                      | JS `undefined`.                        |
 | `String`         | managed `i32` pointer          | Read and write through string helpers. |
-| tuples           | managed `i32` pointer          | Planned                                |
-| records          | managed `i32` pointer          | Planned                                |
-| custom types     | managed `i32` pointer          | Planned                                |
+| tuples           | managed `i32` pointer          | Read through value helpers.            |
+| records          | managed `i32` pointer          | Read through value helpers.            |
+| custom types     | managed `i32` pointer          | Read through value helpers.            |
 | lists            | managed `i32` pointer          | Planned                                |
 | opaque externals | managed or host handle pointer | Deferred to the opaque-handle ABI.     |
 | functions        | none                           | Unsupported across the JS host ABI.    |
@@ -52,8 +52,43 @@ those bytes into memory, and calling `__regulus_string_new`. Glue reads a Gleam
 string by calling the length and data helpers, then UTF-8 decoding the byte
 range.
 
-Future helpers will expose managed value tags, arity, and fields for structured
-values.
+Managed value reader helpers:
+
+- `__regulus_value_tag(ptr: i32) -> i32`
+- `__regulus_value_arity(ptr: i32) -> i32`
+- `__regulus_value_constructor(ptr: i32) -> i32`
+- `__regulus_value_field(ptr: i32, index: i32) -> i64`
+
+`__regulus_value_tag` reads the runtime object tag. Stable tags are:
+
+| Tag  | Runtime object |
+| ---- | -------------- |
+| `1`  | `String`       |
+| `2`  | list cons cell |
+| `3`  | tuple          |
+| `4`  | record         |
+| `5`  | custom type    |
+| `6`  | closure        |
+| `7`  | bit array      |
+| `8`  | opaque value   |
+| `9`  | error payload  |
+| `10` | panic payload  |
+
+`__regulus_value_arity` reads the object arity. For tuples and records this is
+field count. For list cons cells it is `2`. For custom types it is constructor
+field count.
+
+`__regulus_value_constructor` reads the constructor tag for custom types. The
+value is only meaningful when `__regulus_value_tag(ptr)` is `5`.
+
+`__regulus_value_field` reads a raw field slot as a Wasm `i64`, surfaced to JS
+as `BigInt`. For tuples, records, and list cons cells, field index `0` starts
+after the object header. For custom, error, and panic payloads, field index `0`
+starts after the constructor or reason tag.
+
+Scalar `Int` fields are the signed `i64` value. `Bool` fields use `0n` and
+`1n`. Managed fields store a borrowed pointer in the low 32 bits. Glue should
+convert those pointer fields before recursively reading them.
 
 ## Import modules
 
@@ -120,11 +155,6 @@ Supported exported return shapes are:
 
 Glue should expose checked wrappers for these shapes so application code does
 not perform pointer arithmetic.
-
-Public functions that return records, lists, tuples, custom types, `Result`, or
-`Option` are deferred until managed reader helpers are stable. Public functions
-that accept or return opaque handles are deferred until the opaque-handle ABI is
-stable.
 
 ## Diagnostics
 

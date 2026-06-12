@@ -37,15 +37,21 @@ The public ABI contract lives in
       memory.
 - [x] Export stable helpers for reading string length and bytes from a managed
       string pointer.
-- [ ] Add JS tests for passing strings from JS to Gleam imports and exports.
-- [ ] Add JS tests for reading strings returned from exported Gleam functions.
+- [x] Add JS tests for passing strings from JS to Gleam imports and exports.
+- [x] Add JS tests for reading strings returned from exported Gleam functions.
 
 ### Managed value readers
 
-- [ ] Export stable helpers for reading managed value tags, arity, and fields.
-- [ ] Define the JS reader contract for tuples, records, and custom types.
+- [x] Export stable helpers for reading managed value tags, arity, and fields.
+- [x] Define the JS reader contract for tuples, records, and custom types.
 - [ ] Define the JS reader contract for lists and lists of strings.
 - [ ] Define the JS reader contract for `Result` and `Option` values.
+- [ ] Implement JS adapter readers for tuples, records, and custom types.
+- [ ] Implement JS adapter readers for lists and lists of strings.
+- [ ] Implement JS adapter readers for `Result` and `Option` values.
+- [ ] Add export metadata for structured values consumed by JS readers.
+- [ ] Allow supported structured return shapes for JS exports once typed readers
+      are available.
 - [ ] Add JS tests that read records, lists, `Result`, and `Option` values from
       exported Gleam functions.
 
@@ -53,7 +59,10 @@ The public ABI contract lives in
 
 - [ ] Define the runtime representation for opaque host handles.
 - [ ] Define ownership and lifetime rules for JS handles passed to Gleam.
+- [ ] Implement the runtime representation for opaque host handles.
+- [ ] Implement JS handle table ownership and release behavior.
 - [ ] Add ABI validation for externals that accept or return opaque handles.
+- [ ] Add JS adapter conversion for opaque handle imports and exports.
 - [ ] Add tests for passing a handle through Gleam without exposing JS object
       internals to guest memory.
 
@@ -73,6 +82,7 @@ The public ABI contract lives in
 
 - [ ] Define browser import module names for fetch, local storage, time, and
       online state.
+- [ ] Implement browser adapter imports for the defined browser APIs.
 - [ ] Add browser-profile validation for allowed external modules and names.
 - [ ] Add browser-page glue that instantiates Wasm with checked imports.
 - [ ] Add a browser smoke test for one string import and one string export.
@@ -87,10 +97,12 @@ The public ABI contract lives in
       output.
 - [ ] Add a bundler fixture that returns tagged response data across the JS host
       ABI.
+- [ ] Wire bundler glue to structured value readers for tagged response data.
 
 ### Node.js profile
 
 - [ ] Define Node.js loading for generated or packaged `.wasm` files.
+- [ ] Implement Node.js loading for generated or packaged `.wasm` files.
 - [ ] Add Node.js-profile validation for allowed external modules and names.
 - [ ] Add Node.js glue that instantiates Wasm with checked imports.
 - [ ] Add a Node.js smoke test for one string import and one string export.
@@ -102,6 +114,7 @@ The public ABI contract lives in
 - [ ] Emit or package deterministic JS host adapter files for browser, bundler,
       and Node.js profiles.
 - [ ] Include import and export metadata needed by JS glue in debug output.
+- [ ] Generate or expose typed JS wrappers from import and export metadata.
 - [ ] Add CLI tests for stable JS adapter artifact paths.
 
 ## Done when
