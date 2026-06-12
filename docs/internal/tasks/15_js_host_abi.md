@@ -28,7 +28,7 @@ The public ABI contract lives in
       and rejects unknown JS host profiles.
 - [x] Define supported exported function parameter and return shapes for JS
       hosts.
-- [ ] Add source-spanned diagnostics for unsupported JS import and export
+- [x] Add source-spanned diagnostics for unsupported JS import and export
       shapes.
 
 ### String helpers

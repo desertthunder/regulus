@@ -13,36 +13,10 @@ use crate::diagnostic::{Diagnostic, DiagnosticCode, Diagnostics, Label};
 use crate::ir::{self, ExpressionKind};
 use crate::{ClosureConstants, runtime, stdlib::STDLIB_IO_HOST_MODULE, types::Type};
 
-pub fn emit(module: &ir::Module, options: EmitOptions) -> Result<Module, Diagnostics> {
-    let emitter = StructuredEmitter::new(module, options);
-    match emitter.module(module) {
-        Ok(module) => Ok(module),
-        Err(StructuredError::Unsupported) => Err(unsupported_structured_diagnostics(module)),
-        Err(StructuredError::Invariant(message)) => Err(invariant_diagnostics(module, &message)),
-        Err(StructuredError::Diagnostics(diagnostics)) => Err(diagnostics),
-    }
-}
-
-fn unsupported_structured_diagnostics(module: &ir::Module) -> Diagnostics {
-    let diagnostic = Diagnostic::new(
-        DiagnosticCode::WasmError,
-        "structured Wasm emitter does not support this IR yet",
-    )
-    .with_note("the fallback WAT emitter is disabled; port this IR form to structured codegen");
-    if let Some(function) = module.functions.first() {
-        vec![diagnostic.with_label(Label::primary(function.span, "module lowered to unsupported IR here"))]
-    } else {
-        vec![diagnostic.with_label(Label::primary(module.span, "module lowered to unsupported IR here"))]
-    }
-}
-
-fn invariant_diagnostics(module: &ir::Module, message: &str) -> Diagnostics {
-    vec![
-        Diagnostic::new(DiagnosticCode::WasmError, message.to_string()).with_label(Label::primary(
-            module.span,
-            "internal Wasm invariant failed while compiling this module",
-        )),
-    ]
+#[derive(Debug, Clone, Copy)]
+enum JsAbiBoundary<'a> {
+    Import { module: &'a str, name: &'a str },
+    Export { name: &'a str },
 }
 
 #[derive(Clone)]
@@ -202,6 +176,9 @@ impl<'a> StructuredEmitter<'a> {
 
     fn module(mut self, source: &ir::Module) -> StructuredResult<Module> {
         self.module.source_span = source.functions.first().map(|function| function.span);
+        if self.options.target.is_js_host() {
+            validate_js_host_abi(source, self.options.target)?;
+        }
         for function in &source.functions {
             let signature = self.function_signature(function)?;
             self.signatures.insert(function.name.clone(), signature);
@@ -2810,6 +2787,38 @@ impl<'a> StructuredEmitter<'a> {
     }
 }
 
+pub fn emit(module: &ir::Module, options: EmitOptions) -> Result<Module, Diagnostics> {
+    let emitter = StructuredEmitter::new(module, options);
+    match emitter.module(module) {
+        Ok(module) => Ok(module),
+        Err(StructuredError::Unsupported) => Err(unsupported_structured_diagnostics(module)),
+        Err(StructuredError::Invariant(message)) => Err(invariant_diagnostics(module, &message)),
+        Err(StructuredError::Diagnostics(diagnostics)) => Err(diagnostics),
+    }
+}
+
+fn unsupported_structured_diagnostics(module: &ir::Module) -> Diagnostics {
+    let diagnostic = Diagnostic::new(
+        DiagnosticCode::WasmError,
+        "structured Wasm emitter does not support this IR yet",
+    )
+    .with_note("the fallback WAT emitter is disabled; port this IR form to structured codegen");
+    if let Some(function) = module.functions.first() {
+        vec![diagnostic.with_label(Label::primary(function.span, "module lowered to unsupported IR here"))]
+    } else {
+        vec![diagnostic.with_label(Label::primary(module.span, "module lowered to unsupported IR here"))]
+    }
+}
+
+fn invariant_diagnostics(module: &ir::Module, message: &str) -> Diagnostics {
+    vec![
+        Diagnostic::new(DiagnosticCode::WasmError, message.to_string()).with_label(Label::primary(
+            module.span,
+            "internal Wasm invariant failed while compiling this module",
+        )),
+    ]
+}
+
 fn literal_parse_diagnostic(
     literal: &ir::Literal, span: crate::source::Span, expected: &'static str,
 ) -> StructuredError {
@@ -2844,6 +2853,106 @@ fn literal_type(literal: &ir::Literal) -> Type {
 
 fn result_types(type_: &Type, span: crate::source::Span) -> StructuredResult<Vec<ValueType>> {
     if matches!(type_, Type::Nil) { Ok(Vec::new()) } else { Ok(vec![value_type(type_, span)?]) }
+}
+
+fn validate_js_host_abi(module: &ir::Module, target: WasmTarget) -> StructuredResult<()> {
+    let mut diagnostics = Vec::new();
+
+    for function in &module.functions {
+        match &function.abi.boundary {
+            ir::CallBoundary::HostImport { module, name } => {
+                validate_js_host_function_shape(
+                    function,
+                    JsAbiBoundary::Import { module, name },
+                    target,
+                    &mut diagnostics,
+                );
+            }
+            ir::CallBoundary::ModuleExport => {
+                let export_name = module
+                    .exports
+                    .iter()
+                    .find(|export| export.kind == ir::ExportKind::Function && export.backend_name() == function.name)
+                    .map(|export| export.name.as_str())
+                    .unwrap_or(function.name.as_str());
+                validate_js_host_function_shape(
+                    function,
+                    JsAbiBoundary::Export { name: export_name },
+                    target,
+                    &mut diagnostics,
+                );
+            }
+            ir::CallBoundary::Internal | ir::CallBoundary::ModuleImport { .. } => {}
+        }
+    }
+
+    if diagnostics.is_empty() { Ok(()) } else { Err(StructuredError::Diagnostics(diagnostics)) }
+}
+
+fn validate_js_host_function_shape(
+    function: &ir::Function, boundary: JsAbiBoundary<'_>, target: WasmTarget, diagnostics: &mut Diagnostics,
+) {
+    for (index, param) in function.params.iter().enumerate() {
+        if is_supported_js_host_abi_value(&param.type_, false) {
+            continue;
+        }
+        diagnostics.push(js_host_abi_diagnostic(
+            function,
+            boundary,
+            target,
+            format!("parameter {}", index + 1),
+            &param.type_,
+            param.span,
+        ));
+    }
+
+    if !is_supported_js_host_abi_value(&function.return_type, true) {
+        diagnostics.push(js_host_abi_diagnostic(
+            function,
+            boundary,
+            target,
+            "return".into(),
+            &function.return_type,
+            function.span,
+        ));
+    }
+}
+
+fn js_host_abi_diagnostic(
+    function: &ir::Function, boundary: JsAbiBoundary<'_>, target: WasmTarget, position: String, type_: &Type,
+    span: crate::source::Span,
+) -> Diagnostic {
+    let (message, note) = match boundary {
+        JsAbiBoundary::Import { module, name } => (
+            format!(
+                "JS host import `{}` {} uses unsupported ABI shape `{:?}` for target `{}`",
+                function.name,
+                position,
+                type_,
+                target.name()
+            ),
+            format!(
+                "host import `{module}.{name}` must use Int, Float, Bool, String, or Nil returns until the JS reader and opaque-handle ABIs are stable"
+            ),
+        ),
+        JsAbiBoundary::Export { name } => (
+            format!(
+                "JS host export `{name}` {} uses unsupported ABI shape `{:?}` for target `{}`",
+                position,
+                type_,
+                target.name()
+            ),
+            "public JS host exports must use Int, Float, Bool, String, or Nil returns until the JS reader and opaque-handle ABIs are stable".into(),
+        ),
+    };
+
+    Diagnostic::new(DiagnosticCode::WasmError, message)
+        .with_label(Label::primary(span, "unsupported JS host ABI shape here"))
+        .with_note(note)
+}
+
+fn is_supported_js_host_abi_value(type_: &Type, nil_allowed: bool) -> bool {
+    matches!(type_, Type::Int | Type::Float | Type::Bool | Type::String) || (nil_allowed && matches!(type_, Type::Nil))
 }
 
 fn value_type(type_: &Type, span: crate::source::Span) -> StructuredResult<ValueType> {

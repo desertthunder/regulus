@@ -970,13 +970,6 @@ pub fn main() -> Int { 1 }"#,
 pub fn main() -> Int { 1 }"#,
             "(import \"browser\" \"localStorage.getItem\" (func (type 0) (param i32) (result i32)))",
         ),
-        (
-            "worker response",
-            r#"pub type Response { Response(status: Int, body: String) }
-external fn host(response: Response) -> Nil = "browser" "worker.respond"
-pub fn main() -> Int { 1 }"#,
-            "(import \"browser\" \"worker.respond\" (func (type 0) (param i32)))",
-        ),
     ];
 
     for (name, source, expected_import) in cases {
@@ -988,6 +981,53 @@ pub fn main() -> Int { 1 }"#,
             wasm.wat
         );
     }
+}
+
+#[test]
+fn rejects_unsupported_js_host_import_shapes_before_byte_emission() {
+    let diagnostics = compile_wasm_target(
+        r#"pub type Response { Response(status: Int, body: String) }
+external fn host(response: Response) -> Nil = "browser" "worker.respond"
+pub fn main() -> Int { 1 }"#,
+        CompileTarget::Browser,
+    )
+    .expect_err("record JS import should be rejected until managed readers are stable");
+
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic
+            .message
+            .contains("JS host import `host` parameter 1 uses unsupported ABI shape")
+    }));
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic
+            .labels
+            .iter()
+            .any(|label| label.message.as_deref() == Some("unsupported JS host ABI shape here"))
+    }));
+}
+
+#[test]
+fn rejects_unsupported_js_host_export_shapes_before_byte_emission() {
+    let diagnostics = compile_wasm_target(
+        r#"pub type Response { Response(status: Int, body: String) }
+pub fn main() -> Response { Response(200, "ok") }"#,
+        CompileTarget::Bundler,
+    )
+    .expect_err("record JS export should be rejected until managed readers are stable");
+
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic
+            .message
+            .contains("JS host export `main` return uses unsupported ABI shape")
+    }));
+}
+
+#[test]
+fn accepts_first_stable_js_host_import_and_export_shapes() {
+    let source = r#"external fn host(i: Int, f: Float, b: Bool, s: String) -> String = "regulus/js" "host"
+pub fn main(i: Int, f: Float, b: Bool, s: String) -> String { host(i, f, b, s) }"#;
+
+    compile_wasm_target(source, CompileTarget::Bundler).expect("stable JS ABI shapes should compile");
 }
 
 #[test]
