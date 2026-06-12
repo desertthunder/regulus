@@ -112,6 +112,19 @@ impl Builder<'_> {
                 return echo::fail("write", output.display(), error);
             }
             echo::status("wasm", format!("{} ({} bytes)", output.display(), wasm.bytes.len()));
+            if matches!(self.target, Some(Target::Bundler)) {
+                let adapter_path = super::artifact_path(self.out_dir.as_deref(), &output, &artifact_base, "mjs");
+                let adapter = compiler_core::adapter::bundler_adapter(
+                    output
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or("module.wasm"),
+                );
+                if let Err(error) = super::write_file(&adapter_path, adapter.as_bytes()) {
+                    return echo::fail("write", adapter_path.display(), error);
+                }
+                echo::status("js", adapter_path.display().to_string());
+            }
         }
         if self.emit.contains(&Emit::Wat) {
             let wat_path = super::artifact_path(self.out_dir.as_deref(), &output, &artifact_base, "wat");

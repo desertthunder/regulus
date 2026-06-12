@@ -44,6 +44,8 @@ pub enum WasmTarget {
     #[default]
     Wasmtime,
     Browser,
+    Bundler,
+    Nodejs,
     Wasi,
 }
 
@@ -58,6 +60,8 @@ impl From<CompileTarget> for WasmTarget {
         match target {
             CompileTarget::Wasmtime => Self::Wasmtime,
             CompileTarget::Browser => Self::Browser,
+            CompileTarget::Bundler => Self::Bundler,
+            CompileTarget::Nodejs => Self::Nodejs,
             CompileTarget::Wasi => Self::Wasi,
             CompileTarget::Wasm => Self::Wasmtime,
         }
@@ -69,6 +73,8 @@ impl WasmTarget {
         match self {
             Self::Wasmtime => "wasmtime",
             Self::Browser => "browser",
+            Self::Bundler => "bundler",
+            Self::Nodejs => "nodejs",
             Self::Wasi => "wasi",
         }
     }
@@ -77,7 +83,23 @@ impl WasmTarget {
         match self {
             Self::Wasmtime => "env",
             Self::Browser => "browser",
+            Self::Bundler => "regulus/js",
+            Self::Nodejs => "nodejs",
             Self::Wasi => "wasi_snapshot_preview1",
+        }
+    }
+
+    fn is_js_host(self) -> bool {
+        matches!(self, Self::Browser | Self::Bundler | Self::Nodejs)
+    }
+
+    fn accepts_host_module(self, module: &str) -> bool {
+        match self {
+            Self::Wasmtime => module == "env",
+            Self::Browser => module == "browser" || module == "regulus/js",
+            Self::Bundler => module == "regulus/js",
+            Self::Nodejs => module == "nodejs" || module == "regulus/js",
+            Self::Wasi => module == "wasi_snapshot_preview1",
         }
     }
 }

@@ -287,6 +287,10 @@ impl<'a> StructuredEmitter<'a> {
             }
         }
 
+        if self.options.target.is_js_host() {
+            self.emit_js_host_abi_helpers();
+        }
+
         if !self.runtime_helper_roots.is_empty() {
             self.ensure_memory();
             self.ensure_heap_global();
@@ -351,7 +355,7 @@ impl<'a> StructuredEmitter<'a> {
             ir::CallBoundary::HostImport { module, name } if module == STDLIB_IO_HOST_MODULE => {
                 Ok(Some(self.stdlib_io_import(name, function.span)?))
             }
-            ir::CallBoundary::HostImport { module, name } if module == self.options.target.host_module() => {
+            ir::CallBoundary::HostImport { module, name } if self.options.target.accepts_host_module(module) => {
                 Ok(Some((module.clone(), name.clone())))
             }
             ir::CallBoundary::HostImport { module, .. } => Err(StructuredError::Diagnostics(vec![
@@ -371,11 +375,45 @@ impl<'a> StructuredEmitter<'a> {
         }
     }
 
+    fn emit_js_host_abi_helpers(&mut self) {
+        self.ensure_memory();
+        self.runtime_helper_roots.insert("__alloc".into());
+        self.runtime_helper_roots.insert("__string_new".into());
+        self.runtime_helper_roots.insert("__string_len".into());
+        self.runtime_helper_roots.insert("__string_data".into());
+        self.module.raw_wat_items.push(
+            r#"
+  (func $__regulus_alloc (param $size i32) (result i32)
+    local.get $size
+    call $__alloc
+  )
+  (export "__regulus_alloc" (func $__regulus_alloc))
+  (func $__regulus_string_new (param $data i32) (param $len i32) (result i32)
+    local.get $data
+    local.get $len
+    call $__string_new
+  )
+  (export "__regulus_string_new" (func $__regulus_string_new))
+  (func $__regulus_string_len (param $ptr i32) (result i32)
+    local.get $ptr
+    call $__string_len
+  )
+  (export "__regulus_string_len" (func $__regulus_string_len))
+  (func $__regulus_string_data (param $ptr i32) (result i32)
+    local.get $ptr
+    call $__string_data
+  )
+  (export "__regulus_string_data" (func $__regulus_string_data))
+"#
+            .into(),
+        );
+    }
+
     fn stdlib_io_import(&self, name: &str, span: crate::source::Span) -> StructuredResult<(String, String)> {
         match self.options.target {
             WasmTarget::Wasmtime => Ok(("env".into(), name.into())),
-            WasmTarget::Browser => Ok(("browser".into(), name.into())),
-            WasmTarget::Wasi => Err(StructuredError::Diagnostics(vec![
+            WasmTarget::Browser | WasmTarget::Bundler => Ok(("browser".into(), name.into())),
+            WasmTarget::Wasi | WasmTarget::Nodejs => Err(StructuredError::Diagnostics(vec![
                 Diagnostic::new(
                     DiagnosticCode::WasmError,
                     format!(

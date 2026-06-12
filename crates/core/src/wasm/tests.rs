@@ -757,6 +757,35 @@ pub fn main() -> String { load("weather") }"#,
 }
 
 #[test]
+fn bundler_target_accepts_shared_js_imports_and_exports_string_helpers() {
+    let wasm = compile_wasm_target(
+        r#"external fn request_text(input: String) -> String = "regulus/js" "request_text"
+pub fn main(input: String) -> String { request_text(input) }"#,
+        CompileTarget::Bundler,
+    )
+    .expect("compile bundler external import");
+
+    assert!(
+        wasm.wat
+            .contains("(import \"regulus/js\" \"request_text\" (func (type 0) (param i32) (result i32)))"),
+        "{}",
+        wasm.wat
+    );
+    for name in [
+        "__regulus_alloc",
+        "__regulus_string_new",
+        "__regulus_string_len",
+        "__regulus_string_data",
+    ] {
+        assert!(
+            wasm.wat.contains(&format!("(export \"{name}\"")),
+            "missing {name} in {}",
+            wasm.wat
+        );
+    }
+}
+
+#[test]
 fn rejects_unsupported_external_parameter_abi_shapes_before_byte_emission() {
     let diagnostics = compile_wasm_target(
         r#"external fn bad(value: Nil) -> Int = "env" "bad"

@@ -6,6 +6,8 @@ pub enum CompileTarget {
     #[default]
     Wasmtime,
     Browser,
+    Bundler,
+    Nodejs,
     Wasi,
     Wasm,
 }
@@ -15,6 +17,8 @@ impl CompileTarget {
         match self {
             Self::Wasmtime => "wasmtime",
             Self::Browser => "browser",
+            Self::Bundler => "bundler",
+            Self::Nodejs => "nodejs",
             Self::Wasi => "wasi",
             Self::Wasm => "wasm",
         }
@@ -86,6 +90,8 @@ fn target_name(name: &str, span: Span, diagnostics: &mut Diagnostics) -> Option<
     match name {
         "wasmtime" | "erlang" => Some(CompileTarget::Wasmtime),
         "browser" | "javascript" => Some(CompileTarget::Browser),
+        "bundler" => Some(CompileTarget::Bundler),
+        "nodejs" => Some(CompileTarget::Nodejs),
         "wasi" => Some(CompileTarget::Wasi),
         "wasm" => Some(CompileTarget::Wasm),
         _ => {
@@ -95,7 +101,10 @@ fn target_name(name: &str, span: Span, diagnostics: &mut Diagnostics) -> Option<
                     format!("unsupported target group `{name}`"),
                 )
                 .with_label(Label::primary(span, "unsupported target here"))
-                .with_note("supported targets are `wasmtime`, `erlang`, `browser`, `javascript`, `wasi`, and `wasm`"),
+                .with_note(
+                    "supported targets are `wasmtime`, `erlang`, `browser`, \
+                     `javascript`, `bundler`, `nodejs`, `wasi`, and `wasm`",
+                ),
             );
             None
         }

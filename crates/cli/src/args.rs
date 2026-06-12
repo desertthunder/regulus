@@ -114,10 +114,12 @@ impl Emit {
     }
 }
 
-#[derive(Debug, Clone, Copy, ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum Target {
     Wasmtime,
     Browser,
+    Bundler,
+    Nodejs,
     Wasi,
 }
 
@@ -126,6 +128,8 @@ impl From<Target> for CompileTarget {
         match target {
             Target::Wasmtime => Self::Wasmtime,
             Target::Browser => Self::Browser,
+            Target::Bundler => Self::Bundler,
+            Target::Nodejs => Self::Nodejs,
             Target::Wasi => Self::Wasi,
         }
     }
