@@ -75,6 +75,17 @@ The goal here is to make linked project names deterministic and collision-free.
 - [x] Add project fixtures for cross-module calls, constructors, records,
       patterns, and module-private members.
 
+### Package-owned interfaces
+
+- [ ] Add an `InterfaceEntry` wrapper with package, module, and interface data.
+- [ ] Store dependency, project, and stdlib interfaces as owner-aware entries.
+- [ ] Resolve imports and imported symbols to concrete interface owners.
+- [ ] Lower references and calls from resolver-owned `package:module.member`
+      identities.
+- [ ] Remove linker-side package-owner inference for imported modules.
+- [ ] Add overlap fixtures where root and dependency packages expose the same
+      module and member names.
+
 ### Dependency interfaces
 
 - [x] Load enough dependency metadata for project compile inputs.
@@ -103,11 +114,11 @@ The goal here is to make linked project names deterministic and collision-free.
       `Using cached ...`, and `Extracting ...`.
 - [x] Keep quiet output deterministic and put URLs, checksums, cache paths, and
       source paths behind `--verbose`.
-- [ ] Add a dependency source loader for selected packages and paths.
-- [ ] Compile one package module from source through the normal pipeline.
-- [ ] Link compiled dependency module calls without treating them as host
+- [x] Add a dependency source loader for selected packages and paths.
+- [x] Compile one package module from source through the normal pipeline.
+- [x] Link compiled dependency module calls without treating them as host
       imports.
-- [ ] Add a fixture that links one dependency function without modeling it as an
+- [x] Add a fixture that links one dependency function without modeling it as an
       intrinsic or host import.
 
 ### Project artifacts

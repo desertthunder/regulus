@@ -20,7 +20,7 @@ use crate::{
     },
     labels::{ArgumentLabelError, FunctionLabelMap, call_argument_order, function_label_map, use_callback_placement},
     loader::registry::TypeInterfaceRegistry,
-    project::Project,
+    project::{GleamToml, PackageGraph, PackageNode, Project},
     resolve::{self, ResolvedModule},
     source::{SourceFileId, Span},
 };
@@ -346,10 +346,21 @@ fn check_with_externals(
 }
 
 pub fn check_project(project: &Project) -> Result<TypedProject, Diagnostics> {
-    let resolved = resolve::resolve_project(project)?;
     let mut modules = Vec::new();
     let mut interfaces = HashMap::new();
     let mut diagnostics = Vec::new();
+
+    for dependency_project in dependency_source_projects(project) {
+        match check_project(&dependency_project) {
+            Ok(mut typed) => {
+                interfaces.extend(typed.interfaces.clone());
+                modules.append(&mut typed.modules);
+            }
+            Err(mut errors) => diagnostics.append(&mut errors),
+        }
+    }
+
+    let resolved = resolve::resolve_project(project)?;
 
     let type_interfaces = TypeInterfaceRegistry::for_project(
         &project.graph.dependency_interfaces,
@@ -403,6 +414,44 @@ pub fn check_project(project: &Project) -> Result<TypedProject, Diagnostics> {
     } else {
         Err(diagnostics)
     }
+}
+
+fn dependency_source_projects(project: &Project) -> Vec<Project> {
+    project
+        .graph
+        .dependency_sources
+        .iter()
+        .map(|sources| {
+            let version = sources.package.version.clone().unwrap_or_else(|| "0.0.0".to_string());
+            Project {
+                root: sources.package.root.clone(),
+                config: GleamToml {
+                    name: sources.package.name.clone(),
+                    version: version.clone(),
+                    description: None,
+                    licences: Vec::new(),
+                    repository: None,
+                    links: Vec::new(),
+                    gleam: None,
+                    target: project.config.target.clone(),
+                    dependencies: Default::default(),
+                    dev_dependencies: Default::default(),
+                },
+                graph: PackageGraph {
+                    root_package: PackageNode {
+                        name: sources.package.name.clone(),
+                        version,
+                        root: sources.package.root.clone(),
+                    },
+                    dependencies: Vec::new(),
+                    dependency_interfaces: project.graph.dependency_interfaces.clone(),
+                    dependency_sources: Vec::new(),
+                    modules: sources.modules.clone(),
+                },
+                sources: sources.sources.clone(),
+            }
+        })
+        .collect()
 }
 
 fn project_module_order(project: &Project, resolved: &resolve::ResolvedProject) -> Vec<usize> {

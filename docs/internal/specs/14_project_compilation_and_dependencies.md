@@ -145,6 +145,13 @@ Extracting gleam_stdlib 0.50.0
 Quiet output should stay stable. `--verbose` may print source URLs, checksums,
 cache paths, package build paths, and source paths.
 
+### Package-owned interfaces
+
+Dependency interfaces should be stored as `InterfaceEntry` values containing
+package, module, and interface data. Resolution should attach that owner to
+imports and imported symbols so lowering and linking use exact `package:module.member`
+identities instead of inferring package ownership from module names.
+
 ### Unsupported dependencies
 
 Unsupported dependency members, modules, syntax, runtime primitives, or ABI

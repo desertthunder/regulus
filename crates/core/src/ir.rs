@@ -330,10 +330,13 @@ pub struct Reference {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReferenceTargetName {
     LocalSymbol {
+        package: Option<String>,
+        module: Option<String>,
         name: String,
         kind: ReferenceKind,
     },
     QualifiedMember {
+        package: Option<String>,
         module: String,
         member: String,
         resolved: Option<String>,
@@ -1056,18 +1059,11 @@ fn link_modules(modules: Vec<Module>) -> Result<Module, Diagnostics> {
     if !diagnostics.is_empty() {
         return Err(diagnostics);
     }
-    linked.linked_names = rename_plan.linked_names;
-    let global_renames = rename_plan.renames;
-
+    linked.linked_names = rename_plan.linked_names.clone();
     for module in modules {
-        let mut renames = module_backend_renames(&module, &global_renames);
-        renames.extend(
-            global_renames
-                .iter()
-                .map(|(source, backend)| (source.clone(), backend.clone())),
-        );
+        let renames = module_backend_renames(&module, &rename_plan);
         let mut module = module;
-        rewrite_module_backend_names(&mut module, &renames);
+        rewrite_module_backend_names(&mut module, &renames, &rename_plan);
 
         linked.imports.extend(module.imports);
         linked.declarations.extend(module.declarations);
@@ -1083,12 +1079,26 @@ fn link_modules(modules: Vec<Module>) -> Result<Module, Diagnostics> {
 
 struct BackendRenamePlan {
     renames: HashMap<String, String>,
+    module_packages: HashMap<String, Vec<String>>,
     linked_names: Vec<LinkedName>,
 }
 
 fn global_backend_renames(modules: &[Module]) -> BackendRenamePlan {
     let mut renames = HashMap::new();
+    let mut module_packages: HashMap<String, Vec<String>> = HashMap::new();
     let mut linked_names = Vec::new();
+    for module in modules {
+        if let Some(identity) = &module.identity {
+            module_packages
+                .entry(identity.module.clone())
+                .or_default()
+                .push(identity.package.clone());
+        }
+    }
+    for packages in module_packages.values_mut() {
+        packages.sort();
+        packages.dedup();
+    }
     for module in modules {
         let Some(identity) = &module.identity else { continue };
         let module_name = ModuleName::from_path(&identity.module);
@@ -1134,7 +1144,7 @@ fn global_backend_renames(modules: &[Module]) -> BackendRenamePlan {
                 BackendName::function(identity.package.as_str(), module_name.clone(), function.name.as_str())
             };
             let generated_name = render_backend_name(&backend);
-            let source_name = format!("{}.{}", identity.module, function.name);
+            let source_name = linked_source_name(identity, function.name.as_str());
             let kind = if function.name.starts_with("__")
                 || matches!(
                     function.abi.boundary,
@@ -1144,14 +1154,28 @@ fn global_backend_renames(modules: &[Module]) -> BackendRenamePlan {
             } else {
                 LinkedNameKind::Function
             };
-            renames.insert(source_name.clone(), generated_name.clone());
+            renames.insert(
+                backend_key(
+                    identity.package.as_str(),
+                    identity.module.as_str(),
+                    function.name.as_str(),
+                ),
+                generated_name.clone(),
+            );
             linked_names.push(LinkedName { source_name, generated_name, kind, span: function.span });
         }
         for constant in &module.constants {
             let backend = BackendName::constant(identity.package.as_str(), module_name.clone(), constant.name.as_str());
             let generated_name = render_backend_name(&backend);
-            let source_name = format!("{}.{}", identity.module, constant.name);
-            renames.insert(source_name.clone(), generated_name.clone());
+            let source_name = linked_source_name(identity, constant.name.as_str());
+            renames.insert(
+                backend_key(
+                    identity.package.as_str(),
+                    identity.module.as_str(),
+                    constant.name.as_str(),
+                ),
+                generated_name.clone(),
+            );
             linked_names.push(LinkedName {
                 source_name,
                 generated_name,
@@ -1165,8 +1189,11 @@ fn global_backend_renames(modules: &[Module]) -> BackendRenamePlan {
             {
                 let backend = BackendName::constructor(identity.package.as_str(), module_name.clone(), name.as_str());
                 let generated_name = render_backend_name(&backend);
-                let source_name = format!("{}.{}", identity.module, name);
-                renames.insert(source_name.clone(), generated_name.clone());
+                let source_name = linked_source_name(identity, name.as_str());
+                renames.insert(
+                    backend_key(identity.package.as_str(), identity.module.as_str(), name.as_str()),
+                    generated_name.clone(),
+                );
                 linked_names.push(LinkedName {
                     source_name,
                     generated_name,
@@ -1176,7 +1203,15 @@ fn global_backend_renames(modules: &[Module]) -> BackendRenamePlan {
             }
         }
     }
-    BackendRenamePlan { renames, linked_names }
+    BackendRenamePlan { renames, module_packages, linked_names }
+}
+
+fn backend_key(package: &str, module: &str, member: &str) -> String {
+    format!("{package}:{module}.{member}")
+}
+
+fn linked_source_name(identity: &ModuleIdentity, member: &str) -> String {
+    backend_key(identity.package.as_str(), identity.module.as_str(), member)
 }
 
 fn generated_name_collision_diagnostics(linked_names: &[LinkedName]) -> Diagnostics {
@@ -1216,26 +1251,42 @@ fn generated_name_collision_diagnostics(linked_names: &[LinkedName]) -> Diagnost
     diagnostics
 }
 
-fn module_backend_renames(module: &Module, global: &HashMap<String, String>) -> HashMap<String, String> {
+fn module_backend_renames(module: &Module, plan: &BackendRenamePlan) -> HashMap<String, String> {
     let mut renames = HashMap::new();
     let Some(identity) = &module.identity else { return renames };
+    let global = &plan.renames;
 
     for function in &module.functions {
-        if let Some(backend) = global.get(&format!("{}.{}", identity.module, function.name)) {
+        if let Some(backend) = global.get(&backend_key(
+            identity.package.as_str(),
+            identity.module.as_str(),
+            function.name.as_str(),
+        )) {
             renames.insert(function.name.clone(), backend.clone());
+            renames.insert(format!("{}.{}", identity.module, function.name), backend.clone());
         }
     }
     for constant in &module.constants {
-        if let Some(backend) = global.get(&format!("{}.{}", identity.module, constant.name)) {
+        if let Some(backend) = global.get(&backend_key(
+            identity.package.as_str(),
+            identity.module.as_str(),
+            constant.name.as_str(),
+        )) {
             renames.insert(constant.name.clone(), backend.clone());
+            renames.insert(format!("{}.{}", identity.module, constant.name), backend.clone());
         }
     }
     for declaration in &module.declarations {
         if declaration.kind == DeclarationKind::TypeDefinition
             && let Some(name) = &declaration.name
-            && let Some(backend) = global.get(&format!("{}.{}", identity.module, name))
+            && let Some(backend) = global.get(&backend_key(
+                identity.package.as_str(),
+                identity.module.as_str(),
+                name.as_str(),
+            ))
         {
             renames.insert(name.clone(), backend.clone());
+            renames.insert(format!("{}.{}", identity.module, name), backend.clone());
         }
     }
 
@@ -1248,11 +1299,16 @@ fn module_backend_renames(module: &Module, global: &HashMap<String, String>) -> 
                 .unwrap_or(import.module.as_str())
                 .to_string()
         });
+        let Some(package) = imported_module_package(identity, &import.module, plan) else {
+            continue;
+        };
+        let prefix = backend_key(package, &import.module, "");
         for (source, backend) in global {
-            let Some(member) = source.strip_prefix(&format!("{}.", import.module)) else {
+            let Some(member) = source.strip_prefix(&prefix) else {
                 continue;
             };
             renames.insert(format!("{local}.{member}"), backend.clone());
+            renames.insert(format!("{}.{}", import.module, member), backend.clone());
             if import
                 .unqualified
                 .iter()
@@ -1266,11 +1322,21 @@ fn module_backend_renames(module: &Module, global: &HashMap<String, String>) -> 
     renames
 }
 
+fn imported_module_package<'a>(
+    current: &'a ModuleIdentity, imported_module: &str, plan: &'a BackendRenamePlan,
+) -> Option<&'a str> {
+    let packages = plan.module_packages.get(imported_module)?;
+    if packages.iter().any(|package| package == &current.package) {
+        return Some(current.package.as_str());
+    }
+    packages.first().map(String::as_str)
+}
+
 fn anonymous_function_index(name: &str) -> Option<u32> {
     name.strip_prefix("__anon_")?.parse().ok()
 }
 
-fn rewrite_module_backend_names(module: &mut Module, renames: &HashMap<String, String>) {
+fn rewrite_module_backend_names(module: &mut Module, renames: &HashMap<String, String>, plan: &BackendRenamePlan) {
     for constant in &mut module.constants {
         rewrite_name(&mut constant.name, renames);
     }
@@ -1280,7 +1346,7 @@ fn rewrite_module_backend_names(module: &mut Module, renames: &HashMap<String, S
         }
     }
     for reference in &mut module.references {
-        rewrite_reference(reference, renames);
+        rewrite_reference(reference, module.identity.as_ref(), renames, plan);
     }
     for export in &mut module.exports {
         if matches!(
@@ -1300,11 +1366,28 @@ fn rewrite_module_backend_names(module: &mut Module, renames: &HashMap<String, S
     }
 }
 
-fn rewrite_reference(reference: &mut Reference, renames: &HashMap<String, String>) {
+fn rewrite_reference(
+    reference: &mut Reference, identity: Option<&ModuleIdentity>, renames: &HashMap<String, String>,
+    plan: &BackendRenamePlan,
+) {
     rewrite_name(&mut reference.name, renames);
     match &mut reference.target {
-        ReferenceTargetName::LocalSymbol { name, .. } => rewrite_name(name, renames),
-        ReferenceTargetName::QualifiedMember { module, member, resolved } => {
+        ReferenceTargetName::LocalSymbol { package, module, name, .. } => {
+            if package.is_none()
+                && let (Some(identity), Some(module)) = (identity, module.as_deref())
+                && let Some(owner) = imported_module_package(identity, module, plan)
+            {
+                *package = Some(owner.to_string());
+            }
+            rewrite_name(name, renames);
+        }
+        ReferenceTargetName::QualifiedMember { package, module, member, resolved } => {
+            if package.is_none()
+                && let Some(identity) = identity
+                && let Some(owner) = imported_module_package(identity, module, plan)
+            {
+                *package = Some(owner.to_string());
+            }
             let qualified = format!("{module}.{member}");
             if let Some(backend) = renames.get(&qualified).cloned() {
                 *member = backend.clone();
@@ -1649,9 +1732,7 @@ fn visibility(public: bool) -> Visibility {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, path::Path};
-
-    use tempfile::tempdir;
+    use std::path::{Path, PathBuf};
 
     use crate::{
         project,
@@ -1661,11 +1742,11 @@ mod tests {
 
     use super::*;
 
-    fn write(path: &Path, text: &str) {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).expect("create parent directory");
-        }
-        fs::write(path, text).expect("write fixture");
+    fn fixture_project(path: &str) -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join("fixtures/projects")
+            .join(path)
     }
 
     #[test]
@@ -1701,57 +1782,39 @@ ProjectError: duplicate generated backend name `generated/run`
     }
 
     #[test]
-    fn reports_unsupported_dependency_members_before_lowering() {
-        let dir = tempdir().expect("tempdir");
-        write(
-            &dir.path().join("gleam.toml"),
-            r#"name = "app"
-version = "1.0.0"
-
-[dependencies]
-dep_pkg = { path = "dep_pkg" }
-"#,
-        );
-        write(
-            &dir.path().join("src/app.gleam"),
-            r#"import dep/foo.{Make, Thing, answer}
-
-pub fn main() -> Int {
-  answer()
-}
-
-pub fn value() -> Thing {
-  Make(1)
-}
-"#,
-        );
-        write(
-            &dir.path().join("dep_pkg/gleam.toml"),
-            "name = \"dep_pkg\"\nversion = \"0.1.0\"\n",
-        );
-        write(
-            &dir.path().join("dep_pkg/src/dep/foo.gleam"),
-            r#"pub type Thing {
-  Make(count: Int)
-}
-
-pub fn answer() -> Int {
-  1
-}
-"#,
-        );
-
-        let project = project::load_project(dir.path()).expect("load project");
+    fn fixture_links_compiled_dependency_function_calls() {
+        let project = project::load_project(fixture_project("linking/dependency_function")).expect("load project");
         let typed = types::check_project(&project).expect("type check project");
-        let diagnostics = lower_project(typed).expect_err("dependency member should be unsupported");
+        let module = lower_project(typed).expect("lower linked project");
 
-        assert_eq!(diagnostics.len(), 2);
-        let messages = diagnostics
-            .iter()
-            .map(|diagnostic| diagnostic.message.as_str())
-            .collect::<Vec<_>>();
-        assert!(messages.iter().any(|message| message.contains("`dep/foo.answer`")));
-        assert!(messages.iter().any(|message| message.contains("`dep/foo.Make`")));
+        let debug = module.linked_debug_dump();
+        assert!(debug.contains("dep/foo.answer"));
+        assert_eq!(module.functions.len(), 2);
+        assert!(module.functions.iter().all(|function| {
+            !matches!(
+                function.abi.boundary,
+                CallBoundary::HostImport { .. } | CallBoundary::ModuleImport { .. }
+            )
+        }));
+        assert!(module.functions.iter().any(|function| {
+            matches!(
+                &function.body.result.kind,
+                ExpressionKind::DirectCall(call)
+                    if call.function.contains("$pkg$x6465705f706b67$mod$x646570$x666f6f$fn$x616e73776572")
+                        && call.abi.boundary == CallBoundary::Internal
+            )
+        }));
+        assert!(module.references.iter().any(|reference| {
+            matches!(
+                &reference.target,
+                ReferenceTargetName::LocalSymbol {
+                    package: Some(package),
+                    module: Some(module),
+                    kind: ReferenceKind::Imported,
+                    ..
+                } if package == "dep_pkg" && module == "dep/foo"
+            )
+        }));
     }
 
     #[test]

@@ -24,6 +24,7 @@ pub struct Lowerer {
     module: TypedModule,
     function_types: HashMap<String, Type>,
     function_labels: FunctionLabelMap,
+    imported_functions: HashMap<String, String>,
     constructors: HashMap<String, ConstructorInfo>,
     expression_types: HashMap<Span, Type>,
     external_imports: HashMap<String, ExternalImport>,
@@ -56,6 +57,7 @@ impl Lowerer {
             module,
             function_types,
             function_labels,
+            imported_functions: HashMap::new(),
             constructors,
             expression_types,
             external_imports,
@@ -76,6 +78,28 @@ impl Lowerer {
                 self.function_labels
                     .entry(format!("{module}.{name}"))
                     .or_insert_with(|| labels.clone());
+            }
+        }
+        for import in &self.module.resolved.ast.imports {
+            let Some(interface) = interfaces.get(&import.module.text) else {
+                continue;
+            };
+            for imported in &import.unqualified {
+                if !matches!(imported.kind, ast::UnqualifiedImportKind::Value) {
+                    continue;
+                }
+                let local = imported.alias.as_ref().unwrap_or(&imported.name).text.clone();
+                if let Some(type_) = interface.functions.get(&imported.name.text) {
+                    self.function_types
+                        .entry(local.clone())
+                        .or_insert_with(|| type_.clone());
+                    self.imported_functions
+                        .entry(local.clone())
+                        .or_insert_with(|| format!("{}.{}", import.module.text, imported.name.text));
+                }
+                if let Some(labels) = interface.function_labels.get(&imported.name.text) {
+                    self.function_labels.entry(local).or_insert_with(|| labels.clone());
+                }
             }
         }
         self
@@ -261,8 +285,16 @@ impl Lowerer {
                 let target = match &reference.target {
                     ReferenceTarget::Symbol(id) => {
                         let symbol = self.module.resolved.symbols.symbol(*id);
+                        let (module, name) = match &symbol.kind {
+                            crate::resolve::SymbolKind::Imported { module, member } => {
+                                (Some(module.clone()), member.clone())
+                            }
+                            _ => (None, symbol.name.clone()),
+                        };
                         ReferenceTargetName::LocalSymbol {
-                            name: symbol.name.clone(),
+                            package: None,
+                            module,
+                            name,
                             kind: ReferenceKind::from(&symbol.kind),
                         }
                     }
@@ -270,6 +302,7 @@ impl Lowerer {
                         let module_symbol = self.module.resolved.symbols.symbol(*module);
                         let resolved = symbol.map(|id| self.module.resolved.symbols.symbol(id).name.clone());
                         ReferenceTargetName::QualifiedMember {
+                            package: None,
                             module: module_symbol.name.clone(),
                             member: member.text.clone(),
                             resolved,
@@ -836,7 +869,11 @@ impl Lowerer {
                 type_: return_type,
                 span: call.span,
                 kind: ExpressionKind::DirectCall(DirectCall {
-                    function: function_name.text.clone(),
+                    function: self
+                        .imported_functions
+                        .get(&function_name.text)
+                        .cloned()
+                        .unwrap_or_else(|| function_name.text.clone()),
                     arguments,
                     abi: call_abi(&function_type, CallBoundary::Internal),
                 }),
@@ -1062,7 +1099,11 @@ impl Lowerer {
                 type_: *return_type,
                 span: call.span,
                 kind: ExpressionKind::DirectCall(DirectCall {
-                    function: function_name.text.clone(),
+                    function: self
+                        .imported_functions
+                        .get(&function_name.text)
+                        .cloned()
+                        .unwrap_or_else(|| function_name.text.clone()),
                     arguments: self.lower_ordered_call_arguments(context, call)?,
                     abi: call_abi(&function_type, boundary),
                 }),
@@ -2552,8 +2593,16 @@ mod tests {
             .filter(|name| name.source_name.ends_with(".id"))
             .collect::<Vec<_>>();
         assert_eq!(id_names.len(), 2);
-        assert!(id_names.iter().any(|name| name.source_name == "left.id"));
-        assert!(id_names.iter().any(|name| name.source_name == "right.id"));
+        assert!(
+            id_names
+                .iter()
+                .any(|name| name.source_name == "duplicate_function_names:left.id")
+        );
+        assert!(
+            id_names
+                .iter()
+                .any(|name| name.source_name == "duplicate_function_names:right.id")
+        );
         assert_ne!(id_names[0].generated_name, id_names[1].generated_name);
         assert_eq!(module.functions.len(), 3);
     }
@@ -2568,8 +2617,16 @@ mod tests {
             .filter(|name| name.source_name.ends_with(".value"))
             .collect::<Vec<_>>();
         assert_eq!(value_names.len(), 2);
-        assert!(value_names.iter().any(|name| name.source_name == "alpha/main.value"));
-        assert!(value_names.iter().any(|name| name.source_name == "beta/main.value"));
+        assert!(
+            value_names
+                .iter()
+                .any(|name| name.source_name == "duplicate_module_basenames:alpha/main.value")
+        );
+        assert!(
+            value_names
+                .iter()
+                .any(|name| name.source_name == "duplicate_module_basenames:beta/main.value")
+        );
         assert_ne!(value_names[0].generated_name, value_names[1].generated_name);
     }
 
@@ -2577,14 +2634,27 @@ mod tests {
     fn fixture_dependency_module_name_overlap_keeps_root_package_names() {
         let module = lower_project_fixture("generated_names/dependency_module_overlap");
 
-        assert_eq!(module.linked_names.len(), 1);
-        let name = &module.linked_names[0];
-        assert_eq!(name.source_name, "shared.value");
-        assert!(
+        let value_names = module
+            .linked_names
+            .iter()
+            .filter(|name| name.source_name.ends_with(":shared.value"))
+            .collect::<Vec<_>>();
+        assert_eq!(value_names.len(), 2);
+        assert!(value_names.iter().any(|name| {
             name.generated_name
                 .contains("$pkg$x646570656e64656e63795f6d6f64756c655f6f7665726c6170$")
+        }));
+        assert!(
+            value_names
+                .iter()
+                .any(|name| name.generated_name.contains("$pkg$x6f7665726c61705f646570$"))
         );
-        assert!(name.generated_name.contains("$mod$x736861726564$"));
+        assert_ne!(value_names[0].generated_name, value_names[1].generated_name);
+        assert!(
+            value_names
+                .iter()
+                .all(|name| name.generated_name.contains("$mod$x736861726564$"))
+        );
     }
 
     #[test]
@@ -2597,7 +2667,7 @@ mod tests {
             .find(|name| name.generated_name.contains("$helper$lifted$"))
             .expect("lifted closure helper name");
         assert_eq!(helper.kind, LinkedNameKind::Helper);
-        assert_eq!(helper.source_name, "main.__anon_0");
+        assert_eq!(helper.source_name, "lifted_closures:main.__anon_0");
         assert!(
             module
                 .functions
@@ -2613,12 +2683,12 @@ mod tests {
         let user = module
             .linked_names
             .iter()
-            .find(|name| name.source_name == "domain.User")
+            .find(|name| name.source_name == "cross_module_features:domain.User")
             .expect("User constructor name");
         let ready = module
             .linked_names
             .iter()
-            .find(|name| name.source_name == "domain.Status")
+            .find(|name| name.source_name == "cross_module_features:domain.Status")
             .expect("Status constructor name");
         assert_eq!(user.kind, LinkedNameKind::Constructor);
         assert_eq!(ready.kind, LinkedNameKind::Constructor);
@@ -2635,9 +2705,9 @@ mod tests {
                 .any(|function| function.name.ends_with("$fn$x6269727468646179"))
         );
         let dump = module.linked_debug_dump();
-        assert!(dump.contains("Constructor source=domain.User generated="));
-        assert!(dump.contains("Constructor source=domain.Status generated="));
-        assert!(dump.contains("Function source=domain.private_base generated="));
+        assert!(dump.contains("Constructor source=cross_module_features:domain.User generated="));
+        assert!(dump.contains("Constructor source=cross_module_features:domain.Status generated="));
+        assert!(dump.contains("Function source=cross_module_features:domain.private_base generated="));
         assert!(!dump.contains("host-import wrapper"));
     }
 

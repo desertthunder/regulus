@@ -35,6 +35,19 @@ Use `--out-dir` to write compiler-named artifacts into a directory:
 gleam-wasm build examples/scalar_project --out-dir build/examples
 ```
 
+Project builds print dependency progress to stderr. Quiet output keeps package
+messages stable, while `--verbose` adds paths and other local details.
+
+```text
+Resolving dependencies
+Using cached gleam_stdlib 0.50.0
+Extracting gleam_stdlib 0.50.0
+```
+
+Path dependencies and selected package sources are loaded from the project graph
+and can be compiled into the linked Wasm module when they use the supported
+language subset.
+
 ## Compile one file
 
 Use `compile` for a single `.gleam` file. This path is useful for small tests,
@@ -112,6 +125,6 @@ gleam-wasm list examples/multi_module_project
 
 ## Current limitations
 
-Project compilation is still growing. Dependency interfaces, dependency source
-loading, general external functions, and richer host ABI adapters are tracked in
-`docs/internal`.
+Project compilation is still growing. Full Hex resolution, broad dependency
+language coverage, general external functions, and richer host ABI adapters are
+tracked in `docs/internal`.

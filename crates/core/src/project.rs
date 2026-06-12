@@ -36,6 +36,7 @@ pub struct PackageGraph {
     pub root_package: PackageNode,
     pub dependencies: Vec<Dependency>,
     pub dependency_interfaces: HashMap<String, types::ModuleInterface>,
+    pub dependency_sources: Vec<dependency::DependencySourcePackage>,
     pub modules: Vec<ModuleInfo>,
 }
 
@@ -209,6 +210,7 @@ pub fn load_project_with_options(
         compile_target,
         &mut options.progress,
     )?;
+    let dependency_sources = dependency::load_dependency_sources(&dependency_interfaces.packages)?;
     let dependencies = dependency::dependency_nodes(&dependency_interfaces.packages, dependencies(&config));
 
     Ok(Project {
@@ -220,6 +222,7 @@ pub fn load_project_with_options(
             },
             dependencies,
             dependency_interfaces: dependency_interfaces.modules,
+            dependency_sources,
             modules,
         },
         root,

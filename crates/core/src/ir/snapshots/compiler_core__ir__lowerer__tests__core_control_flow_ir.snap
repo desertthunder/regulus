@@ -1,6 +1,6 @@
 ---
 source: crates/core/src/ir/lowerer.rs
-assertion_line: 2663
+assertion_line: 2846
 expression: module
 ---
 Module {
@@ -65,6 +65,8 @@ Module {
         Reference {
             name: "Int",
             target: LocalSymbol {
+                package: None,
+                module: None,
                 name: "Int",
                 kind: Prelude,
             },
@@ -79,6 +81,8 @@ Module {
         Reference {
             name: "Int",
             target: LocalSymbol {
+                package: None,
+                module: None,
                 name: "Int",
                 kind: Prelude,
             },
@@ -93,6 +97,8 @@ Module {
         Reference {
             name: "Outcome",
             target: LocalSymbol {
+                package: None,
+                module: None,
                 name: "Outcome",
                 kind: Type,
             },
@@ -107,6 +113,8 @@ Module {
         Reference {
             name: "Bool",
             target: LocalSymbol {
+                package: None,
+                module: None,
                 name: "Bool",
                 kind: Prelude,
             },
@@ -121,6 +129,8 @@ Module {
         Reference {
             name: "Int",
             target: LocalSymbol {
+                package: None,
+                module: None,
                 name: "Int",
                 kind: Prelude,
             },
@@ -135,6 +145,8 @@ Module {
         Reference {
             name: "result",
             target: LocalSymbol {
+                package: None,
+                module: None,
                 name: "result",
                 kind: Parameter,
             },
@@ -149,6 +161,8 @@ Module {
         Reference {
             name: "Done",
             target: LocalSymbol {
+                package: None,
+                module: None,
                 name: "Done",
                 kind: Constructor,
             },
@@ -163,6 +177,8 @@ Module {
         Reference {
             name: "keep",
             target: LocalSymbol {
+                package: None,
+                module: None,
                 name: "keep",
                 kind: Parameter,
             },
@@ -177,6 +193,8 @@ Module {
         Reference {
             name: "value",
             target: LocalSymbol {
+                package: None,
+                module: None,
                 name: "value",
                 kind: Local,
             },
@@ -191,6 +209,8 @@ Module {
         Reference {
             name: "Failed",
             target: LocalSymbol {
+                package: None,
+                module: None,
                 name: "Failed",
                 kind: Constructor,
             },
@@ -205,6 +225,8 @@ Module {
         Reference {
             name: "reason",
             target: LocalSymbol {
+                package: None,
+                module: None,
                 name: "reason",
                 kind: Local,
             },
@@ -219,6 +241,8 @@ Module {
         Reference {
             name: "Done",
             target: LocalSymbol {
+                package: None,
+                module: None,
                 name: "Done",
                 kind: Constructor,
             },
@@ -233,6 +257,8 @@ Module {
         Reference {
             name: "first",
             target: LocalSymbol {
+                package: None,
+                module: None,
                 name: "first",
                 kind: Local,
             },
@@ -247,6 +273,8 @@ Module {
         Reference {
             name: "Int",
             target: LocalSymbol {
+                package: None,
+                module: None,
                 name: "Int",
                 kind: Prelude,
             },
@@ -261,6 +289,8 @@ Module {
         Reference {
             name: "Int",
             target: LocalSymbol {
+                package: None,
+                module: None,
                 name: "Int",
                 kind: Prelude,
             },
@@ -275,6 +305,8 @@ Module {
         Reference {
             name: "Int",
             target: LocalSymbol {
+                package: None,
+                module: None,
                 name: "Int",
                 kind: Prelude,
             },
@@ -289,6 +321,8 @@ Module {
         Reference {
             name: "pair",
             target: LocalSymbol {
+                package: None,
+                module: None,
                 name: "pair",
                 kind: Parameter,
             },
@@ -303,6 +337,8 @@ Module {
         Reference {
             name: "left",
             target: LocalSymbol {
+                package: None,
+                module: None,
                 name: "left",
                 kind: Local,
             },

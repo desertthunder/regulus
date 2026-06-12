@@ -1,0 +1,7 @@
+name = "dependency_function"
+version = "1.0.0"
+description = "Linking fixture for compiling and calling a dependency function."
+licences = ["Apache-2.0"]
+
+[dependencies]
+dep_pkg = { path = "dep_pkg" }

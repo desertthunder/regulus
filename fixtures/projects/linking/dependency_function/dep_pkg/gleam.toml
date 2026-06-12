@@ -1,0 +1,4 @@
+name = "dep_pkg"
+version = "0.1.0"
+description = "Dependency fixture with a normal source function."
+licences = ["Apache-2.0"]

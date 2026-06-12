@@ -4,7 +4,7 @@ use std::{collections::HashMap, fs};
 use serde::Deserialize;
 
 use crate::diagnostic::{Diagnostic, DiagnosticCode, Diagnostics};
-use crate::project::{Dependency, DependencySource, DependencyToml, ProjectLoadProgress};
+use crate::project::{Dependency, DependencySource, DependencyToml, ModuleInfo, ProjectLoadProgress, SourceRoot};
 use crate::source::{SourceFile, SourceFileId};
 use crate::types::ModuleInterface;
 use crate::{ast, parse, target};
@@ -21,6 +21,13 @@ pub struct DependencyPackage {
 pub struct DependencyInterfaces {
     pub packages: Vec<DependencyPackage>,
     pub modules: HashMap<String, ModuleInterface>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DependencySourcePackage {
+    pub package: DependencyPackage,
+    pub modules: Vec<ModuleInfo>,
+    pub sources: Vec<SourceFile>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -89,6 +96,20 @@ pub fn load_dependency_interfaces_with_progress(
     if diagnostics.is_empty() { Ok(output) } else { Err(diagnostics) }
 }
 
+pub fn load_dependency_sources(packages: &[DependencyPackage]) -> Result<Vec<DependencySourcePackage>, Diagnostics> {
+    let mut output = Vec::new();
+    let mut diagnostics = Vec::new();
+
+    for (package_index, package) in packages.iter().enumerate() {
+        match load_package_sources(package, package_index) {
+            Ok(sources) => output.push(sources),
+            Err(mut errors) => diagnostics.append(&mut errors),
+        }
+    }
+
+    if diagnostics.is_empty() { Ok(output) } else { Err(diagnostics) }
+}
+
 pub fn dependency_nodes(packages: &[DependencyPackage], configured: Vec<Dependency>) -> Vec<Dependency> {
     configured
         .into_iter()
@@ -101,6 +122,40 @@ pub fn dependency_nodes(packages: &[DependencyPackage], configured: Vec<Dependen
             dep
         })
         .collect()
+}
+
+fn load_package_sources(
+    package: &DependencyPackage, package_index: usize,
+) -> Result<DependencySourcePackage, Diagnostics> {
+    let src_root = package.root.join("src");
+    let mut paths = Vec::new();
+    collect_gleam_files(&src_root, &mut paths)?;
+    paths.sort();
+
+    let source_id_base = 2_000_000 + (package_index as u32 * 100_000);
+    let mut modules = Vec::new();
+    let mut sources = Vec::new();
+    let mut diagnostics = Vec::new();
+    for (module_index, path) in paths.into_iter().enumerate() {
+        let source_id = SourceFileId(source_id_base + module_index as u32);
+        let name = module_name_from_path(&src_root, &path);
+        match fs::read_to_string(&path) {
+            Ok(text) => {
+                modules.push(ModuleInfo { name, path: path.clone(), source_id, source_root: SourceRoot::Src });
+                sources.push(SourceFile::with_path(source_id, &path, text));
+            }
+            Err(error) => diagnostics.push(Diagnostic::new(
+                DiagnosticCode::ProjectError,
+                format!("could not read dependency source {}: {error}", path.display()),
+            )),
+        }
+    }
+
+    if diagnostics.is_empty() {
+        Ok(DependencySourcePackage { package: package.clone(), modules, sources })
+    } else {
+        Err(diagnostics)
+    }
 }
 
 fn dependency_root(root: &Path, name: &str, dependency: &DependencyToml) -> Option<PathBuf> {
@@ -129,14 +184,7 @@ fn load_pkg_interfaces(
     let mut diagnostics = Vec::new();
     for (index, path) in paths.into_iter().enumerate() {
         let source_id = SourceFileId(1_000_000 + index as u32);
-        let module_name = path
-            .strip_prefix(pkg_root.join("src"))
-            .unwrap_or(&path)
-            .with_extension("")
-            .components()
-            .map(|component| component.as_os_str().to_string_lossy())
-            .collect::<Vec<_>>()
-            .join("/");
+        let module_name = module_name_from_path(&pkg_root.join("src"), &path);
         match parse_module(&path, source_id, compile_target) {
             Ok(module) => {
                 interfaces.insert(module_name, ModuleInterface::from(&module));
@@ -146,6 +194,16 @@ fn load_pkg_interfaces(
     }
 
     if diagnostics.is_empty() { Ok(interfaces) } else { Err(diagnostics) }
+}
+
+fn module_name_from_path(src_root: &Path, path: &Path) -> String {
+    path.strip_prefix(src_root)
+        .unwrap_or(path)
+        .with_extension("")
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 fn parse_module(
@@ -191,8 +249,12 @@ fn collect_gleam_files(dir: &Path, paths: &mut Vec<PathBuf>) -> Result<(), Diagn
 
 #[cfg(test)]
 mod tests {
+    use std::collections::{BTreeMap, HashMap};
     use std::fs;
     use std::path::Path;
+
+    use crate::project::{GleamToml, PackageGraph, PackageNode, Project};
+    use crate::{ir, types};
 
     use super::*;
 
@@ -235,6 +297,112 @@ mod tests {
         let interface = interfaces.modules.get("path_dep").expect("path_dep interface");
         assert!(interface.functions.contains_key("from_path"));
         assert!(!interface.functions.contains_key("from_hex_cache"));
+    }
+
+    #[test]
+    fn dependency_source_loader_discovers_selected_package_modules() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let root = temp.path().join("app");
+        fs::create_dir_all(&root).expect("root dir");
+        let path_dep = temp.path().join("source_dep");
+        write(&path_dep.join("src/dep/foo.gleam"), "pub fn answer() -> Int { 1 }\n");
+        write(&path_dep.join("src/dep/bar.gleam"), "pub fn value() -> Int { 2 }\n");
+
+        let interfaces = load_dependency_interfaces(
+            &root,
+            &[(
+                "source_dep".to_string(),
+                DependencyToml::Options {
+                    version: Some("1.0.0".to_string()),
+                    path: Some("../source_dep".to_string()),
+                    git: None,
+                },
+                false,
+            )],
+            target::CompileTarget::Wasmtime,
+        )
+        .expect("dependency interfaces");
+        let sources = load_dependency_sources(&interfaces.packages).expect("dependency source modules");
+
+        assert_eq!(sources.len(), 1);
+        assert_eq!(sources[0].package.name, "source_dep");
+        assert_eq!(
+            sources[0]
+                .modules
+                .iter()
+                .map(|module| module.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["dep/bar", "dep/foo"],
+        );
+        assert_eq!(sources[0].sources.len(), 2);
+    }
+
+    #[test]
+    fn dependency_package_module_compiles_through_project_pipeline() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let root = temp.path().join("app");
+        fs::create_dir_all(&root).expect("root dir");
+        let path_dep = temp.path().join("compile_dep");
+        write(&path_dep.join("src/dep/foo.gleam"), "pub fn answer() -> Int { 1 }\n");
+
+        let interfaces = load_dependency_interfaces(
+            &root,
+            &[(
+                "compile_dep".to_string(),
+                DependencyToml::Options {
+                    version: Some("1.0.0".to_string()),
+                    path: Some("../compile_dep".to_string()),
+                    git: None,
+                },
+                false,
+            )],
+            target::CompileTarget::Wasmtime,
+        )
+        .expect("dependency interfaces");
+        let mut sources = load_dependency_sources(&interfaces.packages).expect("dependency source modules");
+        let package_sources = sources.pop().expect("one dependency source package");
+
+        let project = Project {
+            root: package_sources.package.root.clone(),
+            config: GleamToml {
+                name: package_sources.package.name.clone(),
+                version: package_sources
+                    .package
+                    .version
+                    .clone()
+                    .unwrap_or_else(|| "1.0.0".to_string()),
+                description: None,
+                licences: Vec::new(),
+                repository: None,
+                links: Vec::new(),
+                gleam: None,
+                target: None,
+                dependencies: BTreeMap::new(),
+                dev_dependencies: BTreeMap::new(),
+            },
+            graph: PackageGraph {
+                root_package: PackageNode {
+                    name: package_sources.package.name.clone(),
+                    version: package_sources
+                        .package
+                        .version
+                        .clone()
+                        .unwrap_or_else(|| "1.0.0".to_string()),
+                    root: package_sources.package.root.clone(),
+                },
+                dependencies: Vec::new(),
+                dependency_interfaces: HashMap::new(),
+                dependency_sources: Vec::new(),
+                modules: package_sources.modules,
+            },
+            sources: package_sources.sources,
+        };
+
+        let typed = types::check_project(&project).expect("type check dependency package");
+        let lowered = ir::lower_project(typed).expect("lower dependency package");
+
+        assert_eq!(lowered.functions.len(), 1);
+        assert!(lowered.linked_debug_dump().contains("dep/foo.answer"));
     }
 
     #[test]
