@@ -1,0 +1,8 @@
+packages:
+  - docs/website
+  - tests
+
+allowBuilds:
+  esbuild: true
+  sharp: true
+  workerd: true
