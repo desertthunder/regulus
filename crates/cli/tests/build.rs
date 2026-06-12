@@ -84,7 +84,15 @@ fn compile_bundler_target_emits_adapter_and_runs_string_smoke_test() {
     let input = temp.join("app.gleam");
     fs::write(
         &input,
-        r#"external fn request_text(input: String) -> String = "regulus/js" "request_text"
+        // TODO: embed as lunar.gleam
+        r#"import gleam/option.{Some}
+import gleam/result.{Ok}
+
+pub type Response {
+  Response(status: Int, body: String)
+}
+
+external fn request_text(input: String) -> String = "regulus/js" "request_text"
 external fn describe(count: Int, ratio: Float, enabled: Bool, input: String) -> String = "regulus/js" "describe"
 
 pub fn main(input: String) -> String {
@@ -97,6 +105,22 @@ pub fn describe_from_js(count: Int, ratio: Float, enabled: Bool, input: String) 
 
 pub fn keep_bool(value: Bool) -> Bool {
   value
+}
+
+pub fn response() -> Response {
+  Response(200, "ok")
+}
+
+pub fn names() -> List(String) {
+  ["Ada", "Joe"]
+}
+
+pub fn maybe_name() -> Option(String) {
+  Some("Ada")
+}
+
+pub fn result_name() -> Result(String, Int) {
+  Ok("Ada")
 }
 "#,
     )
@@ -123,7 +147,7 @@ pub fn keep_bool(value: Bool) -> Bool {
 
     fs::write(
         out_dir.join("smoke.mjs"),
-        // TODO: embed this
+        // TODO: embed this as apollo.js
         r#"import { abi, call, init, callString } from "./app.mjs";
 
 if (abi.exports.describe_from_js.result !== "String") {
@@ -157,6 +181,26 @@ if (described !== "shape:7:2.5:true") {
 const kept = call("keep_bool", true);
 if (kept !== true) {
   throw new Error(`unexpected bool result: ${kept}`);
+}
+
+const response = call("response");
+if (response.tag !== "Response" || response.fields.status !== 200n || response.fields.body !== "ok") {
+  throw new Error(`unexpected response: ${response.tag}`);
+}
+
+const names = call("names");
+if (names.join(",") !== "Ada,Joe") {
+  throw new Error(`unexpected names: ${names}`);
+}
+
+const maybeName = call("maybe_name");
+if (maybeName.tag !== "Some" || maybeName.value !== "Ada") {
+  throw new Error(`unexpected option: ${JSON.stringify(maybeName)}`);
+}
+
+const resultName = call("result_name");
+if (resultName.tag !== "Ok" || resultName.value !== "Ada") {
+  throw new Error(`unexpected result: ${JSON.stringify(resultName)}`);
 }
 "#,
     )

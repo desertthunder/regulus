@@ -2937,7 +2937,7 @@ fn validate_js_host_function_shape(
     function: &ir::Function, boundary: JsAbiBoundary<'_>, target: WasmTarget, diagnostics: &mut Diagnostics,
 ) {
     for (index, param) in function.params.iter().enumerate() {
-        if is_supported_js_host_abi_value(&param.type_, false) {
+        if is_supported_js_host_parameter(&param.type_) {
             continue;
         }
         diagnostics.push(js_host_abi_diagnostic(
@@ -2950,7 +2950,7 @@ fn validate_js_host_function_shape(
         ));
     }
 
-    if !is_supported_js_host_abi_value(&function.return_type, true) {
+    if !is_supported_js_host_return(&function.return_type, matches!(boundary, JsAbiBoundary::Export { .. })) {
         diagnostics.push(js_host_abi_diagnostic(
             function,
             boundary,
@@ -2975,7 +2975,7 @@ fn js_host_abi_diagnostic(
                 target.name()
             ),
             format!(
-                "host import `{module}.{name}` must use Int, Float, Bool, String, or Nil returns until the JS reader and opaque-handle ABIs are stable"
+                "host import `{module}.{name}` must use Int, Float, Bool, String, or Nil returns until structured writers and opaque handles are stable"
             ),
         ),
         JsAbiBoundary::Export { name } => (
@@ -2985,7 +2985,8 @@ fn js_host_abi_diagnostic(
                 type_,
                 target.name()
             ),
-            "public JS host exports must use Int, Float, Bool, String, or Nil returns until the JS reader and opaque-handle ABIs are stable".into(),
+            "public JS host exports must use Int, Float, Bool, String, Nil, or supported structured managed returns"
+                .into(),
         ),
     };
 
@@ -2994,8 +2995,27 @@ fn js_host_abi_diagnostic(
         .with_note(note)
 }
 
-fn is_supported_js_host_abi_value(type_: &Type, nil_allowed: bool) -> bool {
-    matches!(type_, Type::Int | Type::Float | Type::Bool | Type::String) || (nil_allowed && matches!(type_, Type::Nil))
+fn is_supported_js_host_parameter(type_: &Type) -> bool {
+    matches!(type_, Type::Int | Type::Float | Type::Bool | Type::String)
+}
+
+fn is_supported_js_host_return(type_: &Type, structured_allowed: bool) -> bool {
+    matches!(type_, Type::Int | Type::Float | Type::Bool | Type::String | Type::Nil)
+        || (structured_allowed && is_supported_js_host_structured_return(type_))
+}
+
+fn is_supported_js_host_structured_return(type_: &Type) -> bool {
+    match type_ {
+        Type::Tuple(items) => items.iter().all(is_supported_js_host_field),
+        Type::List(item) => is_supported_js_host_field(item),
+        Type::Record { fields, .. } => fields.iter().all(|field| is_supported_js_host_field(&field.type_)),
+        Type::Custom { args, .. } => args.iter().all(is_supported_js_host_field),
+        _ => false,
+    }
+}
+
+fn is_supported_js_host_field(type_: &Type) -> bool {
+    is_supported_js_host_parameter(type_) || is_supported_js_host_structured_return(type_)
 }
 
 fn value_type(type_: &Type, span: Span) -> StructuredResult<ValueType> {

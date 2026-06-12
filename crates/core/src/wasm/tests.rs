@@ -46,6 +46,7 @@ fn ir_module(functions: Vec<ir::Function>, span: Span) -> ir::Module {
         identity: None,
         imports: Vec::new(),
         declarations: Vec::new(),
+        type_declarations: Vec::new(),
         constants: Vec::new(),
         init: ir::ModuleInit::default(),
         references: Vec::new(),
@@ -1011,19 +1012,13 @@ pub fn main() -> Int { 1 }"#,
 }
 
 #[test]
-fn rejects_unsupported_js_host_export_shapes_before_byte_emission() {
-    let diagnostics = compile_wasm_target(
+fn accepts_supported_structured_js_host_export_shapes() {
+    compile_wasm_target(
         r#"pub type Response { Response(status: Int, body: String) }
 pub fn main() -> Response { Response(200, "ok") }"#,
         CompileTarget::Bundler,
     )
-    .expect_err("record JS export should be rejected until managed readers are stable");
-
-    assert!(diagnostics.iter().any(|diagnostic| {
-        diagnostic
-            .message
-            .contains("JS host export `main` return uses unsupported ABI shape")
-    }));
+    .expect("record JS export should compile once managed readers are stable");
 }
 
 #[test]

@@ -49,10 +49,10 @@ The public ABI contract lives in
 - [x] Implement JS adapter readers for tuples, records, and custom types.
 - [x] Implement JS adapter readers for lists and lists of strings.
 - [x] Implement JS adapter readers for `Result` and `Option` values.
-- [ ] Add export metadata for structured values consumed by JS readers.
-- [ ] Allow supported structured return shapes for JS exports once typed readers
+- [x] Add export metadata for structured values consumed by JS readers.
+- [x] Allow supported structured return shapes for JS exports once typed readers
       are available.
-- [ ] Add JS tests that read records, lists, `Result`, and `Option` values from
+- [x] Add JS tests that read records, lists, `Result`, and `Option` values from
       exported Gleam functions.
 
 ### Opaque JS handles

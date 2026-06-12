@@ -163,6 +163,11 @@ readValue(ptr, { kind: "List", item: "String" })
 readValue(ptr, { kind: "Result", ok: "String", error: "Int" })
 ```
 
+Bundler adapters embed export ABI metadata for supported structured returns.
+The metadata uses the same shape objects consumed by `readValue`, so `call` and
+`exportFunction` can decode structured return pointers without handwritten
+shape arrays.
+
 ## Import modules
 
 The shared JS import namespace is `regulus/js`. Profile-specific modules are
@@ -209,8 +214,8 @@ their ABI contracts are defined.
 
 ## Exported functions
 
-A public Gleam function exported to a JS host should use the same first-stable
-shape set as imports.
+A public Gleam function exported to a JS host uses scalar and string
+parameters. Return values may also use supported structured managed shapes.
 
 Supported exported parameter shapes are:
 
@@ -226,10 +231,18 @@ Supported exported return shapes for checked call wrappers are:
 - `Bool`
 - `String`
 - `Nil`
+- tuples whose fields are supported reader shapes
+- records and single-constructor record-like custom types whose fields are
+  supported reader shapes
+- custom types with supported field shapes and visible constructor metadata
+- lists whose item type is a supported reader shape
+- `List(String)`
+- `Result(a, e)` when `a` and `e` are supported reader shapes
+- `Option(a)` when `a` is a supported reader shape
 
-Structured exported values may be read by calling a raw export and then passing
-the returned pointer to the reader helpers. Checked wrappers will accept
-structured return metadata once structured export metadata is generated.
+Generated bundler metadata maps public export names to parameter and return
+shapes. `call("name", ...args)` uses that metadata to convert scalar
+parameters, invoke the Wasm export, and decode the return value.
 
 Glue should expose checked wrappers for stable call shapes so application code
 does not perform pointer arithmetic.
@@ -256,7 +269,7 @@ type, or public function annotation that caused the unsupported shape.
 This contract intentionally does not define:
 
 - writing structured JavaScript values into Gleam
-- generated metadata for structured exported values
+- structured import parameters or returns
 - opaque JS handle representation and lifetime
 - browser API semantics
 - Node.js loading semantics

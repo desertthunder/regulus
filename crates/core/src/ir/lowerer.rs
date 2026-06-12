@@ -142,6 +142,7 @@ impl Lowerer {
             .collect();
 
         let declarations = ast.declarations.iter().map(DeclarationMetadata::from).collect();
+        let type_declarations = self.lower_type_metadata();
         let references = self.lower_references();
         let mut exports = self.lower_exports();
         let mut constants = Vec::new();
@@ -195,6 +196,7 @@ impl Lowerer {
                     .map(|(package, module)| ModuleIdentity { package: package.clone(), module: module.clone() }),
                 imports,
                 declarations,
+                type_declarations,
                 constants,
                 init,
                 references,
@@ -258,6 +260,37 @@ impl Lowerer {
             }
             _ => {}
         }
+    }
+
+    fn lower_type_metadata(&self) -> Vec<TypeMetadata> {
+        let mut types = self
+            .module
+            .interface
+            .types
+            .values()
+            .filter(|type_| !type_.constructors.is_empty())
+            .map(|type_| TypeMetadata {
+                name: type_.name.clone(),
+                parameters: type_.parameters.clone(),
+                constructors: type_
+                    .constructors
+                    .iter()
+                    .map(|constructor| ConstructorMetadata {
+                        name: constructor.name.clone(),
+                        fields: constructor
+                            .fields
+                            .iter()
+                            .map(|field| FieldMetadata {
+                                name: (!field.name.is_empty()).then(|| field.name.clone()),
+                                type_: field.type_.clone(),
+                            })
+                            .collect(),
+                    })
+                    .collect(),
+            })
+            .collect::<Vec<_>>();
+        types.sort_by(|left, right| left.name.cmp(&right.name));
+        types
     }
 
     fn lower_exports(&self) -> Vec<Export> {

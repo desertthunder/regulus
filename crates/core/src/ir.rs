@@ -78,6 +78,7 @@ pub struct Module {
     pub identity: Option<ModuleIdentity>,
     pub imports: Vec<Import>,
     pub declarations: Vec<DeclarationMetadata>,
+    pub type_declarations: Vec<TypeMetadata>,
     pub constants: Vec<Constant>,
     pub init: ModuleInit,
     pub references: Vec<Reference>,
@@ -204,6 +205,25 @@ pub struct DeclarationMetadata {
     pub kind: DeclarationKind,
     pub visibility: Visibility,
     pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TypeMetadata {
+    pub name: String,
+    pub parameters: Vec<String>,
+    pub constructors: Vec<ConstructorMetadata>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConstructorMetadata {
+    pub name: String,
+    pub fields: Vec<FieldMetadata>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FieldMetadata {
+    pub name: Option<String>,
+    pub type_: Type,
 }
 
 impl From<&AstDeclaration> for DeclarationMetadata {
@@ -1048,6 +1068,7 @@ fn link_modules(modules: Vec<Module>) -> Result<Module, Diagnostics> {
         identity: None,
         imports: Vec::new(),
         declarations: Vec::new(),
+        type_declarations: Vec::new(),
         constants: Vec::new(),
         init: ModuleInit { steps: Vec::new() },
         references: Vec::new(),
@@ -1068,6 +1089,7 @@ fn link_modules(modules: Vec<Module>) -> Result<Module, Diagnostics> {
 
         linked.imports.extend(module.imports);
         linked.declarations.extend(module.declarations);
+        linked.type_declarations.extend(module.type_declarations);
         linked.constants.extend(module.constants);
         linked.init.steps.extend(module.init.steps);
         linked.references.extend(module.references);
@@ -1791,6 +1813,7 @@ ProjectError: duplicate generated backend name `generated/run`
             identity: None,
             imports: Vec::new(),
             declarations: Vec::new(),
+            type_declarations: Vec::new(),
             constants: Vec::new(),
             init: ModuleInit::default(),
             references: Vec::new(),
