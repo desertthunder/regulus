@@ -7,10 +7,12 @@ use flate2::read::GzDecoder;
 use prost::Message;
 use ring::digest;
 use ring::signature;
+use serde::{Deserialize, Serialize};
 use x509_parser::prelude::FromDer;
 
 const HEX_REPOSITORY_BASE: &str = "https://repo.hex.pm";
 const CACHE_SCHEMA_VERSION: u32 = 1;
+const PACKAGE_STAMP_FILE: &str = ".regulus-package.toml";
 
 const HEXPM_PUBLIC_KEY: &[u8] = b"-----BEGIN PUBLIC KEY-----
 MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEApqREcFDt5vV21JVe2QNB
@@ -35,6 +37,13 @@ pub struct CachedTarball {
     pub package: HexPackageRequest,
     pub path: PathBuf,
     pub downloaded: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExtractedPackage {
+    pub package: HexPackageRequest,
+    pub path: PathBuf,
+    pub extracted: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -135,6 +144,34 @@ impl HexLoader {
         Ok(CachedTarball { package, path, downloaded: true })
     }
 
+    pub fn ensure_package_extracted(
+        &self, project_root: &Path, cached: &CachedTarball,
+    ) -> Result<ExtractedPackage, HexError> {
+        validate_package_name(&cached.package.name)?;
+        let package_dir = project_root.join("build").join("packages").join(&cached.package.name);
+        let stamp = PackageExtractionStamp::hex(
+            cached.package.name.clone(),
+            cached.package.version.clone(),
+            cached.package.outer_checksum.clone(),
+        );
+
+        if package_stamp_matches(&package_dir, &stamp) {
+            return Ok(ExtractedPackage { package: cached.package.clone(), path: package_dir, extracted: false });
+        }
+
+        if package_dir.exists() {
+            fs::remove_dir_all(&package_dir)
+                .map_err(|source| HexError::RemoveDirectory { path: package_dir.clone(), source })?;
+        }
+        fs::create_dir_all(&package_dir)
+            .map_err(|source| HexError::CreateDirectory { path: package_dir.clone(), source })?;
+
+        extract_contents_tar_gz(&cached.path, &package_dir)?;
+        write_package_stamp(&package_dir, &stamp)?;
+
+        Ok(ExtractedPackage { package: cached.package.clone(), path: package_dir, extracted: true })
+    }
+
     pub fn package_metadata_url(&self, name: &str) -> String {
         format!("{}/packages/{name}", self.repository_base)
     }
@@ -144,7 +181,7 @@ impl HexLoader {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq, Serialize)]
 pub struct PackageExtractionStamp {
     pub cache_schema_version: u32,
     pub name: String,
@@ -193,6 +230,18 @@ pub enum HexError {
         to: PathBuf,
         source: std::io::Error,
     },
+    RemoveDirectory {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    ExtractTarball {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    MissingContentsTarGz {
+        path: PathBuf,
+    },
+    EncodeStamp(toml::ser::Error),
     Io(std::io::Error),
 }
 
@@ -223,6 +272,16 @@ impl fmt::Display for HexError {
                 from.display(),
                 to.display()
             ),
+            HexError::RemoveDirectory { path, source } => {
+                write!(f, "could not remove directory {}: {source}", path.display())
+            }
+            HexError::ExtractTarball { path, source } => {
+                write!(f, "could not extract tarball {}: {source}", path.display())
+            }
+            HexError::MissingContentsTarGz { path } => {
+                write!(f, "Hex tarball {} did not contain contents.tar.gz", path.display())
+            }
+            HexError::EncodeStamp(error) => write!(f, "could not encode package extraction stamp: {error}"),
             HexError::Io(error) => write!(f, "I/O error: {error}"),
         }
     }
@@ -242,6 +301,47 @@ struct SignedPayload {
     payload: Vec<u8>,
     #[prost(bytes = "vec", optional, tag = "2")]
     signature: Option<Vec<u8>>,
+}
+
+fn package_stamp_matches(package_dir: &Path, expected: &PackageExtractionStamp) -> bool {
+    let stamp_path = package_dir.join(PACKAGE_STAMP_FILE);
+    let Ok(text) = fs::read_to_string(stamp_path) else {
+        return false;
+    };
+    toml::from_str::<PackageExtractionStamp>(&text).is_ok_and(|actual| actual == *expected)
+}
+
+fn write_package_stamp(package_dir: &Path, stamp: &PackageExtractionStamp) -> Result<(), HexError> {
+    let text = toml::to_string(stamp).map_err(HexError::EncodeStamp)?;
+    let path = package_dir.join(PACKAGE_STAMP_FILE);
+    fs::write(&path, text).map_err(|source| HexError::WriteFile { path, source })
+}
+
+fn extract_contents_tar_gz(tarball_path: &Path, destination: &Path) -> Result<(), HexError> {
+    let file = fs::File::open(tarball_path)
+        .map_err(|source| HexError::ReadFile { path: tarball_path.to_path_buf(), source })?;
+    let mut outer = tar::Archive::new(file);
+    let entries = outer
+        .entries()
+        .map_err(|source| HexError::ExtractTarball { path: tarball_path.to_path_buf(), source })?;
+
+    for entry in entries {
+        let entry = entry.map_err(|source| HexError::ExtractTarball { path: tarball_path.to_path_buf(), source })?;
+        let is_contents = entry
+            .path()
+            .map_err(|source| HexError::ExtractTarball { path: tarball_path.to_path_buf(), source })?
+            .file_name()
+            .is_some_and(|name| name == "contents.tar.gz");
+        if is_contents {
+            let decoder = GzDecoder::new(entry);
+            let mut inner = tar::Archive::new(decoder);
+            return inner
+                .unpack(destination)
+                .map_err(|source| HexError::ExtractTarball { path: tarball_path.to_path_buf(), source });
+        }
+    }
+
+    Err(HexError::MissingContentsTarGz { path: tarball_path.to_path_buf() })
 }
 
 fn http_get(url: &str, accept: &str) -> Result<Vec<u8>, HexError> {
@@ -378,5 +478,126 @@ mod tests {
             loader.package_tarball_url("gleam_stdlib", "0.50.0"),
             "https://repo.hex.pm/tarballs/gleam_stdlib-0.50.0.tar"
         );
+    }
+
+    #[test]
+    fn extracts_contents_tar_gz_and_writes_stamp() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let tarball = temp.path().join("package.tar");
+        write_hex_tarball(&tarball, "pub fn main() { 1 }", false);
+        let loader = HexLoader::new(HexCache::new(temp.path().join("cache")));
+        let cached = cached_tarball(&tarball);
+
+        let extracted = loader
+            .ensure_package_extracted(temp.path(), &cached)
+            .expect("package extracted");
+
+        assert!(extracted.extracted);
+        assert_eq!(extracted.path, temp.path().join("build/packages/demo"));
+        assert_eq!(
+            fs::read_to_string(extracted.path.join("src/demo.gleam")).expect("source"),
+            "pub fn main() { 1 }"
+        );
+        assert_eq!(
+            fs::read_to_string(extracted.path.join(PACKAGE_STAMP_FILE)).expect("stamp"),
+            "cache_schema_version = 1\nname = \"demo\"\nversion = \"1.0.0\"\nouter_checksum = \"abc123\"\nsource = \"hex\"\n"
+        );
+    }
+
+    #[test]
+    fn skips_extraction_when_stamp_matches() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let tarball = temp.path().join("package.tar");
+        write_hex_tarball(&tarball, "first", false);
+        let loader = HexLoader::new(HexCache::new(temp.path().join("cache")));
+        let cached = cached_tarball(&tarball);
+        let first = loader
+            .ensure_package_extracted(temp.path(), &cached)
+            .expect("first extraction");
+        fs::write(first.path.join("src/demo.gleam"), "locally changed").expect("write source");
+
+        let second = loader
+            .ensure_package_extracted(temp.path(), &cached)
+            .expect("second extraction");
+
+        assert!(!second.extracted);
+        assert_eq!(
+            fs::read_to_string(second.path.join("src/demo.gleam")).expect("source"),
+            "locally changed"
+        );
+    }
+
+    #[test]
+    fn replaces_stale_package_directory_when_stamp_does_not_match() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let tarball = temp.path().join("package.tar");
+        write_hex_tarball(&tarball, "fresh", false);
+        let loader = HexLoader::new(HexCache::new(temp.path().join("cache")));
+        let package_dir = temp.path().join("build/packages/demo");
+        fs::create_dir_all(&package_dir).expect("package dir");
+        fs::write(package_dir.join(PACKAGE_STAMP_FILE), "name = \"old\"\n").expect("stale stamp");
+        fs::write(package_dir.join("stale.txt"), "stale").expect("stale file");
+
+        let extracted = loader
+            .ensure_package_extracted(temp.path(), &cached_tarball(&tarball))
+            .expect("package extracted");
+
+        assert!(extracted.extracted);
+        assert!(!extracted.path.join("stale.txt").exists());
+        assert_eq!(
+            fs::read_to_string(extracted.path.join("src/demo.gleam")).expect("source"),
+            "fresh"
+        );
+    }
+
+    #[test]
+    fn reports_missing_contents_tar_gz() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let tarball = temp.path().join("package.tar");
+        write_hex_tarball(&tarball, "fresh", true);
+        let loader = HexLoader::new(HexCache::new(temp.path().join("cache")));
+
+        assert!(matches!(
+            loader.ensure_package_extracted(temp.path(), &cached_tarball(&tarball)),
+            Err(HexError::MissingContentsTarGz { .. })
+        ));
+    }
+
+    fn cached_tarball(path: &Path) -> CachedTarball {
+        CachedTarball {
+            package: HexPackageRequest {
+                name: "demo".to_string(),
+                version: "1.0.0".to_string(),
+                outer_checksum: "abc123".to_string(),
+            },
+            path: path.to_path_buf(),
+            downloaded: false,
+        }
+    }
+
+    fn write_hex_tarball(path: &Path, source: &str, omit_contents: bool) {
+        let file = fs::File::create(path).expect("outer tarball");
+        let mut outer = tar::Builder::new(file);
+        if omit_contents {
+            append_file(&mut outer, "README.md", b"missing contents");
+        } else {
+            let mut inner_bytes = Vec::new();
+            {
+                let encoder = flate2::write::GzEncoder::new(&mut inner_bytes, flate2::Compression::default());
+                let mut inner = tar::Builder::new(encoder);
+                append_file(&mut inner, "src/demo.gleam", source.as_bytes());
+                inner.finish().expect("finish inner tarball");
+            }
+            append_file(&mut outer, "contents.tar.gz", &inner_bytes);
+        }
+        outer.finish().expect("finish outer tarball");
+    }
+
+    fn append_file<W: std::io::Write>(archive: &mut tar::Builder<W>, path: &str, contents: &[u8]) {
+        let mut header = tar::Header::new_gnu();
+        header.set_size(contents.len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+        archive.append_data(&mut header, path, contents).expect("append file");
     }
 }

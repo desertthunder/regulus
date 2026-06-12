@@ -86,17 +86,18 @@ The goal here is to make linked project names deterministic and collision-free.
 
 ### Dependency source loading
 
-- [ ] Define selected Hex and path dependency source loading rules.
-- [ ] Fetch Hex package metadata from `repo.hex.pm/packages/{name}`.
-- [ ] Download Hex tarballs from
+- [x] Define selected Hex and path dependency source loading rules.
+- [x] Fetch Hex package metadata from `repo.hex.pm/packages/{name}`.
+- [x] Download Hex tarballs from
       `repo.hex.pm/tarballs/{name}-{version}.tar`.
-- [ ] Verify signed repository metadata and package tarball checksums.
-- [ ] Cache downloaded tarballs by checksum under `$HOME/.regulus/store/hex/tarballs/`
+- [x] Verify signed repository metadata and package tarball checksums.
+- [x] Cache downloaded tarballs by checksum under
+      `$HOME/.regulus/store/hex/tarballs/`.
   - we should use `dirs = "6.0.0"` to get the home dir
-- [ ] Extract `contents.tar.gz` into `{project}/build/packages/{name}/`.
-- [ ] Write package extraction stamps with name, version, checksum, source, and
+- [x] Extract `contents.tar.gz` into `{project}/build/packages/{name}/`.
+- [x] Write package extraction stamps with name, version, checksum, source, and
       cache schema version.
-- [ ] Replace stale extracted package directories when stamps do not match.
+- [x] Replace stale extracted package directories when stamps do not match.
 - [ ] Load path dependency source without network access.
 - [ ] Add CLI progress output: `Resolving dependencies`, `Downloading ...`,
       `Using cached ...`, and `Extracting ...`.

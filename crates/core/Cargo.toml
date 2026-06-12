@@ -10,6 +10,7 @@ prost = "0.14.1"
 reqwest = { version = "0.12.26", default-features = false, features = ["blocking", "rustls-tls"] }
 ring = "0.17.14"
 serde = { version = "1.0.228", features = ["derive"] }
+tar = "0.4.44"
 toml = "1.1.2"
 tree-sitter = "0.26.9"
 tree-sitter-gleam = "1.0.0"
