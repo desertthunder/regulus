@@ -4,7 +4,7 @@ use std::{collections::HashMap, fs};
 use serde::Deserialize;
 
 use crate::diagnostic::{Diagnostic, DiagnosticCode, Diagnostics};
-use crate::project::{Dependency, DependencySource, DependencyToml};
+use crate::project::{Dependency, DependencySource, DependencyToml, ProjectLoadProgress};
 use crate::source::{SourceFile, SourceFileId};
 use crate::types::ModuleInterface;
 use crate::{ast, parse, target};
@@ -32,6 +32,14 @@ struct PackagesToml {
 pub fn load_dependency_interfaces(
     root: &Path, dependencies: &[(String, DependencyToml, bool)], compile_target: target::CompileTarget,
 ) -> Result<DependencyInterfaces, Diagnostics> {
+    let mut progress = None;
+    load_dependency_interfaces_with_progress(root, dependencies, compile_target, &mut progress)
+}
+
+pub fn load_dependency_interfaces_with_progress(
+    root: &Path, dependencies: &[(String, DependencyToml, bool)], compile_target: target::CompileTarget,
+    progress: &mut Option<&mut dyn FnMut(ProjectLoadProgress)>,
+) -> Result<DependencyInterfaces, Diagnostics> {
     let package_versions = match fs::read_to_string(root.join("build").join("packages").join("packages.toml")) {
         Ok(text) => toml::from_str::<PackagesToml>(&text)
             .map(|packages| packages.packages)
@@ -41,11 +49,32 @@ pub fn load_dependency_interfaces(
     let mut output = DependencyInterfaces::default();
     let mut diagnostics = Vec::new();
 
+    if !dependencies.is_empty()
+        && let Some(progress) = progress.as_deref_mut()
+    {
+        progress(ProjectLoadProgress::ResolvingDependencies);
+    }
+
     for (name, dep, _dev) in dependencies {
         match dependency_root(root, name, dep) {
             Some(pkg_root) => {
                 let version = dep.get_dep_ver(name, &package_versions, &pkg_root);
                 let source = DependencySource::from_toml(dep);
+                if let Some(progress) = progress.as_deref_mut() {
+                    let event = match source {
+                        DependencySource::Path | DependencySource::Git => ProjectLoadProgress::UsingPathPackage {
+                            name: name.clone(),
+                            version: version.clone(),
+                            path: pkg_root.clone(),
+                        },
+                        DependencySource::Hex => ProjectLoadProgress::UsingCachedPackage {
+                            name: name.clone(),
+                            version: version.clone(),
+                            path: pkg_root.clone(),
+                        },
+                    };
+                    progress(event);
+                }
                 let pkg = DependencyPackage { name: name.clone(), version, root: pkg_root.clone(), source };
                 output.packages.push(pkg);
                 match load_pkg_interfaces(&pkg_root, compile_target) {

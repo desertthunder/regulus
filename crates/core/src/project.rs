@@ -171,14 +171,44 @@ impl DependencyToml {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProjectLoadProgress {
+    ResolvingDependencies,
+    UsingCachedPackage {
+        name: String,
+        version: Option<String>,
+        path: PathBuf,
+    },
+    UsingPathPackage {
+        name: String,
+        version: Option<String>,
+        path: PathBuf,
+    },
+}
+
+#[derive(Default)]
+pub struct ProjectLoadOptions<'a> {
+    pub progress: Option<&'a mut dyn FnMut(ProjectLoadProgress)>,
+}
+
 pub fn load_project(path: impl AsRef<Path>) -> Result<Project, Diagnostics> {
+    load_project_with_options(path, ProjectLoadOptions::default())
+}
+
+pub fn load_project_with_options(
+    path: impl AsRef<Path>, mut options: ProjectLoadOptions<'_>,
+) -> Result<Project, Diagnostics> {
     let root = project_root(path.as_ref());
     let config = read_config(&root)?;
     let (sources, modules) = discover_modules(&root)?;
     let configured_dependencies = configured_dependencies(&config);
     let compile_target = target::project_compile_target(config.target.as_ref());
-    let dependency_interfaces =
-        dependency::load_dependency_interfaces(&root, &configured_dependencies, compile_target)?;
+    let dependency_interfaces = dependency::load_dependency_interfaces_with_progress(
+        &root,
+        &configured_dependencies,
+        compile_target,
+        &mut options.progress,
+    )?;
     let dependencies = dependency::dependency_nodes(&dependency_interfaces.packages, dependencies(&config));
 
     Ok(Project {

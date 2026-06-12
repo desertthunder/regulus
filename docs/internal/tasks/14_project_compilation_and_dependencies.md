@@ -99,9 +99,9 @@ The goal here is to make linked project names deterministic and collision-free.
       cache schema version.
 - [x] Replace stale extracted package directories when stamps do not match.
 - [x] Load path dependency source without network access.
-- [ ] Add CLI progress output: `Resolving dependencies`, `Downloading ...`,
+- [x] Add CLI progress output: `Resolving dependencies`, `Downloading ...`,
       `Using cached ...`, and `Extracting ...`.
-- [ ] Keep quiet output deterministic and put URLs, checksums, cache paths, and
+- [x] Keep quiet output deterministic and put URLs, checksums, cache paths, and
       source paths behind `--verbose`.
 - [ ] Add a dependency source loader for selected packages and paths.
 - [ ] Compile one package module from source through the normal pipeline.

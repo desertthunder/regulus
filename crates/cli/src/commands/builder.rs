@@ -1,6 +1,8 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use compiler_core::project::{ProjectLoadOptions, ProjectLoadProgress};
+
 use crate::args::{Emit, Target};
 use crate::echo;
 
@@ -15,13 +17,47 @@ pub struct Builder<'a> {
     pub(super) json: bool,
 }
 
+fn print_project_load_progress(event: ProjectLoadProgress, verbose: bool) {
+    match event {
+        ProjectLoadProgress::ResolvingDependencies => echo::progress("Resolving dependencies"),
+        ProjectLoadProgress::UsingCachedPackage { name, version, path } => {
+            let package = package_label(&name, version.as_deref());
+            if verbose {
+                echo::progress(format!("Using cached {package} ({})", path.display()));
+            } else {
+                echo::progress(format!("Using cached {package}"));
+            }
+        }
+        ProjectLoadProgress::UsingPathPackage { name, version, path } => {
+            let package = package_label(&name, version.as_deref());
+            if verbose {
+                echo::progress(format!("Using path {package} ({})", path.display()));
+            } else {
+                echo::progress(format!("Using path {package}"));
+            }
+        }
+    }
+}
+
+fn package_label(name: &str, version: Option<&str>) -> String {
+    match version {
+        Some(version) => format!("{name} {version}"),
+        None => name.to_string(),
+    }
+}
+
 impl Builder<'_> {
     pub fn build(&mut self) -> ExitCode {
         if self.json {
             return echo::fail("build", "--json", "machine-readable output is not implemented yet");
         }
         let input = self.input.unwrap_or_else(|| Path::new("."));
-        let project = match compiler_core::project::load_project(input) {
+        let verbose = self.verbose;
+        let mut progress = move |event| print_project_load_progress(event, verbose);
+        let project = match compiler_core::project::load_project_with_options(
+            input,
+            ProjectLoadOptions { progress: Some(&mut progress) },
+        ) {
             Ok(project) => project,
             Err(diagnostics) => return echo::fail_with_diagnostics("load project", input.display(), &diagnostics),
         };

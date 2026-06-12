@@ -7,6 +7,10 @@ pub fn status(label: &str, message: impl AsRef<str>) {
     eprintln!("{} {}", label.bright_magenta().bold(), message.as_ref());
 }
 
+pub fn progress(message: impl AsRef<str>) {
+    eprintln!("{}", message.as_ref());
+}
+
 pub fn error(message: impl AsRef<str>) {
     eprintln!("{} {}", "error".bright_red().bold(), message.as_ref());
 }
