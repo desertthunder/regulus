@@ -36,13 +36,13 @@ impl Compiler<'_> {
             Err(error) => return echo::fail("read", self.input.display(), error),
         };
 
-        let compiled = match super::compile_with_dumps(source, self.target.into()) {
+        let compiled = match super::CompiledModule::with_dumps(source, self.target.into()) {
             Ok(compiled) => compiled,
             Err(diagnostics) => return echo::fail_with_diagnostics("compile", self.input.display(), &diagnostics),
         };
 
         if let Some(dump_dir) = self.dump_dir.clone()
-            && let Err(error) = super::write_debug_dumps(&dump_dir, &compiled)
+            && let Err(error) = write_debug_dumps(&dump_dir, &compiled)
         {
             return echo::fail("write", "debug dumps", error);
         }
@@ -85,4 +85,14 @@ impl Compiler<'_> {
 
         ExitCode::SUCCESS
     }
+}
+
+fn write_debug_dumps(dump_dir: &Path, compiled: &super::CompiledModule) -> std::io::Result<()> {
+    fs::create_dir_all(dump_dir)?;
+    fs::write(dump_dir.join("ast.txt"), format!("{:#?}\n", compiled.ast))?;
+    fs::write(dump_dir.join("resolved.txt"), format!("{:#?}\n", compiled.resolved))?;
+    fs::write(dump_dir.join("typed.txt"), format!("{:#?}\n", compiled.typed))?;
+    fs::write(dump_dir.join("ir.txt"), format!("{:#?}\n", compiled.ir))?;
+    fs::write(dump_dir.join("wat.wat"), &compiled.wasm.wat)?;
+    Ok(())
 }

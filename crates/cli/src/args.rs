@@ -105,6 +105,16 @@ pub enum Emit {
     Ir,
 }
 
+impl Emit {
+    pub fn is_debug(self) -> bool {
+        matches!(self, Self::Ast | Self::Resolved | Self::Typed | Self::Ir)
+    }
+
+    pub fn is_pre_lower_debug(self) -> bool {
+        matches!(self, Self::Ast | Self::Resolved | Self::Typed)
+    }
+}
+
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum Target {
     Wasmtime,

@@ -127,10 +127,10 @@ The goal here is to make linked project names deterministic and collision-free.
 - [x] Make `--out-dir` write deterministic compiler-named artifacts.
 - [x] Define the default output path for `build` without `-o` or `--out-dir`.
 - [x] Keep generated artifact names deterministic for multi-module projects.
-- [ ] Support `--emit` values for `wasm`, `wat`, and useful debug artifacts.
-- [ ] Emit optional per-module debug dumps for AST, resolved AST, typed output,
+- [x] Support `--emit` values for `wasm`, `wat`, and useful debug artifacts.
+- [x] Emit optional per-module debug dumps for AST, resolved AST, typed output,
       IR, and WAT where useful.
-- [ ] Don't writing partial final artifacts after failed compilation unless the
+- [x] Don't write partial final artifacts after failed compilation unless the
       user explicitly requested debug dumps.
 
 ## Definition of Done

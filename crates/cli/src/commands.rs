@@ -17,6 +17,27 @@ use builder::Builder;
 use compiler::Compiler;
 use runner::Runner;
 
+pub struct CompiledModule {
+    ast: compiler_core::ast::Module,
+    resolved: compiler_core::resolve::ResolvedModule,
+    typed: compiler_core::types::TypedModule,
+    ir: compiler_core::ir::Module,
+    wasm: compiler_core::wasm::WasmModule,
+}
+
+impl CompiledModule {
+    fn with_dumps(source: SourceFile, target: CompileTarget) -> Result<Self, Diagnostics> {
+        let cst = compiler_core::parse::parse(source)?;
+        let ast = compiler_core::ast::build(&cst)?;
+        let ast = compiler_core::target::select_module(ast, target)?;
+        let resolved = compiler_core::resolve::resolve(ast.clone())?;
+        let typed = compiler_core::types::check(resolved.clone())?;
+        let ir = compiler_core::ir::lower(typed.clone())?;
+        let wasm = ir.emit_wasm_with_options(target.into())?;
+        Ok(Self { ast, resolved, typed, ir, wasm })
+    }
+}
+
 pub fn run(command: Command) -> ExitCode {
     match command {
         Command::Build { project, output, out_dir, target, emit, dump_dir, verbose, json } => {
@@ -171,26 +192,6 @@ fn read_host_string(caller: &mut wasmtime::Caller<'_, ()>, ptr: i32) -> String {
     String::from_utf8(bytes).unwrap_or_else(|_| "<invalid utf-8 string>".into())
 }
 
-// TODO: maybe this should live in core/src/lib.rs
-struct CompiledModule {
-    ast: compiler_core::ast::Module,
-    resolved: compiler_core::resolve::ResolvedModule,
-    typed: compiler_core::types::TypedModule,
-    ir: compiler_core::ir::Module,
-    wasm: compiler_core::wasm::WasmModule,
-}
-
-fn compile_with_dumps(source: SourceFile, target: CompileTarget) -> Result<CompiledModule, Diagnostics> {
-    let cst = compiler_core::parse::parse(source)?;
-    let ast = compiler_core::ast::build(&cst)?;
-    let ast = compiler_core::target::select_module(ast, target)?;
-    let resolved = compiler_core::resolve::resolve(ast.clone())?;
-    let typed = compiler_core::types::check(resolved.clone())?;
-    let ir = compiler_core::ir::lower(typed.clone())?;
-    let wasm = ir.emit_wasm_with_options(target.into())?;
-    Ok(CompiledModule { ast, resolved, typed, ir, wasm })
-}
-
 fn final_wasm_path(
     output: Option<PathBuf>, out_dir: Option<&Path>, root: &Path, artifact_base: &str,
 ) -> Result<PathBuf, &'static str> {
@@ -206,25 +207,6 @@ fn artifact_path(out_dir: Option<&Path>, wasm_path: &Path, artifact_base: &str, 
     out_dir
         .map(|dir| dir.join(format!("{artifact_base}.{extension}")))
         .unwrap_or_else(|| wasm_path.with_extension(extension))
-}
-
-fn write_debug_dumps(dump_dir: &Path, compiled: &CompiledModule) -> std::io::Result<()> {
-    fs::create_dir_all(dump_dir)?;
-    fs::write(dump_dir.join("ast.txt"), format!("{:#?}\n", compiled.ast))?;
-    fs::write(dump_dir.join("resolved.txt"), format!("{:#?}\n", compiled.resolved))?;
-    fs::write(dump_dir.join("typed.txt"), format!("{:#?}\n", compiled.typed))?;
-    fs::write(dump_dir.join("ir.txt"), format!("{:#?}\n", compiled.ir))?;
-    fs::write(dump_dir.join("wat.wat"), &compiled.wasm.wat)?;
-    Ok(())
-}
-
-fn write_project_debug_dumps(
-    dump_dir: &Path, ir: &compiler_core::ir::Module, wasm: &compiler_core::wasm::WasmModule,
-) -> std::io::Result<()> {
-    fs::create_dir_all(dump_dir)?;
-    fs::write(dump_dir.join("ir.txt"), ir.linked_debug_dump())?;
-    fs::write(dump_dir.join("wat.wat"), &wasm.wat)?;
-    Ok(())
 }
 
 fn write_file(path: &Path, contents: &[u8]) -> std::io::Result<()> {

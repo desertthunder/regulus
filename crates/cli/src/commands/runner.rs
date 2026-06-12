@@ -28,7 +28,7 @@ impl Runner<'_> {
             Ok(source) => SourceFile::with_path(SourceFileId(0), self.input, source),
             Err(error) => return echo::fail("read", self.input.display(), error),
         };
-        let compiled = match super::compile_with_dumps(source, self.target.into()) {
+        let compiled = match super::CompiledModule::with_dumps(source, self.target.into()) {
             Ok(compiled) => compiled,
             Err(diagnostics) => return echo::fail_with_diagnostics("compile", self.input.display(), &diagnostics),
         };
