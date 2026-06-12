@@ -63,6 +63,19 @@ The goal here is to make linked project names deterministic and collision-free.
 - [x] Apply target-group filtering before name resolution.
 - [ ] Resolve project imports, stdlib imports, dependency interfaces, and
       prelude names through one module-interface path.
+  - [x] Add one resolver-facing module-interface registry used by both
+        single-file and project resolution.
+  - [x] Move project, stdlib, and dependency interface loading behind registry
+        source helpers instead of open-coded map assembly.
+  - [x] Validate imported modules and unqualified imported members through the
+        registry when imports are collected.
+  - [x] Represent prelude names as an implicit interface in the registry instead
+        of hard-coded resolver symbols.
+  - [ ] Make type checking consume the same interface registry data for
+        external values, constructors, function labels, and types.
+  - [ ] Add focused coverage for project, stdlib, dependency, prelude,
+        unqualified import, unknown module, unknown member, and visibility
+        resolution.
 - [x] Type-check modules in dependency order.
 - [x] Lower every typed project module to IR.
 - [x] Preserve source paths and spans through project diagnostics.

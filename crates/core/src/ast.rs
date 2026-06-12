@@ -176,6 +176,16 @@ pub struct TypeAnnotation {
     pub source: String,
 }
 
+impl TypeAnnotation {
+    pub fn names(&self) -> Vec<Name> {
+        self.source
+            .split(|character: char| !(character == '_' || character == '/' || character.is_ascii_alphanumeric()))
+            .filter(|part| part.chars().next().is_some_and(char::is_uppercase))
+            .map(|text| Name { span: self.span, text: text.to_string() })
+            .collect()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Block {
     pub span: Span,
@@ -528,6 +538,22 @@ pub struct RawSyntax {
     pub span: Span,
     pub kind: String,
     pub source: String,
+}
+
+impl RawSyntax {
+    pub fn bit_string_pattern_bindings(&self) -> Vec<Name> {
+        self.source
+            .trim()
+            .strip_prefix("<<")
+            .and_then(|source| source.strip_suffix(">>"))
+            .into_iter()
+            .flat_map(|inner| inner.split(','))
+            .filter_map(|segment| segment.split(':').next())
+            .map(str::trim)
+            .filter(|name| name.chars().next().is_some_and(char::is_lowercase))
+            .map(|text| Name { span: self.span, text: text.into() })
+            .collect()
+    }
 }
 
 pub fn build(cst: &ConcreteSyntaxTree) -> Result<Module, Diagnostics> {

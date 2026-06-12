@@ -94,8 +94,93 @@ pub struct ResolvedProject {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
+struct ModuleInterfaceRegistry {
+    modules: HashMap<String, ModuleInterface>,
+    prelude: ModuleInterface,
+}
+
+impl ModuleInterfaceRegistry {
+    fn for_single_file() -> Self {
+        Self::default().with_prelude_interface().with_stdlib_interfaces()
+    }
+
+    fn for_project<'a>(
+        dependency_interfaces: &HashMap<String, types::ModuleInterface>,
+        modules: impl IntoIterator<Item = (&'a String, &'a ast::Module)>,
+    ) -> Self {
+        Self::default()
+            .with_prelude_interface()
+            .with_stdlib_interfaces()
+            .with_dependency_interfaces(dependency_interfaces)
+            .with_project_interfaces(modules)
+    }
+
+    fn with_prelude_interface(mut self) -> Self {
+        self.prelude = ModuleInterface::prelude_resolve();
+        self
+    }
+
+    fn with_stdlib_interfaces(mut self) -> Self {
+        self.modules.extend(stdlib_resolve_interfaces());
+        self
+    }
+
+    fn with_dependency_interfaces(mut self, interfaces: &HashMap<String, types::ModuleInterface>) -> Self {
+        self.modules.extend(dependency_resolve_interfaces(interfaces));
+        self
+    }
+
+    fn with_project_interfaces<'a>(mut self, modules: impl IntoIterator<Item = (&'a String, &'a ast::Module)>) -> Self {
+        self.modules
+            .extend(modules.into_iter().map(|(name, module)| (name.clone(), module.into())));
+        self
+    }
+
+    fn get(&self, module: &str) -> Option<&ModuleInterface> {
+        self.modules.get(module)
+    }
+
+    fn member(&self, module: &str, namespace: Namespace, name: &str) -> Option<&ModuleMember> {
+        self.get(module)?.members.get(&(namespace, name.to_string()))
+    }
+
+    fn has_public_member(&self, namespace: Namespace, name: &str) -> bool {
+        self.modules
+            .values()
+            .chain(std::iter::once(&self.prelude))
+            .any(|interface| {
+                interface
+                    .members
+                    .get(&(namespace, name.to_string()))
+                    .is_some_and(|member| member.public)
+            })
+    }
+
+    fn prelude_members(&self) -> impl Iterator<Item = (&(Namespace, String), &ModuleMember)> {
+        self.prelude.members.iter()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 struct ModuleInterface {
     members: HashMap<(Namespace, String), ModuleMember>,
+}
+
+impl ModuleInterface {
+    fn prelude_resolve() -> ModuleInterface {
+        let members = [
+            "Int", "Float", "String", "BitArray", "Bool", "Nil", "List", "Result", "Option", "Order",
+        ]
+        .into_iter()
+        .map(|name| {
+            (
+                (Namespace::Type, name.to_string()),
+                ModuleMember { public: true, span: module_span() },
+            )
+        })
+        .collect();
+        ModuleInterface { members }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -127,12 +212,9 @@ pub fn resolve_project(project: &Project) -> Result<ResolvedProject, Diagnostics
         return Err(diagnostics);
     }
 
-    let mut interfaces = stdlib_resolve_interfaces();
-    interfaces.extend(dependency_resolve_interfaces(&project.graph.dependency_interfaces));
-    interfaces.extend(
-        ast_modules
-            .iter()
-            .map(|(name, module)| (name.clone(), module_interface(module))),
+    let interfaces = ModuleInterfaceRegistry::for_project(
+        &project.graph.dependency_interfaces,
+        ast_modules.iter().map(|(name, module)| (name, module)),
     );
 
     let mut modules = Vec::new();
@@ -149,7 +231,7 @@ pub fn resolve_project(project: &Project) -> Result<ResolvedProject, Diagnostics
 struct Resolver {
     module: ast::Module,
     module_name: Option<String>,
-    project_modules: HashMap<String, ModuleInterface>,
+    interfaces: ModuleInterfaceRegistry,
     symbols: Vec<Symbol>,
     scopes: Vec<Scope>,
     references: Vec<ResolvedReference>,
@@ -161,7 +243,7 @@ impl Resolver {
         Self {
             module,
             module_name: None,
-            project_modules: HashMap::new(),
+            interfaces: ModuleInterfaceRegistry::default(),
             symbols: Vec::new(),
             scopes: Vec::new(),
             references: Vec::new(),
@@ -169,14 +251,12 @@ impl Resolver {
         }
     }
 
-    fn with_project(
-        module: ast::Module, module_name: String, project_modules: HashMap<String, ModuleInterface>,
-    ) -> Self {
-        Self { module_name: Some(module_name), project_modules, ..Self::new(module) }
+    fn with_project(module: ast::Module, module_name: String, interfaces: ModuleInterfaceRegistry) -> Self {
+        Self { module_name: Some(module_name), interfaces, ..Self::new(module) }
     }
 
     fn with_stdlib_interfaces(mut self) -> Self {
-        self.project_modules.extend(stdlib_resolve_interfaces());
+        self.interfaces = ModuleInterfaceRegistry::for_single_file();
         self
     }
 
@@ -202,16 +282,20 @@ impl Resolver {
     }
 
     fn collect_prelude(&mut self, scope: ScopeId) {
-        for name in [
-            "Int", "Float", "String", "BitArray", "Bool", "Nil", "List", "Result", "Option", "Order",
-        ] {
-            let name = ast::Name { span: self.module.span, text: name.into() };
-            self.define(scope, &name, Namespace::Type, SymbolKind::Prelude);
+        let members = self
+            .interfaces
+            .prelude_members()
+            .map(|((namespace, name), member)| (*namespace, name.clone(), member.span))
+            .collect::<Vec<_>>();
+        for (namespace, name, span) in members {
+            let name = ast::Name { span, text: name };
+            self.define(scope, &name, namespace, SymbolKind::Prelude);
         }
     }
 
     fn collect_imports(&mut self, scope: ScopeId) {
         for import in self.module.imports.clone() {
+            let module_known = self.validate_import_module(&import);
             let module_symbol_name = import.alias.clone().unwrap_or_else(|| ast::Name {
                 span: import.module.span,
                 text: import
@@ -230,34 +314,98 @@ impl Resolver {
             );
 
             for imported in &import.unqualified {
+                if !module_known {
+                    continue;
+                }
                 let local_name = imported.alias.as_ref().unwrap_or(&imported.name);
                 match imported.kind {
-                    UnqualifiedImportKind::Value => self.define_imported(
-                        scope,
-                        local_name,
-                        Namespace::Value,
-                        &import.module.text,
-                        &imported.name.text,
-                    ),
+                    UnqualifiedImportKind::Value => {
+                        if self.validate_imported_member(&import.module.text, Namespace::Value, &imported.name) {
+                            self.define_imported(
+                                scope,
+                                local_name,
+                                Namespace::Value,
+                                &import.module.text,
+                                &imported.name.text,
+                            );
+                        }
+                    }
                     UnqualifiedImportKind::TypeOrConstructor => {
-                        self.define_imported(
-                            scope,
-                            local_name,
-                            Namespace::Type,
-                            &import.module.text,
-                            &imported.name.text,
-                        );
-                        self.define_imported(
-                            scope,
-                            local_name,
-                            Namespace::Constructor,
-                            &import.module.text,
-                            &imported.name.text,
-                        );
+                        let imported_type =
+                            self.imported_member_is_public(&import.module.text, Namespace::Type, &imported.name);
+                        let imported_constructor =
+                            self.imported_member_is_public(&import.module.text, Namespace::Constructor, &imported.name);
+                        if !imported_type && !imported_constructor {
+                            self.validate_imported_member(&import.module.text, Namespace::Type, &imported.name);
+                        }
+                        if imported_type {
+                            self.define_imported(
+                                scope,
+                                local_name,
+                                Namespace::Type,
+                                &import.module.text,
+                                &imported.name.text,
+                            );
+                        }
+                        if imported_constructor {
+                            self.define_imported(
+                                scope,
+                                local_name,
+                                Namespace::Constructor,
+                                &import.module.text,
+                                &imported.name.text,
+                            );
+                        }
                     }
                 }
             }
         }
+    }
+
+    fn validate_import_module(&mut self, import: &ast::Import) -> bool {
+        if self.interfaces.get(&import.module.text).is_some() {
+            return true;
+        }
+
+        self.diagnostics.push(
+            Diagnostic::new(
+                DiagnosticCode::ResolveError,
+                format!("unknown module `{}`", import.module.text),
+            )
+            .with_label(Label::primary(import.module.span, "module not found")),
+        );
+        false
+    }
+
+    fn imported_member_is_public(&self, module: &str, namespace: Namespace, member: &ast::Name) -> bool {
+        self.interfaces
+            .member(module, namespace, &member.text)
+            .is_some_and(|found| found.public)
+    }
+
+    fn validate_imported_member(&mut self, module: &str, namespace: Namespace, member: &ast::Name) -> bool {
+        let Some(found) = self.interfaces.member(module, namespace, &member.text).cloned() else {
+            self.diagnostics.push(
+                Diagnostic::new(
+                    DiagnosticCode::ResolveError,
+                    format!("module `{module}` has no member `{}`", member.text),
+                )
+                .with_label(Label::primary(member.span, "unknown module member")),
+            );
+            return false;
+        };
+        if !found.public {
+            self.diagnostics.push(
+                Diagnostic::new(
+                    DiagnosticCode::ResolveError,
+                    format!("member `{}` is private", member.text),
+                )
+                .with_label(Label::primary(member.span, "private member"))
+                .with_label(Label::primary(found.span, "defined here")),
+            );
+            return false;
+        }
+        true
     }
 
     fn define_imported(&mut self, scope: ScopeId, name: &ast::Name, namespace: Namespace, module: &str, member: &str) {
@@ -578,7 +726,7 @@ impl Resolver {
     }
 
     fn resolve_type_annotation(&mut self, scope: ScopeId, type_: &ast::TypeAnnotation) {
-        for name in type_annotation_names(type_) {
+        for name in type_.names() {
             self.resolve_type_name(scope, &name);
         }
     }
@@ -597,12 +745,7 @@ impl Resolver {
             return;
         }
 
-        if self.project_modules.values().any(|interface| {
-            interface
-                .members
-                .get(&(Namespace::Type, name.text.clone()))
-                .is_some_and(|member| member.public)
-        }) {
+        if self.interfaces.has_public_member(Namespace::Type, &name.text) {
             return;
         }
 
@@ -680,7 +823,7 @@ impl Resolver {
     fn resolve_project_member(
         &mut self, module_name: &str, namespace: Namespace, member: &ast::Name,
     ) -> Option<SymbolId> {
-        let interface = self.project_modules.get(module_name)?;
+        let interface = self.interfaces.get(module_name)?;
         let Some(found) = interface.members.get(&(namespace, member.text.clone())).cloned() else {
             self.diagnostics.push(
                 Diagnostic::new(
@@ -743,7 +886,7 @@ impl Resolver {
                 self.define_pattern_name(scope, &alias.alias, kind, names);
             }
             Pattern::BitString(raw) => {
-                for name in bit_string_pattern_bindings(raw) {
+                for name in raw.bit_string_pattern_bindings() {
                     self.define_pattern_name(scope, &name, kind.clone(), names);
                 }
             }
@@ -882,29 +1025,6 @@ impl Resolver {
     }
 }
 
-fn bit_string_pattern_bindings(raw: &ast::RawSyntax) -> Vec<ast::Name> {
-    raw.source
-        .trim()
-        .strip_prefix("<<")
-        .and_then(|source| source.strip_suffix(">>"))
-        .into_iter()
-        .flat_map(|inner| inner.split(','))
-        .filter_map(|segment| segment.split(':').next())
-        .map(str::trim)
-        .filter(|name| name.chars().next().is_some_and(char::is_lowercase))
-        .map(|text| ast::Name { span: raw.span, text: text.into() })
-        .collect()
-}
-
-fn type_annotation_names(type_: &ast::TypeAnnotation) -> Vec<ast::Name> {
-    type_
-        .source
-        .split(|character: char| !(character == '_' || character == '/' || character.is_ascii_alphanumeric()))
-        .filter(|part| part.chars().next().is_some_and(char::is_uppercase))
-        .map(|text| ast::Name { span: type_.span, text: text.to_string() })
-        .collect()
-}
-
 fn stdlib_resolve_interfaces() -> HashMap<String, ModuleInterface> {
     StdlibRegistry::new()
         .modules()
@@ -977,77 +1097,79 @@ fn module_span() -> Span {
     Span { file_id: crate::source::SourceFileId(u32::MAX), start: 0, end: 0 }
 }
 
-fn module_interface(module: &ast::Module) -> ModuleInterface {
-    let mut members = HashMap::new();
+impl From<&ast::Module> for ModuleInterface {
+    fn from(value: &ast::Module) -> Self {
+        let mut members = HashMap::new();
 
-    for function in &module.functions {
-        members.insert(
-            (Namespace::Value, function.name.text.clone()),
-            ModuleMember { public: function.public, span: function.name.span },
-        );
-    }
+        for function in &value.functions {
+            members.insert(
+                (Namespace::Value, function.name.text.clone()),
+                ModuleMember { public: function.public, span: function.name.span },
+            );
+        }
 
-    for declaration in &module.declarations {
-        match declaration {
-            Declaration::Constant(constant) => {
-                members.insert(
-                    (Namespace::Value, constant.name.text.clone()),
-                    ModuleMember { public: constant.public, span: constant.span },
-                );
-            }
-            Declaration::ExternalFunction(function) => {
-                members.insert(
-                    (Namespace::Value, function.name.text.clone()),
-                    ModuleMember { public: function.public, span: function.span },
-                );
-            }
-            Declaration::ExternalType(type_) => {
-                members.insert(
-                    (Namespace::Type, type_.name.text.clone()),
-                    ModuleMember { public: type_.public, span: type_.span },
-                );
-            }
-            Declaration::TypeDefinition(type_) => {
-                members.insert(
-                    (Namespace::Type, type_.name.text.clone()),
-                    ModuleMember { public: type_.public, span: type_.span },
-                );
-                let exported_details = type_.public && !type_.opaque;
-                for constructor in &type_.constructors {
+        for declaration in &value.declarations {
+            match declaration {
+                Declaration::Constant(constant) => {
                     members.insert(
-                        (Namespace::Constructor, constructor.name.text.clone()),
-                        ModuleMember { public: exported_details, span: constructor.span },
+                        (Namespace::Value, constant.name.text.clone()),
+                        ModuleMember { public: constant.public, span: constant.span },
                     );
-                    for argument in &constructor.arguments {
-                        if let Some(label) = &argument.label {
-                            members.insert(
-                                (Namespace::Field, label.text.clone()),
-                                ModuleMember { public: exported_details, span: label.span },
-                            );
+                }
+                Declaration::ExternalFunction(function) => {
+                    members.insert(
+                        (Namespace::Value, function.name.text.clone()),
+                        ModuleMember { public: function.public, span: function.span },
+                    );
+                }
+                Declaration::ExternalType(type_) => {
+                    members.insert(
+                        (Namespace::Type, type_.name.text.clone()),
+                        ModuleMember { public: type_.public, span: type_.span },
+                    );
+                }
+                Declaration::TypeDefinition(type_) => {
+                    members.insert(
+                        (Namespace::Type, type_.name.text.clone()),
+                        ModuleMember { public: type_.public, span: type_.span },
+                    );
+                    let exported_details = type_.public && !type_.opaque;
+                    for constructor in &type_.constructors {
+                        members.insert(
+                            (Namespace::Constructor, constructor.name.text.clone()),
+                            ModuleMember { public: exported_details, span: constructor.span },
+                        );
+                        for argument in &constructor.arguments {
+                            if let Some(label) = &argument.label {
+                                members.insert(
+                                    (Namespace::Field, label.text.clone()),
+                                    ModuleMember { public: exported_details, span: label.span },
+                                );
+                            }
                         }
                     }
                 }
+                Declaration::TypeAlias(alias) => {
+                    members.insert(
+                        (Namespace::Type, alias.name.text.clone()),
+                        ModuleMember { public: alias.public, span: alias.span },
+                    );
+                }
+                Declaration::TargetGroup(group) => {
+                    let nested = Self::from(&ast::Module {
+                        span: group.span,
+                        declarations: group.declarations.clone(),
+                        imports: Vec::new(),
+                        functions: Vec::new(),
+                    });
+                    members.extend(nested.members);
+                }
+                _ => {}
             }
-            Declaration::TypeAlias(alias) => {
-                members.insert(
-                    (Namespace::Type, alias.name.text.clone()),
-                    ModuleMember { public: alias.public, span: alias.span },
-                );
-            }
-            Declaration::TargetGroup(group) => {
-                let nested = module_interface(&ast::Module {
-                    span: group.span,
-                    declarations: group.declarations.clone(),
-                    imports: Vec::new(),
-                    functions: Vec::new(),
-                });
-                members.extend(nested.members);
-            }
-            _ => {}
         }
-    }
 
-    ModuleInterface { members }
+        Self { members }
+    }
 }
 
 #[cfg(test)]
@@ -1188,9 +1310,15 @@ fn user(value) { value }
 
     #[test]
     fn resolves_unqualified_value_imports() {
-        let resolved = resolve_source("import app.{id}\nfn main() { id(1) }").expect("resolve unqualified import");
+        let resolved = resolve_source("import gleam/int.{to_string}\nfn main() { to_string(1) }")
+            .expect("resolve unqualified import");
 
-        assert!(resolved.references.iter().any(|reference| reference.name.text == "id"));
+        assert!(
+            resolved
+                .references
+                .iter()
+                .any(|reference| reference.name.text == "to_string")
+        );
     }
 
     #[test]
@@ -1250,14 +1378,38 @@ fn main(person) { case person { Missing(age: value) -> value } }
 
     #[test]
     fn reports_ambiguous_unqualified_imports() {
-        let diagnostics = resolve_source("import one.{id}\nimport two.{id}\nfn main() { id(1) }")
-            .expect_err("ambiguous import should fail");
+        let diagnostics =
+            resolve_source("import gleam/int.{to_string}\nimport gleam/float.{to_string}\nfn main() { to_string(1) }")
+                .expect_err("ambiguous import should fail");
 
         assert!(
             diagnostics
                 .iter()
-                .any(|diagnostic| diagnostic.message.contains("ambiguous imported name `id`"))
+                .any(|diagnostic| diagnostic.message.contains("ambiguous imported name `to_string`"))
         );
+    }
+
+    #[test]
+    fn reports_unknown_imported_modules() {
+        let diagnostics = resolve_source("import missing\nfn main() { 1 }").expect_err("unknown import should fail");
+
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains("unknown module `missing`"))
+        );
+    }
+
+    #[test]
+    fn reports_unknown_unqualified_imported_members() {
+        let diagnostics = resolve_source("import gleam/int.{missing}\nfn main() { 1 }")
+            .expect_err("unknown imported member should fail");
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic
+                .message
+                .contains("module `gleam/int` has no member `missing`")
+        }));
     }
 
     #[test]
