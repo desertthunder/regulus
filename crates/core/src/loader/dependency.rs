@@ -78,7 +78,7 @@ fn dependency_root(root: &Path, name: &str, dependency: &DependencyToml) -> Opti
     match dependency.path() {
         Some(path) => {
             let path = PathBuf::from(path);
-            return Some(if path.is_absolute() { path } else { root.join(path) });
+            Some(if path.is_absolute() { path } else { root.join(path) })
         }
         None => {
             let hex_root = root.join("build").join("packages").join(name);

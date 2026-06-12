@@ -121,7 +121,7 @@ impl Module {
         let mut boundary_calls = self
             .functions
             .iter()
-            .filter_map(|function| import_boundary_debug_line(function))
+            .filter_map(import_boundary_debug_line)
             .collect::<Vec<_>>();
         if !boundary_calls.is_empty() {
             boundary_calls.sort();
