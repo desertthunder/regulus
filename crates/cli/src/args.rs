@@ -4,7 +4,6 @@ use clap::{Parser, Subcommand, ValueEnum};
 use compiler_core::target::CompileTarget;
 
 #[derive(Debug, Parser)]
-#[command(name = "gleam-wasm")]
 #[command(about = "Compile Gleam source to WebAssembly")]
 pub struct Args {
     #[command(subcommand)]

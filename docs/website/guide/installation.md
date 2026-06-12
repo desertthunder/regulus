@@ -14,7 +14,8 @@ Regulus is developed from source. Build and run it with Cargo.
 cargo build -p compiler_cli
 ```
 
-Run the CLI through Cargo while developing:
+This builds the `reggie` and `regulus` binaries. Run the CLI through Cargo
+while developing:
 
 ```sh
 cargo run -q -p compiler_cli -- --help

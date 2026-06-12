@@ -5,7 +5,7 @@ intermediate representations without adding test-only entry points.
 
 ## Commands
 
-`gleam-wasm build [project]` compiles a Gleam project from `gleam.toml`.
+`reggie build [project]` compiles a Gleam project from `gleam.toml`.
 With no argument it builds the current directory. A directory argument builds
 that project root, and a `gleam.toml` argument builds the owning project.
 
@@ -15,7 +15,7 @@ artifacts such as `<package>.wasm` and `<package>.wat` into the given
 directory. `--emit` accepts comma-separated artifact kinds: `wasm`, `wat`,
 `ast`, `resolved`, `typed`, and `ir`.
 
-`gleam-wasm compile <input>` compiles one Gleam source file. It runs the same
+`reggie compile <input>` compiles one Gleam source file. It runs the same
 single-file pipeline used by tests:
 
 ```text
@@ -26,7 +26,7 @@ The command writes a `.wasm` file next to the input unless `--output` or
 `--out-dir` is set. `--wat` remains a compatibility alias for emitting WAT.
 Passing `--wat` without a path uses the `.wat` path matching the output file.
 
-`gleam-wasm list [project]` loads a project and prints discovered modules. It is
+`reggie list [project]` loads a project and prints discovered modules. It is
 an inspection command and does not write artifacts.
 
 ## Examples

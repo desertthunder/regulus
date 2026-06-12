@@ -1,16 +1,18 @@
 # CLI
 
-The CLI binary is named `gleam-wasm`. When running from a checkout, prefix
-commands with Cargo:
+The CLI binaries are named `reggie` and `regulus`. When running from a
+checkout, prefix commands with Cargo:
 
 ```sh
 cargo run -q -p compiler_cli -- build
 ```
 
-Installed binaries can be run directly:
+Installed binaries can be run directly. The docs use `reggie`, but `regulus`
+is also available as an alias:
 
 ```sh
-gleam-wasm build
+reggie build
+regulus build
 ```
 
 ## Build a project
@@ -18,9 +20,9 @@ gleam-wasm build
 Use `build` for normal Gleam projects with a `gleam.toml` file.
 
 ```sh
-gleam-wasm build
-gleam-wasm build examples/scalar_project
-gleam-wasm build examples/scalar_project/gleam.toml
+reggie build
+reggie build examples/scalar_project
+reggie build examples/scalar_project/gleam.toml
 ```
 
 With no project argument, the current directory is used. A directory argument
@@ -36,13 +38,13 @@ build/<package>.wasm
 Use `--output` to choose the exact final Wasm path:
 
 ```sh
-gleam-wasm build examples/scalar_project --output out/app.wasm
+reggie build examples/scalar_project --output out/app.wasm
 ```
 
 Use `--out-dir` to write compiler-named artifacts into a directory:
 
 ```sh
-gleam-wasm build examples/scalar_project --out-dir build/examples
+reggie build examples/scalar_project --out-dir build/examples
 ```
 
 Project builds print dependency progress to stderr. Quiet output keeps package
@@ -64,7 +66,7 @@ Use `compile` for a single `.gleam` file. This path is useful for small tests,
 fixtures, and compiler debugging.
 
 ```sh
-gleam-wasm compile path/to/module.gleam
+reggie compile path/to/module.gleam
 ```
 
 By default, single-file compilation writes a `.wasm` file next to the input.
@@ -76,15 +78,15 @@ Use `run` to compile a single `.gleam` file and execute one exported function
 with Wasmtime.
 
 ```sh
-gleam-wasm run path/to/module.gleam
-gleam-wasm run path/to/module.gleam --function answer
-gleam-wasm run path/to/module.gleam --function add 1 2
+reggie run path/to/module.gleam
+reggie run path/to/module.gleam --function answer
+reggie run path/to/module.gleam --function add 1 2
 ```
 
 `run` defaults to the `main` export. The `exec` command is an alias:
 
 ```sh
-gleam-wasm exec path/to/module.gleam
+reggie exec path/to/module.gleam
 ```
 
 Scalar arguments and return values use the low-level Wasm ABI. `Int` values are
@@ -98,8 +100,8 @@ into guest memory at the Wasm boundary. Programs can still print strings through
 Both `build` and `compile` accept `--target`:
 
 ```sh
-gleam-wasm build examples/browser_scalar --target browser
-gleam-wasm compile path/to/module.gleam --target wasmtime
+reggie build examples/browser_scalar --target browser
+reggie compile path/to/module.gleam --target wasmtime
 ```
 
 Supported target values are `wasmtime`, `browser`, and `wasi`. Project builds
@@ -110,8 +112,8 @@ use the target from `gleam.toml` when `--target` is not provided.
 `--emit` selects emitted artifact kinds:
 
 ```sh
-gleam-wasm build examples/scalar_project --emit wasm,wat
-gleam-wasm build examples/scalar_project --emit wat,ast,resolved,typed,ir
+reggie build examples/scalar_project --emit wasm,wat
+reggie build examples/scalar_project --emit wat,ast,resolved,typed,ir
 ```
 
 Supported emit values are:
@@ -132,7 +134,7 @@ files beside the selected output path unless `--dump-dir` is set.
 Use `--dump-dir` to write all compiler debug dumps into a separate directory:
 
 ```sh
-gleam-wasm build examples/multi_module_project --dump-dir build/dumps
+reggie build examples/multi_module_project --dump-dir build/dumps
 ```
 
 Single-file dumps include AST, resolved AST, typed output, IR, and WAT. Project
@@ -146,7 +148,7 @@ artifacts are only written when the requested compiler phase completes.
 Use `list` to inspect discovered modules without building artifacts.
 
 ```sh
-gleam-wasm list examples/multi_module_project
+reggie list examples/multi_module_project
 ```
 
 ## Current limitations

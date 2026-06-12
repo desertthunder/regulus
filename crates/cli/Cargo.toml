@@ -2,6 +2,15 @@
 name = "compiler_cli"
 version = "0.1.0"
 edition = "2024"
+default-run = "reggie"
+
+[[bin]]
+name = "reggie"
+path = "src/bin/reggie.rs"
+
+[[bin]]
+name = "regulus"
+path = "src/bin/regulus.rs"
 
 [dependencies]
 clap = { version = "4.5.40", features = ["derive"] }

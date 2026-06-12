@@ -12,10 +12,10 @@ possible compiler input or when you are debugging one source file.
 ## Common commands
 
 ```sh
-gleam-wasm build
-gleam-wasm build path/to/project
-gleam-wasm compile path/to/module.gleam
-gleam-wasm run path/to/module.gleam
+reggie build
+reggie build path/to/project
+reggie compile path/to/module.gleam
+reggie run path/to/module.gleam
 ```
 
 `run` is a single-file helper that compiles a module in memory and executes one

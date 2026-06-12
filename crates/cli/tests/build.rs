@@ -9,7 +9,7 @@ fn build_emit_writes_wat_and_debug_artifacts_without_wasm() {
     let out_dir = unique_temp_dir("regulus_cli_emit_build");
     fs::create_dir_all(&out_dir).expect("create output dir");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_compiler_cli"))
+    let output = Command::new(env!("CARGO_BIN_EXE_reggie"))
         .arg("build")
         .arg(&fixture)
         .arg("--out-dir")
@@ -17,7 +17,7 @@ fn build_emit_writes_wat_and_debug_artifacts_without_wasm() {
         .arg("--emit")
         .arg("wat,ast,resolved,typed,ir")
         .output()
-        .expect("run compiler_cli build");
+        .expect("run reggie build");
 
     assert!(
         output.status.success(),
@@ -53,13 +53,13 @@ fn builds_package_owned_overlap_fixture() {
     let out_dir = unique_temp_dir("regulus_cli_overlap_build");
     fs::create_dir_all(&out_dir).expect("create output dir");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_compiler_cli"))
+    let output = Command::new(env!("CARGO_BIN_EXE_reggie"))
         .arg("build")
         .arg(&fixture)
         .arg("--out-dir")
         .arg(&out_dir)
         .output()
-        .expect("run compiler_cli build");
+        .expect("run reggie build");
 
     assert!(
         output.status.success(),

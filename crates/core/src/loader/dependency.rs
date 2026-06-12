@@ -63,6 +63,10 @@ pub fn load_dependency_interfaces_with_progress(
     }
 
     for (name, dep, _dev) in dependencies {
+        if is_registry_backed_dependency(name) {
+            continue;
+        }
+
         match dependency_root(root, name, dep) {
             Some(pkg_root) => {
                 let version = dep.get_dep_ver(name, &package_versions, &pkg_root);
@@ -122,6 +126,10 @@ pub fn dependency_nodes(packages: &[DependencyPackage], configured: Vec<Dependen
             dep
         })
         .collect()
+}
+
+fn is_registry_backed_dependency(name: &str) -> bool {
+    name == "gleam_stdlib"
 }
 
 fn load_package_sources(
@@ -303,6 +311,30 @@ mod tests {
         assert_eq!(interface.module, "path_dep");
         assert!(interface.interface.functions.contains_key("from_path"));
         assert!(!interface.interface.functions.contains_key("from_hex_cache"));
+    }
+
+    #[test]
+    fn registry_backed_stdlib_dependency_does_not_parse_cached_source() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let root = temp.path().join("app");
+        write(
+            &root.join("build/packages/gleam_stdlib/src/gleam/io.gleam"),
+            "@external(javascript, \"../gleam_stdlib.mjs\", \"print\")\npub fn print(string: String) -> Nil\n",
+        );
+
+        let interfaces = load_dependency_interfaces(
+            &root,
+            &[(
+                "gleam_stdlib".to_string(),
+                DependencyToml::Version(">= 0.44.0 and < 2.0.0".to_string()),
+                false,
+            )],
+            target::CompileTarget::Wasmtime,
+        )
+        .expect("dependency interfaces");
+
+        assert!(interfaces.packages.is_empty());
+        assert!(interfaces.modules.is_empty());
     }
 
     #[test]

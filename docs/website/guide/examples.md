@@ -6,9 +6,9 @@ compiler's current surface area.
 ## Working examples
 
 ```sh
-gleam-wasm build examples/scalar_project
-gleam-wasm build examples/multi_module_project
-gleam-wasm build examples/browser_scalar --target browser
+reggie build examples/scalar_project
+reggie build examples/multi_module_project
+reggie build examples/browser_scalar --target browser
 ```
 
 ## Example projects

@@ -1,7 +1,7 @@
 # Supported subset
 
-Regulus currently compiles single-file Gleam programs to WebAssembly through the
-full compiler pipeline:
+Regulus currently compiles single-file Gleam programs and supported Gleam
+projects to WebAssembly through the full compiler pipeline:
 
 ```text
 Gleam source -> parse -> AST -> resolve -> type check -> IR -> Wasm
@@ -12,7 +12,7 @@ Gleam source -> parse -> AST -> resolve -> type check -> IR -> Wasm
 | Area                        | Status                          |
 | --------------------------- | ------------------------------- |
 | Single-file compilation     | Supported                       |
-| Whole-project linked output | Not supported                   |
+| Whole-project linked output | Supported for project modules   |
 | Project discovery           | Partial                         |
 | Type checking               | Broad subset                    |
 | Managed runtime values      | Partial                         |
@@ -26,6 +26,7 @@ Gleam source -> parse -> AST -> resolve -> type check -> IR -> Wasm
 ### Inputs
 
 - Compile one Gleam source file to `.wasm`.
+- Compile supported Gleam projects to one linked `.wasm` artifact.
 - Load `gleam.toml` and discover project modules.
 - Filter target-group declarations for Wasmtime, browser, and WASI targets.
 - Emit optional debug dumps: AST, resolved AST, typed AST, IR, and WAT.
@@ -154,7 +155,7 @@ Regulus can:
 - report missing modules
 - keep single-file loading available for tests and examples
 
-It does not yet compile a full project into linked Wasm output.
+Project builds compile discovered project modules into one linked Wasm output.
 
 ### Standard library
 
@@ -190,7 +191,6 @@ The compiler:
 
 ### Projects and dependencies
 
-- Whole-project linked Wasm output.
 - Fetching Hex packages.
 - Loading dependency source modules.
 - Linking compiled dependency modules.
