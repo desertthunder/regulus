@@ -4,6 +4,73 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[test]
+fn builds_working_examples() {
+    for (example, target) in [
+        ("examples/scalar_project", None),
+        ("examples/multi_module_project", None),
+        ("examples/browser_scalar", Some("browser")),
+    ] {
+        let out_dir = unique_temp_dir("regulus_cli_example_build");
+        fs::create_dir_all(&out_dir).expect("create output dir");
+
+        let mut command = Command::new(env!("CARGO_BIN_EXE_reggie"));
+        command
+            .current_dir(workspace_root())
+            .arg("build")
+            .arg(example)
+            .arg("--out-dir")
+            .arg(&out_dir);
+        if let Some(target) = target {
+            command.arg("--target").arg(target);
+        }
+        let output = command.output().expect("run reggie build");
+
+        assert!(
+            output.status.success(),
+            "build failed for {example}\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let artifact = PathBuf::from(example)
+            .file_name()
+            .expect("example basename")
+            .to_string_lossy()
+            .replace('-', "_");
+        assert!(
+            out_dir.join(format!("{artifact}.wasm")).is_file(),
+            "expected wasm artifact for {example} in {}",
+            out_dir.display()
+        );
+
+        let _ = fs::remove_dir_all(out_dir);
+    }
+}
+
+#[test]
+fn snapshots_diagnostic_example() {
+    let out_dir = unique_temp_dir("regulus_cli_example_diagnostic");
+    fs::create_dir_all(&out_dir).expect("create output dir");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_reggie"))
+        .current_dir(workspace_root())
+        .arg("build")
+        .arg("examples/diagnostics/duplicate_modules")
+        .arg("--out-dir")
+        .arg(&out_dir)
+        .output()
+        .expect("run reggie build");
+
+    assert!(!output.status.success(), "diagnostic example should fail");
+    assert!(output.stdout.is_empty(), "unexpected stdout for diagnostic example");
+    insta::assert_snapshot!(strip_ansi(&String::from_utf8_lossy(&output.stderr)), @r#"
+error could not load project examples/diagnostics/duplicate_modules
+diagnostic ProjectError: duplicate module `app` in examples/diagnostics/duplicate_modules/src/app.gleam and examples/diagnostics/duplicate_modules/test/app.gleam
+"#);
+
+    let _ = fs::remove_dir_all(out_dir);
+}
+
+#[test]
 fn build_emit_writes_wat_and_debug_artifacts_without_wasm() {
     let fixture = workspace_root().join("fixtures/projects/generated_names/dependency_module_overlap");
     let out_dir = unique_temp_dir("regulus_cli_emit_build");
@@ -236,4 +303,22 @@ fn unique_temp_dir(prefix: &str) -> PathBuf {
         .expect("system time after epoch")
         .as_nanos();
     std::env::temp_dir().join(format!("{prefix}_{}_{}", std::process::id(), nanos))
+}
+
+fn strip_ansi(input: &str) -> String {
+    let mut stripped = String::new();
+    let mut chars = input.chars().peekable();
+    while let Some(char) = chars.next() {
+        if char == '\x1b' && chars.peek() == Some(&'[') {
+            chars.next();
+            for char in chars.by_ref() {
+                if char.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+        } else {
+            stripped.push(char);
+        }
+    }
+    stripped
 }

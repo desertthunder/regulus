@@ -18,7 +18,7 @@ Compile a normal Gleam project from `gleam.toml` into one linked Wasm artifact.
 - [x] Replace the existing `project` command with `list` command
 - [x] Load package metadata, source roots, target settings, and dependencies.
 - [x] Assign stable source file IDs for every project module.
-- [ ] Report missing project files, unreadable files, duplicate modules, and
+- [x] Report missing project files, unreadable files, duplicate modules, and
       invalid module names with clear diagnostics.
 
 ### Generated-name scheme
@@ -52,9 +52,9 @@ The goal here is to make linked project names deterministic and collision-free.
 - [x] Add a diagnostic example for duplicate module names across source roots.
 - [x] Document example commands in the user-facing usage page.
 - [x] Reference examples from internal project-model and CLI development docs.
-- [ ] Add compile or CLI integration coverage for working examples.
-- [ ] Add snapshot coverage for intentional diagnostic examples.
-- [ ] Keep examples categorized as working, diagnostic, or roadmap examples.
+- [x] Add compile & CLI integration coverage for working examples.
+- [x] Add snapshot coverage for intentional diagnostic examples.
+- [x] Keep examples categorized as working, diagnostic, or roadmap examples.
 
 ### Module pipeline
 

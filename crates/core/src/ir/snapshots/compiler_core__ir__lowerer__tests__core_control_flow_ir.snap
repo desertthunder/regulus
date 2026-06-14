@@ -1,6 +1,6 @@
 ---
 source: crates/core/src/ir/lowerer.rs
-assertion_line: 2846
+assertion_line: 2956
 expression: module
 ---
 Module {
@@ -55,6 +55,36 @@ Module {
                 start: 222,
                 end: 301,
             },
+        },
+    ],
+    type_declarations: [
+        TypeMetadata {
+            name: "Outcome",
+            parameters: [],
+            constructors: [
+                ConstructorMetadata {
+                    name: "Done",
+                    fields: [
+                        FieldMetadata {
+                            name: Some(
+                                "_0",
+                            ),
+                            type_: Int,
+                        },
+                    ],
+                },
+                ConstructorMetadata {
+                    name: "Failed",
+                    fields: [
+                        FieldMetadata {
+                            name: Some(
+                                "_0",
+                            ),
+                            type_: Int,
+                        },
+                    ],
+                },
+            ],
         },
     ],
     constants: [],

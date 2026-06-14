@@ -243,7 +243,11 @@ pub fn source_file(path: impl AsRef<Path>) -> Result<SourceFile, Diagnostics> {
 }
 
 fn project_root(path: &Path) -> PathBuf {
-    if path.is_file() { path.parent().unwrap_or(path).to_path_buf() } else { path.to_path_buf() }
+    if path.is_file() || path.file_name().is_some_and(|name| name == "gleam.toml") {
+        path.parent().unwrap_or(path).to_path_buf()
+    } else {
+        path.to_path_buf()
+    }
 }
 
 fn read_config(root: &Path) -> Result<GleamToml, Diagnostics> {
@@ -310,6 +314,13 @@ fn discover_modules(root: &Path) -> Result<(Vec<SourceFile>, Vec<ModuleInfo>), D
     for (source_root, path) in entries {
         let source_id = SourceFileId(sources.len() as u32);
         let module_name = module_name(root, source_root, &path);
+        if let Err(message) = validate_module_name(&module_name) {
+            diagnostics.push(Diagnostic::new(
+                DiagnosticCode::ProjectError,
+                format!("invalid module name `{module_name}` for {}: {message}", path.display()),
+            ));
+            continue;
+        }
         if let Some(previous) = seen.insert(module_name.clone(), path.clone()) {
             diagnostics.push(Diagnostic::new(
                 DiagnosticCode::ProjectError,
@@ -323,17 +334,42 @@ fn discover_modules(root: &Path) -> Result<(Vec<SourceFile>, Vec<ModuleInfo>), D
             continue;
         }
 
-        let text = fs::read_to_string(&path).map_err(|error| {
-            vec![Diagnostic::new(
-                DiagnosticCode::ProjectError,
-                format!("could not read {}: {error}", path.display()),
-            )]
-        })?;
+        let text = match fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(error) => {
+                diagnostics.push(Diagnostic::new(
+                    DiagnosticCode::ProjectError,
+                    format!("could not read {}: {error}", path.display()),
+                ));
+                continue;
+            }
+        };
         sources.push(SourceFile::with_path(source_id, path.clone(), text));
         modules.push(ModuleInfo { name: module_name, path, source_id, source_root });
     }
 
     if diagnostics.is_empty() { Ok((sources, modules)) } else { Err(diagnostics) }
+}
+
+fn validate_module_name(name: &str) -> Result<(), String> {
+    for segment in name.split('/') {
+        validate_module_name_segment(segment)?;
+    }
+    Ok(())
+}
+
+fn validate_module_name_segment(segment: &str) -> Result<(), String> {
+    let mut chars = segment.chars();
+    let Some(first) = chars.next() else {
+        return Err("module path segments cannot be empty".into());
+    };
+    if !first.is_ascii_lowercase() {
+        return Err("module path segments must start with a lowercase ASCII letter".into());
+    }
+    if !chars.all(|char| char.is_ascii_lowercase() || char.is_ascii_digit() || char == '_') {
+        return Err("module path segments can only contain lowercase ASCII letters, digits, and `_`".into());
+    }
+    Ok(())
 }
 
 fn collect_gleam_files(
@@ -446,6 +482,65 @@ gleeunit = ">= 1.0.0 and < 2.0.0"
 
         assert_eq!(diagnostics[0].code, DiagnosticCode::ProjectError);
         assert!(diagnostics[0].message.contains("duplicate module `app`"));
+    }
+
+    #[test]
+    fn reports_invalid_module_names() {
+        let dir = tempdir().expect("tempdir");
+        write(
+            &dir.path().join("gleam.toml"),
+            "name = \"sample\"\nversion = \"1.0.0\"\n",
+        );
+        write(&dir.path().join("src/BadName.gleam"), "pub fn main() { Nil }");
+
+        let diagnostics = load_project(dir.path()).expect_err("invalid module should fail");
+
+        assert_eq!(diagnostics[0].code, DiagnosticCode::ProjectError);
+        assert!(diagnostics[0].message.contains("invalid module name `BadName`"));
+        assert!(
+            diagnostics[0]
+                .message
+                .contains("must start with a lowercase ASCII letter")
+        );
+    }
+
+    #[test]
+    fn reports_missing_manifest_from_gleam_toml_input() {
+        let dir = tempdir().expect("tempdir");
+        let missing_manifest = dir.path().join("gleam.toml");
+
+        let diagnostics = load_project(&missing_manifest).expect_err("missing manifest should fail");
+
+        assert_eq!(diagnostics[0].code, DiagnosticCode::ProjectError);
+        assert!(diagnostics[0].message.contains(&missing_manifest.display().to_string()));
+        assert!(!diagnostics[0].message.contains("gleam.toml/gleam.toml"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn reports_unreadable_source_files() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempdir().expect("tempdir");
+        write(
+            &dir.path().join("gleam.toml"),
+            "name = \"sample\"\nversion = \"1.0.0\"\n",
+        );
+        let source = dir.path().join("src/app.gleam");
+        write(&source, "pub fn main() { Nil }");
+        let mut permissions = fs::metadata(&source).expect("source metadata").permissions();
+        permissions.set_mode(0o000);
+        fs::set_permissions(&source, permissions).expect("make source unreadable");
+
+        let diagnostics = load_project(dir.path()).expect_err("unreadable source should fail");
+
+        let mut permissions = fs::metadata(&source).expect("source metadata").permissions();
+        permissions.set_mode(0o644);
+        fs::set_permissions(&source, permissions).expect("restore source permissions");
+
+        assert_eq!(diagnostics[0].code, DiagnosticCode::ProjectError);
+        assert!(diagnostics[0].message.contains("could not read"));
+        assert!(diagnostics[0].message.contains(&source.display().to_string()));
     }
 
     #[test]

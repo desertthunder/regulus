@@ -18,5 +18,8 @@ compiler_core = { path = "../core" }
 owo-colors = "4.2.1"
 wasmtime = "45.0.1"
 
+[dev-dependencies]
+insta = "1.43.2"
+
 [lints]
 workspace = true

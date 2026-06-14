@@ -22,6 +22,12 @@ reggie build examples/browser_scalar --target browser
 
 Diagnostic examples are expected to fail before Wasm emission.
 
+## Roadmap examples
+
+No roadmap examples are checked in yet. When added, they should stay separate
+from working examples so users can tell supported behavior from planned
+behavior.
+
 ## Fixture workflow
 
 Use `fixtures/` for focused compiler behavior. End-to-end fixtures should stay

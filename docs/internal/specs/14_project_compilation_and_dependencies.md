@@ -1,11 +1,8 @@
 # Project compilation and dependencies
 
-Regulus currently compiles one source file at a time. Project loading can read
-`gleam.toml` and discover modules, but it does not yet compile a linked project
-artifact.
-
-This spec tracks the next compiler milestone: compile a normal Gleam project
-from `gleam.toml` into deterministic Wasm.
+Regulus supports both single-file compilation and linked project builds from
+`gleam.toml`. This spec records the project compilation contract and the
+dependency-loading layers behind it.
 
 ## Goal
 
@@ -52,8 +49,8 @@ where they mean the same thing:
 - `-v, --verbose` prints modules as they are compiled.
 - `--json` may later emit machine-readable status and diagnostics.
 
-Inspection should stay separate from building. The existing `project` should
-can continue to print discovered modules as a `list` command.
+Inspection should stay separate from building. The `list` command prints
+discovered modules without compiling them.
 
 ## Project inputs
 
