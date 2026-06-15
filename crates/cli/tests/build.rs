@@ -215,7 +215,7 @@ pub fn result_name() -> Result(String, Int) {
     fs::write(
         out_dir.join("smoke.mjs"),
         // TODO: embed this as apollo.js
-        r#"import { abi, call, init, callString } from "./app.mjs";
+        r#"import { abi, call, callString, getHandle, init, releaseHandle, wrapHandle } from "./app.mjs";
 
 if (abi.exports.describe_from_js.result !== "String") {
   throw new Error("missing export ABI metadata");
@@ -268,6 +268,23 @@ if (maybeName.tag !== "Some" || maybeName.value !== "Ada") {
 const resultName = call("result_name");
 if (resultName.tag !== "Ok" || resultName.value !== "Ada") {
   throw new Error(`unexpected result: ${JSON.stringify(resultName)}`);
+}
+
+const request = { url: "https://example.test/" };
+const handle = wrapHandle(request, 42);
+if (getHandle(handle, 42) !== request) {
+  throw new Error("opaque handle did not round trip through the adapter table");
+}
+if (!releaseHandle(handle, 42)) {
+  throw new Error("opaque handle was not released");
+}
+try {
+  getHandle(handle, 42);
+  throw new Error("released opaque handle lookup should fail");
+} catch (error) {
+  if (!String(error.message).includes("released")) {
+    throw error;
+  }
 }
 "#,
     )

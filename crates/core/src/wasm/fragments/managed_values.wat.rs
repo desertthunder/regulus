@@ -131,6 +131,31 @@ pub const MANAGED_VALUE_HELPERS: &str = r#"
     call $__copy_bytes
     local.get $ptr
   )
+  (func $__opaque_new (param $type_tag i32) (param $payload i32) (result i32)
+    (local $ptr i32)
+    i32.const 16
+    call $__alloc
+    local.set $ptr
+    local.get $ptr
+    i32.const 8
+    i32.store
+    local.get $ptr
+    i32.const 4
+    i32.add
+    i32.const 0
+    i32.store
+    local.get $ptr
+    i32.const 8
+    i32.add
+    local.get $type_tag
+    i32.store
+    local.get $ptr
+    i32.const 12
+    i32.add
+    local.get $payload
+    i32.store
+    local.get $ptr
+  )
   (func $__panic_value_new (param $reason i32) (param $arity i32) (param $fields i32) (result i32)
     (local $ptr i32)
     local.get $arity

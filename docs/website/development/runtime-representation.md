@@ -79,8 +79,10 @@ slots. Managed captures use pointers and scalar captures use their raw slot
 representation.
 
 Opaque values are owned by the dependency or host interface that created them.
-The backend may pass opaque pointers around and compare identity, but may not
-inspect payload contents without a dependency-specific helper.
+Tag-8 opaque objects use a zero size word, followed by a host-owned type tag and
+a host/runtime payload pointer or handle id. The backend may pass opaque
+pointers around and compare identity, but may not inspect payload contents
+without a dependency-specific helper.
 
 Panic and runtime error objects are materialized when a helper needs to report
 or render a failure. Direct panic paths may trap without allocating one.
@@ -97,7 +99,16 @@ transfer. A borrowed pointer may be read after the exporting call returns and
 remains stable until the Wasm instance is reset or a future explicit arena reset
 runs. Hosts must not retain pointers across those reset boundaries.
 
+For JavaScript hosts, opaque object payload word 1 is an adapter-table handle
+id. The JS adapter owns the referenced JavaScript object and keeps it alive
+until the adapter releases that id or initializes a new Wasm instance.
+
+Releasing the handle does not free the tag-8 guest object; it only invalidates
+future JS table lookups for that handle id.
+
 ## Tests
 
-Runtime tests inspect encoded objects directly. Wasmtime tests inspect static
-and dynamic memory for tags, lengths, fields, payload bytes, and alignment.
+Runtime tests inspect encoded objects directly.
+
+Wasmtime tests inspect static and dynamic memory for tags, lengths, fields, payload
+bytes, and alignment.

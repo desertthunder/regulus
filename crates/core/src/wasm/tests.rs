@@ -154,6 +154,33 @@ fn emits_wat_with_runtime_for_string_function() {
 }
 
 #[test]
+fn js_host_helpers_allocate_opaque_handles() {
+    let wasm = compile_wasm_target("pub fn main() -> Nil { Nil }", CompileTarget::Bundler).expect("emit wasm");
+
+    let engine = Engine::default();
+    let module = Module::new(&engine, &wasm.bytes).expect("compile wasm module");
+    let mut store = Store::new(&engine, ());
+    let instance = Instance::new(&mut store, &module, &[]).expect("instantiate module");
+    let new_handle = instance
+        .get_typed_func::<(i32, i32), i32>(&mut store, "__regulus_handle_new")
+        .expect("get handle constructor");
+    let tag = instance
+        .get_typed_func::<i32, i32>(&mut store, "__regulus_value_tag")
+        .expect("get tag reader");
+    let type_tag = instance
+        .get_typed_func::<i32, i32>(&mut store, "__regulus_handle_type")
+        .expect("get handle type reader");
+    let handle_id = instance
+        .get_typed_func::<i32, i32>(&mut store, "__regulus_handle_id")
+        .expect("get handle id reader");
+
+    let ptr = new_handle.call(&mut store, (17, 3)).expect("allocate handle");
+    assert_eq!(tag.call(&mut store, ptr).expect("read tag"), 8);
+    assert_eq!(type_tag.call(&mut store, ptr).expect("read type tag"), 17);
+    assert_eq!(handle_id.call(&mut store, ptr).expect("read handle id"), 3);
+}
+
+#[test]
 fn omits_unreachable_runtime_fragment_domains() {
     let wasm = compile_wasm("pub fn join() { \"a\" <> \"b\" }");
 

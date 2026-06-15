@@ -87,6 +87,24 @@ The ABI must define how the host reads tags, fields, arity, string data, list
 contents, and record/custom-type metadata. Unsupported shapes should fail before
 byte emission with source-spanned diagnostics.
 
+## Opaque JS handles
+
+Opaque JS handles use normal managed runtime objects with tag `8`. The object
+header size word is `0`. Payload word `0` is a stable `i32` type tag owned by
+the host profile or package adapter. Payload word `1` is an `i32` adapter-table
+handle id. Guest code may pass opaque pointers around and compare identity, but
+must not read the payload directly.
+
+The JS adapter owns the handle table. Wrapping a JS value allocates one table id
+and one tag-8 guest object. Releasing a handle removes the JS table entry; any
+existing guest pointer for that id is then invalid for JS lookup. Reinitializing
+a Wasm instance clears the table because all managed pointers from the previous
+instance are invalid.
+
+Opaque pointers are borrowed across calls. The adapter must keep a wrapped JS
+value alive until `releaseHandle`, `clearHandles`, or instance reinitialization.
+Guest memory never owns, copies, or frees the JavaScript object itself.
+
 ## JS host profiles
 
 The shared ABI is independent of the JavaScript engine. Profiles describe

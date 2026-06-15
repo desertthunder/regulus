@@ -359,6 +359,7 @@ impl<'a> StructuredEmitter<'a> {
         self.runtime_helper_roots.insert("__string_new".into());
         self.runtime_helper_roots.insert("__string_len".into());
         self.runtime_helper_roots.insert("__string_data".into());
+        self.runtime_helper_roots.insert("__opaque_new".into());
         self.module.raw_wat_items.push(
             r#"
   (func $__regulus_alloc (param $size i32) (result i32)
@@ -431,6 +432,26 @@ impl<'a> StructuredEmitter<'a> {
     i64.load
   )
   (export "__regulus_value_field" (func $__regulus_value_field))
+  (func $__regulus_handle_new (param $type_tag i32) (param $handle_id i32) (result i32)
+    local.get $type_tag
+    local.get $handle_id
+    call $__opaque_new
+  )
+  (export "__regulus_handle_new" (func $__regulus_handle_new))
+  (func $__regulus_handle_type (param $ptr i32) (result i32)
+    local.get $ptr
+    i32.const 8
+    i32.add
+    i32.load
+  )
+  (export "__regulus_handle_type" (func $__regulus_handle_type))
+  (func $__regulus_handle_id (param $ptr i32) (result i32)
+    local.get $ptr
+    i32.const 12
+    i32.add
+    i32.load
+  )
+  (export "__regulus_handle_id" (func $__regulus_handle_id))
 "#
             .into(),
         );

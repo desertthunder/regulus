@@ -31,12 +31,41 @@ reset point.
 | records          | managed `i32` pointer          | Read through value helpers.            |
 | custom types     | managed `i32` pointer          | Read through value helpers.            |
 | lists            | managed `i32` pointer          | Read as JavaScript arrays.             |
-| opaque externals | managed or host handle pointer | Deferred to the opaque-handle ABI.     |
+| opaque externals | managed `i32` opaque pointer   | JS adapter handle table entry.         |
 | functions        | none                           | Unsupported across the JS host ABI.    |
 
 The first stable call conversion layer is scalar and string focused. Managed
 structured values can be read from borrowed pointers with explicit reader
 shapes. Writing structured JavaScript values into Gleam is deferred.
+
+## Opaque handles
+
+Opaque host objects are represented by tag-8 managed objects:
+
+```text
+0..4   tag = 8
+4..8   size = 0
+8..12  type tag: i32
+12..16 handle id: i32
+```
+
+The type tag is a stable host-defined value that distinguishes opaque external
+types. The handle id indexes the JavaScript adapter's table. Guest code may pass
+opaque pointers through functions and compare pointer identity, but must not
+read the payload directly.
+
+Generated or packaged JS glue exposes:
+
+- `wrapHandle(value, typeTag = 0) -> ptr`
+- `getHandle(ptr, expectedTypeTag?) -> value`
+- `releaseHandle(ptr, expectedTypeTag?) -> boolean`
+- `clearHandles() -> undefined`
+
+`wrapHandle` keeps the JavaScript value alive in the adapter table and returns a
+borrowed opaque pointer. `releaseHandle` drops that table reference; existing
+guest pointers for the released id are invalid for future JS lookup. `init`
+clears the handle table because pointers from a previous instance are invalid.
+Guest memory never owns or frees the JavaScript object.
 
 ## Runtime helpers
 
@@ -58,6 +87,9 @@ Managed value reader helpers:
 - `__regulus_value_arity(ptr: i32) -> i32`
 - `__regulus_value_constructor(ptr: i32) -> i32`
 - `__regulus_value_field(ptr: i32, index: i32) -> i64`
+- `__regulus_handle_new(type_tag: i32, handle_id: i32) -> i32`
+- `__regulus_handle_type(ptr: i32) -> i32`
+- `__regulus_handle_id(ptr: i32) -> i32`
 
 `__regulus_value_tag` reads the runtime object tag. Stable tags are:
 
@@ -258,7 +290,7 @@ Diagnostics should cover:
 - unsupported import modules for the selected profile
 - unsupported imported parameter or return shapes
 - unsupported exported parameter or return shapes
-- opaque-handle use before the handle ABI is defined
+- unsupported opaque-handle parameters or returns
 - function or closure values crossing the JS boundary
 
 Diagnostics should point at the external module string, parameter type, return
@@ -270,7 +302,6 @@ This contract intentionally does not define:
 
 - writing structured JavaScript values into Gleam
 - structured import parameters or returns
-- opaque JS handle representation and lifetime
 - browser API semantics
 - Node.js loading semantics
 - generated binding metadata
