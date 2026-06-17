@@ -6,6 +6,7 @@ use crate::ast::{self, Pattern, Statement};
 use crate::diagnostic::{Diagnostic, DiagnosticCode, Diagnostics, Label};
 use crate::labels::{FunctionLabelMap, call_argument_order, function_label_map, use_callback_placement};
 use crate::resolve::ReferenceTarget;
+use crate::shared::unquote;
 use crate::stdlib::{MemberStrategy, StdlibRegistry};
 use crate::types::{ConstructorInfo, ExternalFunctionInfo, FieldInfo, InterfaceEntry, TypedModule};
 use bit_slices::{ast_bit_array_literal, bit_array_literal, bit_string_pattern_segments};
@@ -2279,11 +2280,6 @@ fn collect_external_import(declaration: &ast::Declaration, imports: &mut HashMap
         }
         _ => {}
     }
-}
-
-// TODO: add a shared text utils module
-fn unquote(source: &str) -> String {
-    source.trim_matches('"').to_string()
 }
 
 #[derive(Debug, Clone)]

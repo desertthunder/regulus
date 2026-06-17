@@ -18,6 +18,8 @@ pub mod target;
 pub mod types;
 pub mod wasm;
 
+pub(crate) mod shared;
+
 use diagnostic::Diagnostics;
 use source::{SourceFile, SourceFileId};
 

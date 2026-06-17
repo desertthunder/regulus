@@ -1,6 +1,7 @@
 use std::fmt::Display;
 
 use crate::diagnostic::{Diagnostic, DiagnosticCode, Diagnostics, Label};
+use crate::shared::unquote;
 use crate::types::{ExternalFunctionInfo, Type};
 use crate::{ast, source::Span};
 
@@ -166,9 +167,4 @@ fn is_supported_extern_abi_value(type_: &Type, nil_allowed: bool) -> bool {
         }
         Type::Int | Type::Float | Type::String | Type::BitArray | Type::Bool => true,
     }
-}
-
-// TODO: add a shared text utils module
-fn unquote(source: &str) -> String {
-    source.trim_matches('"').to_string()
 }

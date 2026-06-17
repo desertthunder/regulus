@@ -22,6 +22,7 @@ use crate::{
     loader::registry::TypeInterfaceRegistry,
     project::{GleamToml, PackageGraph, PackageNode, Project},
     resolve::{self, ResolvedModule},
+    shared::unquote,
     source::{SourceFileId, Span},
 };
 
@@ -372,15 +373,6 @@ fn external_function_type_from_annotations(function: &ast::ExternalFunction) -> 
 
 fn external_function_info(function: &ast::ExternalFunction) -> ExternalFunctionInfo {
     function.into()
-}
-
-// TODO: add a shared text utils module
-fn unquote(value: &str) -> String {
-    value
-        .strip_prefix('"')
-        .and_then(|value| value.strip_suffix('"'))
-        .unwrap_or(value)
-        .to_string()
 }
 
 pub fn check(module: ResolvedModule) -> Result<TypedModule, Diagnostics> {
