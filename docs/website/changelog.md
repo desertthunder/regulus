@@ -4,7 +4,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### Added
+### 2026-06-05
+
+#### Added
 
 - Type and generic inference now includes reusable inference variables, type
   schemes, substitutions, constraint generation, unification, generalization,
@@ -18,15 +20,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   compatibility checks.
 - Bit-string patterns match integer segments, bind integer and variable
   bit-array tails, validate segment shapes, and execute in Wasm tests.
-
-### Changed
-
-- The type inference plan graduated from internal specs and tasks into the
-  development docs as conceptual implementation documentation.
-
-## [1.0.0] - 2026-06-05
-
-### Added
 
 - The WASM backend now documents and emits scalar and managed value
   representations for strings, bit arrays, lists, tuples, records, custom
@@ -46,9 +39,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   dynamic memory inspection, runtime helpers, import/export ABI checks, and
   unsupported target/ABI diagnostics.
 
-## [0.1.0] - 2026-06-04
+### 2026-06-04
 
-### Added
+#### Added
 
 - Project model and module loading now reads Gleam project metadata, discovers
   modules, assigns stable source IDs, and reports project graph diagnostics.

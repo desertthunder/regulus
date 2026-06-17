@@ -1,8 +1,11 @@
 # Project Compilation
 
 Regulus supports both single-file compilation and linked project builds from
-`gleam.toml`. This page records the implementation contract behind project
-compilation. For usage, see [Project compilation and dependencies](../reference/compiling-projects.md).
+`gleam.toml`. This page records the implementation behind project compilation.
+
+For usage, see [Project compilation and dependencies][usage].
+
+[usage]: ../reference/compiling-projects.md
 
 ## Goal
 

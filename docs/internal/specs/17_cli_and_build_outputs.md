@@ -4,10 +4,11 @@ Current single-file CLI behavior is documented in [CLI and build outputs][cli].
 This spec tracks the remaining user-facing command and artifact work that is not
 specific to project linking.
 
-Project compilation itself is defined in [Project compilation and
-dependencies](./14_project_compilation_and_dependencies.md).
+Project compilation itself is defined in the website development design record:
+[Project compilation and dependencies][projects].
 
 [cli]: ../../website/reference/cli-and-build-outputs.md
+[projects]: ../../website/development/projects.md
 
 ## Responsibilities
 
