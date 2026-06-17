@@ -211,6 +211,7 @@ pub struct DeclarationMetadata {
 pub struct TypeMetadata {
     pub name: String,
     pub parameters: Vec<String>,
+    pub opaque: bool,
     pub constructors: Vec<ConstructorMetadata>,
 }
 

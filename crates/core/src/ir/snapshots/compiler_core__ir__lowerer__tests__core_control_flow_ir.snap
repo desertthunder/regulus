@@ -61,6 +61,7 @@ Module {
         TypeMetadata {
             name: "Outcome",
             parameters: [],
+            opaque: false,
             constructors: [
                 ConstructorMetadata {
                     name: "Done",

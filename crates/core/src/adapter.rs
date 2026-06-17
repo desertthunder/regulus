@@ -63,7 +63,7 @@ fn function_shape_json(
 ) -> Option<String> {
     let params = params
         .iter()
-        .map(|param| simple_js_abi_type(&param.type_).map(json_string))
+        .map(|param| simple_js_abi_type(module, &param.type_).map(json_string))
         .collect::<Option<Vec<_>>>()?;
     let result = return_shape_json(module, return_type, structured_return)?;
     Some(format!("{{\"params\":[{}],\"result\":{result}}}", params.join(",")))
@@ -72,7 +72,7 @@ fn function_shape_json(
 fn return_shape_json(module: &ir::Module, type_: &Type, structured: bool) -> Option<String> {
     match type_ {
         Type::Nil => Some(json_string("Nil")),
-        _ => match simple_js_abi_type(type_) {
+        _ => match simple_js_abi_type(module, type_) {
             Some(type_) => Some(json_string(type_)),
             None if structured => structured_shape_json(module, type_),
             _ => None,
@@ -159,20 +159,29 @@ fn custom_shape_json(module: &ir::Module, name: &str, args: &[Type]) -> Option<S
 }
 
 fn field_shape_json(module: &ir::Module, type_: &Type) -> Option<String> {
-    match simple_js_abi_type(type_) {
+    match simple_js_abi_type(module, type_) {
         Some(type_) => Some(json_string(type_)),
         None => structured_shape_json(module, type_),
     }
 }
 
-fn simple_js_abi_type(type_: &Type) -> Option<&'static str> {
+fn simple_js_abi_type(module: &ir::Module, type_: &Type) -> Option<&'static str> {
     match type_ {
         Type::Int => Some("Int"),
         Type::Float => Some("Float"),
         Type::Bool => Some("Bool"),
         Type::String => Some("String"),
+        Type::Opaque { .. } => Some("Handle"),
+        Type::Custom { name, .. } if is_opaque_type(module, name) => Some("Handle"),
         _ => None,
     }
+}
+
+fn is_opaque_type(module: &ir::Module, name: &str) -> bool {
+    module
+        .type_declarations
+        .iter()
+        .any(|type_| type_.name == name && type_.opaque)
 }
 
 fn substitute_generics(type_: &Type, substitutions: &HashMap<String, Type>) -> Type {

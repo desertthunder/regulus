@@ -319,7 +319,7 @@ impl<'a> StructuredEmitter<'a> {
         len.name = Some(format!("{}__len", function.name));
         len.body = vec![
             Instruction::Call { function: original, type_: string_result },
-            Instruction::I32Load(mem_arg(memory, 4, 2)),
+            Instruction::I32Load(MemoryArg::new(memory, 4, 2)),
         ];
         let len_id = self.module.push_function(len);
         self.module
@@ -893,22 +893,22 @@ impl<'a> StructuredEmitter<'a> {
             }
             "__stdlib_gleam_string_length" => {
                 self.expression(&call.arguments[0].value, out)?;
-                out.push(Instruction::I32Load(mem_arg(self.ensure_memory(), 4, 2)));
+                out.push(Instruction::I32Load(MemoryArg::new(self.ensure_memory(), 4, 2)));
                 out.push(Instruction::I64ExtendI32U);
             }
             "__stdlib_gleam_string_is_empty" => {
                 self.expression(&call.arguments[0].value, out)?;
-                out.push(Instruction::I32Load(mem_arg(self.ensure_memory(), 4, 2)));
+                out.push(Instruction::I32Load(MemoryArg::new(self.ensure_memory(), 4, 2)));
                 out.push(Instruction::I32Eqz);
             }
             "__stdlib_gleam_bit_array_bit_size" => {
                 self.expression(&call.arguments[0].value, out)?;
-                out.push(Instruction::I32Load(mem_arg(self.ensure_memory(), 4, 2)));
+                out.push(Instruction::I32Load(MemoryArg::new(self.ensure_memory(), 4, 2)));
                 out.push(Instruction::I64ExtendI32U);
             }
             "__stdlib_gleam_bit_array_byte_size" => {
                 self.expression(&call.arguments[0].value, out)?;
-                out.push(Instruction::I32Load(mem_arg(self.ensure_memory(), 4, 2)));
+                out.push(Instruction::I32Load(MemoryArg::new(self.ensure_memory(), 4, 2)));
                 out.push(Instruction::I32Const(7));
                 out.push(Instruction::I32Add);
                 out.push(Instruction::I32Const(8));
@@ -917,7 +917,7 @@ impl<'a> StructuredEmitter<'a> {
             }
             "__stdlib_gleam_bit_array_is_empty" => {
                 self.expression(&call.arguments[0].value, out)?;
-                out.push(Instruction::I32Load(mem_arg(self.ensure_memory(), 4, 2)));
+                out.push(Instruction::I32Load(MemoryArg::new(self.ensure_memory(), 4, 2)));
                 out.push(Instruction::I32Eqz);
             }
             "__stdlib_gleam_bit_array_append" => {
@@ -1135,10 +1135,10 @@ impl<'a> StructuredEmitter<'a> {
         let left_len = self.required_local(self.string_left_len_local, "string left length")?;
         let right_len = self.required_local(self.string_right_len_local, "string right length")?;
         self.expression(&call.arguments[0].value, out)?;
-        out.push(Instruction::I32Load(mem_arg(self.ensure_memory(), 4, 2)));
+        out.push(Instruction::I32Load(MemoryArg::new(self.ensure_memory(), 4, 2)));
         out.push(Instruction::LocalSet { local: left_len, type_: ValueType::I32 });
         self.expression(&call.arguments[1].value, out)?;
-        out.push(Instruction::I32Load(mem_arg(self.ensure_memory(), 4, 2)));
+        out.push(Instruction::I32Load(MemoryArg::new(self.ensure_memory(), 4, 2)));
         out.push(Instruction::LocalSet { local: right_len, type_: ValueType::I32 });
         out.push(Instruction::I32Const(8));
         out.push(Instruction::LocalGet { local: left_len, type_: ValueType::I32 });
@@ -1148,12 +1148,12 @@ impl<'a> StructuredEmitter<'a> {
         self.allocate_dynamic(out)?;
         out.push(Instruction::LocalTee { local: ptr, type_: ValueType::I32 });
         out.push(Instruction::I32Const(u32::from(runtime::ObjectTag::String) as i32));
-        out.push(Instruction::I32Store(mem_arg(self.ensure_memory(), 0, 2)));
+        out.push(Instruction::I32Store(MemoryArg::new(self.ensure_memory(), 0, 2)));
         out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
         out.push(Instruction::LocalGet { local: left_len, type_: ValueType::I32 });
         out.push(Instruction::LocalGet { local: right_len, type_: ValueType::I32 });
         out.push(Instruction::I32Add);
-        out.push(Instruction::I32Store(mem_arg(self.ensure_memory(), 4, 2)));
+        out.push(Instruction::I32Store(MemoryArg::new(self.ensure_memory(), 4, 2)));
         self.copy_string_bytes(&call.arguments[0].value, ptr, left_len, None, out)?;
         self.copy_string_bytes(&call.arguments[1].value, ptr, right_len, Some(left_len), out)?;
         out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
@@ -1300,7 +1300,7 @@ impl<'a> StructuredEmitter<'a> {
             let ptr = self.push_static(runtime::string_object(self.config, self.next_static_offset, name));
             let mut condition = Vec::new();
             self.expression(&call.arguments[0].value, &mut condition)?;
-            condition.push(Instruction::I32Load(mem_arg(self.ensure_memory(), 8, 2)));
+            condition.push(Instruction::I32Load(MemoryArg::new(self.ensure_memory(), 8, 2)));
             condition.push(Instruction::I32Const(tag));
             condition.push(Instruction::I32Eq);
             condition.push(Instruction::If {
@@ -1360,7 +1360,7 @@ impl<'a> StructuredEmitter<'a> {
         out.push(Instruction::I32Add);
         out.push(Instruction::LocalGet { local: decoder, type_: ValueType::I32 });
         out.push(Instruction::I64ExtendI32U);
-        out.push(Instruction::I64Store(mem_arg(self.ensure_memory(), 0, 3)));
+        out.push(Instruction::I64Store(MemoryArg::new(self.ensure_memory(), 0, 3)));
         out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
         Ok(())
     }
@@ -1374,17 +1374,17 @@ impl<'a> StructuredEmitter<'a> {
         out.push(Instruction::LocalSet { local: ptr, type_: ValueType::I32 });
         out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
         out.push(Instruction::I32Const(u32::from(runtime::ObjectTag::Custom) as i32));
-        out.push(Instruction::I32Store(mem_arg(self.ensure_memory(), 0, 2)));
+        out.push(Instruction::I32Store(MemoryArg::new(self.ensure_memory(), 0, 2)));
         out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
         out.push(Instruction::I32Const(fields as i32));
-        out.push(Instruction::I32Store(mem_arg(self.ensure_memory(), 4, 2)));
+        out.push(Instruction::I32Store(MemoryArg::new(self.ensure_memory(), 4, 2)));
         out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
         out.push(Instruction::I32Const(tag));
-        out.push(Instruction::I32Store(mem_arg(self.ensure_memory(), 8, 2)));
+        out.push(Instruction::I32Store(MemoryArg::new(self.ensure_memory(), 8, 2)));
         for (offset, local) in values {
             out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
             out.push(Instruction::LocalGet { local, type_: ValueType::I64 });
-            out.push(Instruction::I64Store(mem_arg(self.ensure_memory(), offset, 3)));
+            out.push(Instruction::I64Store(MemoryArg::new(self.ensure_memory(), offset, 3)));
         }
         out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
         Ok(())
@@ -1402,7 +1402,7 @@ impl<'a> StructuredEmitter<'a> {
         self.expression(&call.arguments[1].value, out)?;
         out.push(Instruction::LocalSet { local: decoder, type_: ValueType::I32 });
         out.push(Instruction::LocalGet { local: decoder, type_: ValueType::I32 });
-        out.push(Instruction::I64Load(mem_arg(self.ensure_memory(), 12, 3)));
+        out.push(Instruction::I64Load(MemoryArg::new(self.ensure_memory(), 12, 3)));
         out.push(Instruction::LocalSet { local: kind, type_: ValueType::I64 });
         out.push(Instruction::LocalGet { local: data, type_: ValueType::I32 });
         out.push(Instruction::I32Eqz);
@@ -1411,10 +1411,10 @@ impl<'a> StructuredEmitter<'a> {
         then_body.push(Instruction::LocalSet { local: result, type_: ValueType::I32 });
         let mut else_body = vec![
             Instruction::LocalGet { local: data, type_: ValueType::I32 },
-            Instruction::I32Load(mem_arg(self.ensure_memory(), 8, 2)),
+            Instruction::I32Load(MemoryArg::new(self.ensure_memory(), 8, 2)),
             Instruction::LocalSet { local: tag, type_: ValueType::I32 },
             Instruction::LocalGet { local: data, type_: ValueType::I32 },
-            Instruction::I64Load(mem_arg(self.ensure_memory(), 12, 3)),
+            Instruction::I64Load(MemoryArg::new(self.ensure_memory(), 12, 3)),
             Instruction::LocalSet { local: field, type_: ValueType::I64 },
         ];
         self.decode_kind_chain(
@@ -1537,8 +1537,8 @@ impl<'a> StructuredEmitter<'a> {
         body.push(Instruction::I32Add);
         body.push(Instruction::LocalGet { local: i, type_: ValueType::I32 });
         body.push(Instruction::I32Add);
-        body.push(Instruction::I32Load8U(mem_arg(memory, 0, 0)));
-        body.push(Instruction::I32Store8(mem_arg(memory, 0, 0)));
+        body.push(Instruction::I32Load8U(MemoryArg::new(memory, 0, 0)));
+        body.push(Instruction::I32Store8(MemoryArg::new(memory, 0, 0)));
         body.push(Instruction::LocalGet { local: i, type_: ValueType::I32 });
         body.push(Instruction::I32Const(1));
         body.push(Instruction::I32Add);
@@ -1559,17 +1559,17 @@ impl<'a> StructuredEmitter<'a> {
         self.allocate(size, out)?;
         out.push(Instruction::LocalTee { local: ptr, type_: ValueType::I32 });
         out.push(Instruction::I32Const(u32::from(runtime::ObjectTag::Custom) as i32));
-        out.push(Instruction::I32Store(mem_arg(self.ensure_memory(), 0, 2)));
+        out.push(Instruction::I32Store(MemoryArg::new(self.ensure_memory(), 0, 2)));
         out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
         out.push(Instruction::I32Const(constructor.arguments.len() as i32));
-        out.push(Instruction::I32Store(mem_arg(self.ensure_memory(), 4, 2)));
+        out.push(Instruction::I32Store(MemoryArg::new(self.ensure_memory(), 4, 2)));
         out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
         out.push(Instruction::I32Const(super::constructor_tag(&constructor.name) as i32));
-        out.push(Instruction::I32Store(mem_arg(self.ensure_memory(), 8, 2)));
+        out.push(Instruction::I32Store(MemoryArg::new(self.ensure_memory(), 8, 2)));
         for (index, argument) in constructor.arguments.iter().enumerate() {
             out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
             self.expression_slot_value(argument, out)?;
-            out.push(Instruction::I64Store(mem_arg(
+            out.push(Instruction::I64Store(MemoryArg::new(
                 self.ensure_memory(),
                 12 + index as u32 * 8,
                 3,
@@ -1597,14 +1597,14 @@ impl<'a> StructuredEmitter<'a> {
         self.allocate(size, out)?;
         out.push(Instruction::LocalTee { local: ptr, type_: ValueType::I32 });
         out.push(Instruction::I32Const(u32::from(tag) as i32));
-        out.push(Instruction::I32Store(mem_arg(self.ensure_memory(), 0, 2)));
+        out.push(Instruction::I32Store(MemoryArg::new(self.ensure_memory(), 0, 2)));
         out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
         out.push(Instruction::I32Const(fields.len() as i32));
-        out.push(Instruction::I32Store(mem_arg(self.ensure_memory(), 4, 2)));
+        out.push(Instruction::I32Store(MemoryArg::new(self.ensure_memory(), 4, 2)));
         for (index, field) in fields.iter().enumerate() {
             out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
             self.expression_slot_value(field, out)?;
-            out.push(Instruction::I64Store(mem_arg(
+            out.push(Instruction::I64Store(MemoryArg::new(
                 self.ensure_memory(),
                 8 + index as u32 * 8,
                 3,
@@ -1623,16 +1623,16 @@ impl<'a> StructuredEmitter<'a> {
             self.allocate(self.config.layout.list_cons_size(8), out)?;
             out.push(Instruction::LocalTee { local: ptr, type_: ValueType::I32 });
             out.push(Instruction::I32Const(u32::from(runtime::ObjectTag::ListCons) as i32));
-            out.push(Instruction::I32Store(mem_arg(self.ensure_memory(), 0, 2)));
+            out.push(Instruction::I32Store(MemoryArg::new(self.ensure_memory(), 0, 2)));
             out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
             out.push(Instruction::I32Const(2));
-            out.push(Instruction::I32Store(mem_arg(self.ensure_memory(), 4, 2)));
+            out.push(Instruction::I32Store(MemoryArg::new(self.ensure_memory(), 4, 2)));
             out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
             self.expression_slot_value(item, out)?;
-            out.push(Instruction::I64Store(mem_arg(self.ensure_memory(), 8, 3)));
+            out.push(Instruction::I64Store(MemoryArg::new(self.ensure_memory(), 8, 3)));
             out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
             out.push(Instruction::LocalGet { local: tail, type_: ValueType::I32 });
-            out.push(Instruction::I32Store(mem_arg(self.ensure_memory(), 16, 2)));
+            out.push(Instruction::I32Store(MemoryArg::new(self.ensure_memory(), 16, 2)));
             out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
             out.push(Instruction::LocalSet { local: tail, type_: ValueType::I32 });
         }
@@ -1666,14 +1666,14 @@ impl<'a> StructuredEmitter<'a> {
         self.allocate(size, out)?;
         out.push(Instruction::LocalTee { local: ptr, type_: ValueType::I32 });
         out.push(Instruction::I32Const(u32::from(tag) as i32));
-        out.push(Instruction::I32Store(mem_arg(self.ensure_memory(), 0, 2)));
+        out.push(Instruction::I32Store(MemoryArg::new(self.ensure_memory(), 0, 2)));
         out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
         out.push(Instruction::I32Const(header_fields));
-        out.push(Instruction::I32Store(mem_arg(self.ensure_memory(), 4, 2)));
+        out.push(Instruction::I32Store(MemoryArg::new(self.ensure_memory(), 4, 2)));
         if !matches!(type_, Type::Record { .. }) {
             out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
             out.push(Instruction::I32Const(super::constructor_tag(constructor) as i32));
-            out.push(Instruction::I32Store(mem_arg(self.ensure_memory(), 8, 2)));
+            out.push(Instruction::I32Store(MemoryArg::new(self.ensure_memory(), 8, 2)));
         }
         for (index, field) in fields.iter().enumerate() {
             out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
@@ -1681,14 +1681,14 @@ impl<'a> StructuredEmitter<'a> {
                 Some(value) => self.expression_slot_value(value, out)?,
                 None => {
                     out.push(Instruction::LocalGet { local: source, type_: ValueType::I32 });
-                    out.push(Instruction::I64Load(mem_arg(
+                    out.push(Instruction::I64Load(MemoryArg::new(
                         self.ensure_memory(),
                         slot_offset + index as u32 * 8,
                         3,
                     )));
                 }
             }
-            out.push(Instruction::I64Store(mem_arg(
+            out.push(Instruction::I64Store(MemoryArg::new(
                 self.ensure_memory(),
                 slot_offset + index as u32 * 8,
                 3,
@@ -1719,16 +1719,16 @@ impl<'a> StructuredEmitter<'a> {
         self.allocate(self.config.layout.list_cons_size(8), out)?;
         out.push(Instruction::LocalTee { local: ptr, type_: ValueType::I32 });
         out.push(Instruction::I32Const(u32::from(runtime::ObjectTag::ListCons) as i32));
-        out.push(Instruction::I32Store(mem_arg(self.ensure_memory(), 0, 2)));
+        out.push(Instruction::I32Store(MemoryArg::new(self.ensure_memory(), 0, 2)));
         out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
         out.push(Instruction::I32Const(2));
-        out.push(Instruction::I32Store(mem_arg(self.ensure_memory(), 4, 2)));
+        out.push(Instruction::I32Store(MemoryArg::new(self.ensure_memory(), 4, 2)));
         out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
         self.expression_slot_value(head, out)?;
-        out.push(Instruction::I64Store(mem_arg(self.ensure_memory(), 8, 3)));
+        out.push(Instruction::I64Store(MemoryArg::new(self.ensure_memory(), 8, 3)));
         out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
         self.expression(tail, out)?;
-        out.push(Instruction::I32Store(mem_arg(self.ensure_memory(), 16, 2)));
+        out.push(Instruction::I32Store(MemoryArg::new(self.ensure_memory(), 16, 2)));
         out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
         Ok(())
     }
@@ -1741,13 +1741,13 @@ impl<'a> StructuredEmitter<'a> {
         self.allocate(size, out)?;
         out.push(Instruction::LocalTee { local: ptr, type_: ValueType::I32 });
         out.push(Instruction::I32Const(u32::from(runtime::ObjectTag::Closure) as i32));
-        out.push(Instruction::I32Store(mem_arg(self.ensure_memory(), 0, 2)));
+        out.push(Instruction::I32Store(MemoryArg::new(self.ensure_memory(), 0, 2)));
         out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
         out.push(Instruction::I32Const(function.captures.len() as i32));
-        out.push(Instruction::I32Store(mem_arg(self.ensure_memory(), 4, 2)));
+        out.push(Instruction::I32Store(MemoryArg::new(self.ensure_memory(), 4, 2)));
         out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
         out.push(Instruction::I32Const(self.function_id(&function.name) as i32));
-        out.push(Instruction::I32Store(mem_arg(
+        out.push(Instruction::I32Store(MemoryArg::new(
             self.ensure_memory(),
             u32::from(ClosureConstants::FunctionIdOffset),
             2,
@@ -1759,7 +1759,7 @@ impl<'a> StructuredEmitter<'a> {
                 type_: value_type(&capture.type_, capture.span)?,
             });
             self.extend_slot_value(&capture.type_, out);
-            out.push(Instruction::I64Store(mem_arg(
+            out.push(Instruction::I64Store(MemoryArg::new(
                 self.ensure_memory(),
                 u32::from(ClosureConstants::CapturesOffset)
                     + index as u32 * u32::from(ClosureConstants::CaptureSlotSize),
@@ -2057,7 +2057,7 @@ impl<'a> StructuredEmitter<'a> {
             ir::IrPattern::Constructor { name, arguments } => {
                 self.managed_tag_test_subject(subject, runtime::ObjectTag::Custom, None, out)?;
                 self.subject_pointer(subject, out)?;
-                out.push(Instruction::I32Load(mem_arg(self.ensure_memory(), 8, 2)));
+                out.push(Instruction::I32Load(MemoryArg::new(self.ensure_memory(), 8, 2)));
                 out.push(Instruction::I32Const(super::constructor_tag(name) as i32));
                 out.push(Instruction::I32Eq);
                 out.push(Instruction::I32And);
@@ -2141,10 +2141,12 @@ impl<'a> StructuredEmitter<'a> {
         } else {
             self.slot_address(subject, out)?;
             out.push(match literal.kind {
-                LiteralKind::Int => Instruction::I64Load(mem_arg(self.ensure_memory(), 0, 3)),
-                LiteralKind::Float => Instruction::F64Load(mem_arg(self.ensure_memory(), 0, 3)),
-                LiteralKind::Bool | LiteralKind::String => Instruction::I32Load(mem_arg(self.ensure_memory(), 0, 2)),
-                LiteralKind::Nil => Instruction::I64Load(mem_arg(self.ensure_memory(), 0, 3)),
+                LiteralKind::Int => Instruction::I64Load(MemoryArg::new(self.ensure_memory(), 0, 3)),
+                LiteralKind::Float => Instruction::F64Load(MemoryArg::new(self.ensure_memory(), 0, 3)),
+                LiteralKind::Bool | LiteralKind::String => {
+                    Instruction::I32Load(MemoryArg::new(self.ensure_memory(), 0, 2))
+                }
+                LiteralKind::Nil => Instruction::I64Load(MemoryArg::new(self.ensure_memory(), 0, 3)),
             });
         }
         let literal_expression = ir::Expression {
@@ -2172,12 +2174,12 @@ impl<'a> StructuredEmitter<'a> {
         &mut self, subject: &PatternSubject<'_>, tag: runtime::ObjectTag, size: Option<u32>, out: &mut Vec<Instruction>,
     ) -> StructuredResult<()> {
         self.subject_pointer(subject, out)?;
-        out.push(Instruction::I32Load(mem_arg(self.ensure_memory(), 0, 2)));
+        out.push(Instruction::I32Load(MemoryArg::new(self.ensure_memory(), 0, 2)));
         out.push(Instruction::I32Const(u32::from(tag) as i32));
         out.push(Instruction::I32Eq);
         if let Some(size) = size {
             self.subject_pointer(subject, out)?;
-            out.push(Instruction::I32Load(mem_arg(self.ensure_memory(), 4, 2)));
+            out.push(Instruction::I32Load(MemoryArg::new(self.ensure_memory(), 4, 2)));
             out.push(Instruction::I32Const(size as i32));
             out.push(Instruction::I32Eq);
             out.push(Instruction::I32And);
@@ -2190,7 +2192,7 @@ impl<'a> StructuredEmitter<'a> {
             self.expression(subject.root, out)?;
         } else {
             self.slot_address(subject, out)?;
-            out.push(Instruction::I32Load(mem_arg(self.ensure_memory(), 0, 2)));
+            out.push(Instruction::I32Load(MemoryArg::new(self.ensure_memory(), 0, 2)));
         }
         Ok(())
     }
@@ -2203,7 +2205,7 @@ impl<'a> StructuredEmitter<'a> {
         let has_variable_tail = segments.last().is_some_and(|segment| segment.bit_size.is_none());
         self.managed_tag_test_subject(subject, runtime::ObjectTag::BitArray, None, out)?;
         self.subject_pointer(subject, out)?;
-        out.push(Instruction::I32Load(mem_arg(self.ensure_memory(), 4, 2)));
+        out.push(Instruction::I32Load(MemoryArg::new(self.ensure_memory(), 4, 2)));
         out.push(Instruction::I32Const(fixed_bit_len as i32));
         out.push(if has_variable_tail { Instruction::I32GeS } else { Instruction::I32Eq });
         out.push(Instruction::I32And);
@@ -2320,7 +2322,7 @@ impl<'a> StructuredEmitter<'a> {
         let ptr = self.required_local(self.alloc_local, "allocation pointer")?;
         let i = self.required_local(self.bit_i_local, "bit-string index")?;
         self.subject_pointer(subject, out)?;
-        out.push(Instruction::I32Load(mem_arg(self.ensure_memory(), 4, 2)));
+        out.push(Instruction::I32Load(MemoryArg::new(self.ensure_memory(), 4, 2)));
         out.push(Instruction::I32Const(offset as i32));
         out.push(Instruction::I32Sub);
         out.push(Instruction::LocalSet { local: bit_len, type_: ValueType::I32 });
@@ -2334,10 +2336,10 @@ impl<'a> StructuredEmitter<'a> {
 
         out.push(Instruction::LocalTee { local: ptr, type_: ValueType::I32 });
         out.push(Instruction::I32Const(u32::from(runtime::ObjectTag::BitArray) as i32));
-        out.push(Instruction::I32Store(mem_arg(self.ensure_memory(), 0, 2)));
+        out.push(Instruction::I32Store(MemoryArg::new(self.ensure_memory(), 0, 2)));
         out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
         out.push(Instruction::LocalGet { local: bit_len, type_: ValueType::I32 });
-        out.push(Instruction::I32Store(mem_arg(self.ensure_memory(), 4, 2)));
+        out.push(Instruction::I32Store(MemoryArg::new(self.ensure_memory(), 4, 2)));
         out.push(Instruction::I32Const(0));
         out.push(Instruction::LocalSet { local: i, type_: ValueType::I32 });
 
@@ -2361,8 +2363,8 @@ impl<'a> StructuredEmitter<'a> {
         copy_body.push(Instruction::I32Add);
         copy_body.push(Instruction::LocalGet { local: i, type_: ValueType::I32 });
         copy_body.push(Instruction::I32Add);
-        copy_body.push(Instruction::I32Load8U(mem_arg(self.ensure_memory(), 0, 0)));
-        copy_body.push(Instruction::I32Store8(mem_arg(self.ensure_memory(), 0, 0)));
+        copy_body.push(Instruction::I32Load8U(MemoryArg::new(self.ensure_memory(), 0, 0)));
+        copy_body.push(Instruction::I32Store8(MemoryArg::new(self.ensure_memory(), 0, 0)));
         copy_body.push(Instruction::LocalGet { local: i, type_: ValueType::I32 });
         copy_body.push(Instruction::I32Const(1));
         copy_body.push(Instruction::I32Add);
@@ -2386,7 +2388,7 @@ impl<'a> StructuredEmitter<'a> {
         out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
         out.push(Instruction::I32Const(8 + (index / 8) as i32));
         out.push(Instruction::I32Add);
-        out.push(Instruction::I32Load8U(mem_arg(self.ensure_memory(), 0, 0)));
+        out.push(Instruction::I32Load8U(MemoryArg::new(self.ensure_memory(), 0, 0)));
         out.push(Instruction::I32Const(7 - (index % 8) as i32));
         out.push(Instruction::I32ShrU);
         out.push(Instruction::I32Const(1));
@@ -2401,7 +2403,7 @@ impl<'a> StructuredEmitter<'a> {
         };
         self.expression(subject.root, out)?;
         for offset in parents {
-            out.push(Instruction::I32Load(mem_arg(self.ensure_memory(), *offset, 2)));
+            out.push(Instruction::I32Load(MemoryArg::new(self.ensure_memory(), *offset, 2)));
         }
         out.push(Instruction::I32Const(*last as i32));
         out.push(Instruction::I32Add);
@@ -2473,12 +2475,12 @@ impl<'a> StructuredEmitter<'a> {
                 self.expression(address, out)?;
                 out.push(match type_ {
                     ir::RepresentationType::Scalar(ir::ScalarRepresentation::I64) => {
-                        Instruction::I64Load(mem_arg(self.ensure_memory(), 0, 3))
+                        Instruction::I64Load(MemoryArg::new(self.ensure_memory(), 0, 3))
                     }
                     ir::RepresentationType::Scalar(ir::ScalarRepresentation::F64) => {
-                        Instruction::F64Load(mem_arg(self.ensure_memory(), 0, 3))
+                        Instruction::F64Load(MemoryArg::new(self.ensure_memory(), 0, 3))
                     }
-                    _ => Instruction::I32Load(mem_arg(self.ensure_memory(), 0, 2)),
+                    _ => Instruction::I32Load(MemoryArg::new(self.ensure_memory(), 0, 2)),
                 });
                 Ok(())
             }
@@ -2512,7 +2514,7 @@ impl<'a> StructuredEmitter<'a> {
         out.push(Instruction::LocalSet { local: scratch, type_: ValueType::I32 });
 
         out.push(Instruction::LocalGet { local: scratch, type_: ValueType::I32 });
-        out.push(Instruction::I32Load(mem_arg(
+        out.push(Instruction::I32Load(MemoryArg::new(
             self.ensure_memory(),
             u32::from(ClosureConstants::FunctionIdOffset),
             2,
@@ -2925,10 +2927,11 @@ fn validate_js_host_abi(module: &ir::Module, target: WasmTarget) -> StructuredRe
 
     for function in &module.functions {
         match &function.abi.boundary {
-            ir::CallBoundary::HostImport { module, name } => {
+            ir::CallBoundary::HostImport { module: import_module, name } => {
                 validate_js_host_function_shape(
+                    module,
                     function,
-                    JsAbiBoundary::Import { module, name },
+                    JsAbiBoundary::Import { module: import_module, name },
                     target,
                     &mut diagnostics,
                 );
@@ -2941,6 +2944,7 @@ fn validate_js_host_abi(module: &ir::Module, target: WasmTarget) -> StructuredRe
                     .map(|export| export.name.as_str())
                     .unwrap_or(function.name.as_str());
                 validate_js_host_function_shape(
+                    module,
                     function,
                     JsAbiBoundary::Export { name: export_name },
                     target,
@@ -2955,10 +2959,11 @@ fn validate_js_host_abi(module: &ir::Module, target: WasmTarget) -> StructuredRe
 }
 
 fn validate_js_host_function_shape(
-    function: &ir::Function, boundary: JsAbiBoundary<'_>, target: WasmTarget, diagnostics: &mut Diagnostics,
+    module: &ir::Module, function: &ir::Function, boundary: JsAbiBoundary<'_>, target: WasmTarget,
+    diagnostics: &mut Diagnostics,
 ) {
     for (index, param) in function.params.iter().enumerate() {
-        if is_supported_js_host_parameter(&param.type_) {
+        if is_supported_js_host_parameter(module, &param.type_) {
             continue;
         }
         diagnostics.push(js_host_abi_diagnostic(
@@ -2971,7 +2976,11 @@ fn validate_js_host_function_shape(
         ));
     }
 
-    if !is_supported_js_host_return(&function.return_type, matches!(boundary, JsAbiBoundary::Export { .. })) {
+    if !is_supported_js_host_return(
+        module,
+        &function.return_type,
+        matches!(boundary, JsAbiBoundary::Export { .. }),
+    ) {
         diagnostics.push(js_host_abi_diagnostic(
             function,
             boundary,
@@ -3016,27 +3025,41 @@ fn js_host_abi_diagnostic(
         .with_note(note)
 }
 
-fn is_supported_js_host_parameter(type_: &Type) -> bool {
-    matches!(type_, Type::Int | Type::Float | Type::Bool | Type::String)
+fn is_supported_js_host_parameter(module: &ir::Module, type_: &Type) -> bool {
+    matches!(type_, Type::Int | Type::Float | Type::Bool | Type::String) || is_js_host_opaque_handle(module, type_)
 }
 
-fn is_supported_js_host_return(type_: &Type, structured_allowed: bool) -> bool {
+fn is_supported_js_host_return(module: &ir::Module, type_: &Type, structured_allowed: bool) -> bool {
     matches!(type_, Type::Int | Type::Float | Type::Bool | Type::String | Type::Nil)
-        || (structured_allowed && is_supported_js_host_structured_return(type_))
+        || is_js_host_opaque_handle(module, type_)
+        || (structured_allowed && is_supported_js_host_structured_return(module, type_))
 }
 
-fn is_supported_js_host_structured_return(type_: &Type) -> bool {
+fn is_supported_js_host_structured_return(module: &ir::Module, type_: &Type) -> bool {
     match type_ {
-        Type::Tuple(items) => items.iter().all(is_supported_js_host_field),
-        Type::List(item) => is_supported_js_host_field(item),
-        Type::Record { fields, .. } => fields.iter().all(|field| is_supported_js_host_field(&field.type_)),
-        Type::Custom { args, .. } => args.iter().all(is_supported_js_host_field),
+        Type::Tuple(items) => items.iter().all(|item| is_supported_js_host_field(module, item)),
+        Type::List(item) => is_supported_js_host_field(module, item),
+        Type::Record { fields, .. } => fields
+            .iter()
+            .all(|field| is_supported_js_host_field(module, &field.type_)),
+        Type::Custom { args, .. } => args.iter().all(|arg| is_supported_js_host_field(module, arg)),
         _ => false,
     }
 }
 
-fn is_supported_js_host_field(type_: &Type) -> bool {
-    is_supported_js_host_parameter(type_) || is_supported_js_host_structured_return(type_)
+fn is_supported_js_host_field(module: &ir::Module, type_: &Type) -> bool {
+    is_supported_js_host_parameter(module, type_) || is_supported_js_host_structured_return(module, type_)
+}
+
+fn is_js_host_opaque_handle(module: &ir::Module, type_: &Type) -> bool {
+    match type_ {
+        Type::Opaque { .. } => true,
+        Type::Custom { name, .. } => module
+            .type_declarations
+            .iter()
+            .any(|type_| type_.name == *name && type_.opaque),
+        _ => false,
+    }
 }
 
 fn value_type(type_: &Type, span: Span) -> StructuredResult<ValueType> {
@@ -3066,23 +3089,19 @@ fn maybe_value_type(type_: &Type) -> Option<ValueType> {
     }
 }
 
-fn mem_arg(memory: MemoryId, offset: u32, align: u32) -> MemoryArg {
-    MemoryArg { memory, align, offset }
-}
-
 fn load_for_type(memory: MemoryId, offset: u32, type_: ValueType) -> Instruction {
     match type_ {
-        ValueType::I64 => Instruction::I64Load(mem_arg(memory, offset, 3)),
-        ValueType::F64 => Instruction::F64Load(mem_arg(memory, offset, 3)),
-        _ => Instruction::I32Load(mem_arg(memory, offset, 2)),
+        ValueType::I64 => Instruction::I64Load(MemoryArg::new(memory, offset, 3)),
+        ValueType::F64 => Instruction::F64Load(MemoryArg::new(memory, offset, 3)),
+        _ => Instruction::I32Load(MemoryArg::new(memory, offset, 2)),
     }
 }
 
 fn store_for_type(memory: MemoryId, offset: u32, type_: ValueType) -> Instruction {
     match type_ {
-        ValueType::I64 => Instruction::I64Store(mem_arg(memory, offset, 3)),
-        ValueType::F64 => Instruction::F64Store(mem_arg(memory, offset, 3)),
-        _ => Instruction::I32Store(mem_arg(memory, offset, 2)),
+        ValueType::I64 => Instruction::I64Store(MemoryArg::new(memory, offset, 3)),
+        ValueType::F64 => Instruction::F64Store(MemoryArg::new(memory, offset, 3)),
+        _ => Instruction::I32Store(MemoryArg::new(memory, offset, 2)),
     }
 }
 

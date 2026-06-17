@@ -272,6 +272,7 @@ impl Lowerer {
             .map(|type_| TypeMetadata {
                 name: type_.name.clone(),
                 parameters: type_.parameters.clone(),
+                opaque: type_.opaque,
                 constructors: type_
                     .constructors
                     .iter()

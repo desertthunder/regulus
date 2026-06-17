@@ -61,9 +61,9 @@ The public ABI contract lives in
 - [x] Implement the runtime representation for opaque host handles.
 - [x] Define ownership and lifetime rules for JS handles passed to Gleam.
 - [x] Implement JS handle table ownership and release behavior.
-- [ ] Add ABI validation for externals that accept or return opaque handles.
-- [ ] Add JS adapter conversion for opaque handle imports and exports.
-- [ ] Add e2e tests for passing a handle through Gleam without exposing JS
+- [x] Add ABI validation for externals that accept or return opaque handles.
+- [x] Add JS adapter conversion for opaque handle imports and exports.
+- [x] Add e2e tests for passing a handle through Gleam without exposing JS
       object internals to guest memory.
 
 ### Bodyless externals

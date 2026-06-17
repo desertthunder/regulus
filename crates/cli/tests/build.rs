@@ -159,8 +159,13 @@ pub type Response {
   Response(status: Int, body: String)
 }
 
+pub opaque type Request {
+  Request
+}
+
 external fn request_text(input: String) -> String = "regulus/js" "request_text"
 external fn describe(count: Int, ratio: Float, enabled: Bool, input: String) -> String = "regulus/js" "describe"
+external fn pass_request(input: Request) -> Request = "regulus/js" "pass_request"
 
 pub fn main(input: String) -> String {
   request_text(input)
@@ -188,6 +193,10 @@ pub fn maybe_name() -> Option(String) {
 
 pub fn result_name() -> Result(String, Int) {
   Ok("Ada")
+}
+
+pub fn round_trip_request(input: Request) -> Request {
+  pass_request(input)
 }
 "#,
     )
@@ -223,7 +232,14 @@ if (abi.exports.describe_from_js.result !== "String") {
 if (abi.imports["regulus/js.describe"].params.join(",") !== "Int,Float,Bool,String") {
   throw new Error("missing import ABI metadata");
 }
+if (abi.imports["regulus/js.pass_request"].params.join(",") !== "Handle") {
+  throw new Error("missing handle import ABI metadata");
+}
+if (abi.exports.round_trip_request.result !== "Handle") {
+  throw new Error("missing handle export ABI metadata");
+}
 
+const request = { url: "https://example.test/" };
 await init(new URL("./app.wasm", import.meta.url), {
   "regulus/js": {
     request_text(input) {
@@ -231,6 +247,12 @@ await init(new URL("./app.wasm", import.meta.url), {
     },
     describe(count, ratio, enabled, input) {
       return `${input}:${count}:${ratio}:${enabled}`;
+    },
+    pass_request(input) {
+      if (input !== request) {
+        throw new Error("opaque handle import did not resolve to the original JS object");
+      }
+      return input;
     },
   },
 });
@@ -270,7 +292,11 @@ if (resultName.tag !== "Ok" || resultName.value !== "Ada") {
   throw new Error(`unexpected result: ${JSON.stringify(resultName)}`);
 }
 
-const request = { url: "https://example.test/" };
+const roundTripped = call("round_trip_request", request);
+if (roundTripped !== request) {
+  throw new Error("opaque handle did not pass through Gleam");
+}
+
 const handle = wrapHandle(request, 42);
 if (getHandle(handle, 42) !== request) {
   throw new Error("opaque handle did not round trip through the adapter table");

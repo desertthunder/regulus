@@ -488,6 +488,12 @@ pub struct MemoryArg {
     pub offset: u32,
 }
 
+impl MemoryArg {
+    pub fn new(memory: MemoryId, offset: u32, align: u32) -> MemoryArg {
+        MemoryArg { memory, align, offset }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StackEffect {
     pub consumes: Vec<ValueType>,

@@ -453,6 +453,8 @@ function toWasmValue(type, value) {
       return value ? 1 : 0;
     case "String":
       return writeString(value);
+    case "Handle":
+      return typeof value === "number" ? value : wrapHandle(value);
     case "Nil":
       return undefined;
     default:
@@ -495,6 +497,8 @@ function fromWasmValue(type, value) {
       return value !== 0;
     case "String":
       return readString(value);
+    case "Handle":
+      return getHandle(value);
     case "Nil":
       return undefined;
     default:
