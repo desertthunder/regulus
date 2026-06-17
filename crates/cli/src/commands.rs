@@ -1,5 +1,6 @@
 mod builder;
 mod compiler;
+mod debug;
 mod runner;
 
 use std::fs;
@@ -15,6 +16,7 @@ use super::echo;
 
 use builder::Builder;
 use compiler::Compiler;
+use debug::Debugger;
 use runner::Runner;
 
 pub struct CompiledModule {
@@ -54,6 +56,7 @@ pub fn run(command: Command) -> ExitCode {
             let runner = Runner { input: &input, function: &function, args: &args, target, verbose, json };
             runner.run()
         }
+        Command::Debug { input, tree_sitter } => Debugger::new(&input, tree_sitter).run(),
         Command::List { project } => list(project.as_deref().unwrap_or_else(|| Path::new("."))),
     }
 }

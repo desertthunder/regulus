@@ -87,6 +87,18 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Inspect compiler-internal views of one Gleam source file.
+    #[command(visible_alias = "dbg")]
+    Debug {
+        /// Gleam source file to inspect.
+        input: PathBuf,
+        /// Print the raw tree-sitter concrete syntax tree as an S-expression.
+        ///
+        /// Use this to look at exact node kinds, field names, or the way Gleam
+        /// syntax is split across adjacent tree-sitter nodes.
+        #[arg(long = "ts", alias = "tree-sitter")]
+        tree_sitter: bool,
+    },
     /// Load a Gleam project and print discovered modules.
     List {
         /// Project directory or gleam.toml path. Defaults to the current directory.

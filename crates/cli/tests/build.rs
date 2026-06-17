@@ -115,6 +115,38 @@ fn build_emit_writes_wat_and_debug_artifacts_without_wasm() {
 }
 
 #[test]
+fn debug_alias_prints_tree_sitter_tree() {
+    let temp = unique_temp_dir("regulus_cli_debug_ts");
+    fs::create_dir_all(&temp).expect("create temp dir");
+    let input = temp.join("app.gleam");
+    fs::write(
+        &input,
+        "@external(javascript, \"regulus/js\", \"read\")\npub fn read(key: String) -> String\n",
+    )
+    .expect("write Gleam input");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_reggie"))
+        .arg("dbg")
+        .arg(&input)
+        .arg("--ts")
+        .output()
+        .expect("run reggie dbg");
+
+    assert!(
+        output.status.success(),
+        "debug failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("(source_file"), "missing source_file node: {stdout}");
+    assert!(stdout.contains("(attribute"), "missing attribute node: {stdout}");
+    assert!(stdout.contains("(function"), "missing function node: {stdout}");
+
+    let _ = fs::remove_dir_all(temp);
+}
+
+#[test]
 fn builds_package_owned_overlap_fixture() {
     let fixture = workspace_root().join("fixtures/projects/generated_names/dependency_module_overlap");
     let out_dir = unique_temp_dir("regulus_cli_overlap_build");
