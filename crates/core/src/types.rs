@@ -98,6 +98,25 @@ pub struct TypeDeclaration {
     pub span: Span,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExternalFunctionInfo {
+    pub target: Option<String>,
+    pub module: String,
+    pub function: String,
+    pub span: Span,
+}
+
+impl From<&ast::ExternalFunction> for ExternalFunctionInfo {
+    fn from(function: &ast::ExternalFunction) -> Self {
+        Self {
+            target: function.body.target.as_ref().map(|target| target.text.clone()),
+            module: unquote(&function.body.module.source),
+            function: unquote(&function.body.function.source),
+            span: function.span,
+        }
+    }
+}
+
 impl From<ast::TypeAlias> for TypeDeclaration {
     fn from(alias: ast::TypeAlias) -> Self {
         TypeDeclaration {
@@ -114,6 +133,7 @@ impl From<ast::TypeAlias> for TypeDeclaration {
 pub struct ModuleInterface {
     pub functions: HashMap<String, Type>,
     pub function_labels: FunctionLabelMap,
+    pub externals: HashMap<String, ExternalFunctionInfo>,
     pub types: HashMap<String, TypeDeclaration>,
     pub constructors: HashMap<String, ConstructorInfo>,
 }
@@ -262,6 +282,9 @@ fn collect_interface_declarations(declarations: &[Declaration], interface: &mut 
             Declaration::ExternalFunction(function) if function.public => {
                 if let Some(type_) = external_function_type_from_annotations(function) {
                     interface.functions.insert(function.name.text.clone(), type_);
+                    interface
+                        .externals
+                        .insert(function.name.text.clone(), external_function_info(function));
                     interface.function_labels.insert(
                         function.name.text.clone(),
                         function
@@ -339,6 +362,18 @@ fn external_function_type_from_annotations(function: &ast::ExternalFunction) -> 
         .collect::<Option<Vec<_>>>()?;
     let return_type = Type::from_source(&function.return_type.source)?;
     Some(Type::Function { params, return_type: Box::new(return_type) })
+}
+
+fn external_function_info(function: &ast::ExternalFunction) -> ExternalFunctionInfo {
+    function.into()
+}
+
+fn unquote(value: &str) -> String {
+    value
+        .strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
+        .unwrap_or(value)
+        .to_string()
 }
 
 pub fn check(module: ResolvedModule) -> Result<TypedModule, Diagnostics> {
@@ -724,6 +759,9 @@ impl TypeChecker {
                         self.interface
                             .functions
                             .insert(function.name.text.clone(), type_.clone());
+                        self.interface
+                            .externals
+                            .insert(function.name.text.clone(), external_function_info(&function));
                         if let Some(labels) = self.function_labels.get(&function.name.text).cloned() {
                             self.interface
                                 .function_labels
@@ -740,6 +778,9 @@ impl TypeChecker {
                             self.interface
                                 .functions
                                 .insert(function.name.text.clone(), type_.clone());
+                            self.interface
+                                .externals
+                                .insert(function.name.text.clone(), external_function_info(&function));
                             if let Some(labels) = self.function_labels.get(&function.name.text).cloned() {
                                 self.interface
                                     .function_labels
@@ -2651,6 +2692,23 @@ fn order(x: Int) -> Order { case x { 0 -> Eq 1 -> Gt _ -> Lt } }
         assert!(typed.interface.types.contains_key("Result"));
         assert!(typed.interface.types.contains_key("Option"));
         assert!(typed.interface.types.contains_key("Order"));
+    }
+
+    #[test]
+    fn records_bodyless_externals_in_typed_interface() {
+        let typed = check_source(
+            "@external(javascript, \"../gleam_stdlib.mjs\", \"print\")\npub fn print(string: String) -> Nil\n",
+        )
+        .expect("type check source");
+
+        let external = typed.interface.externals.get("print").expect("external metadata");
+        assert_eq!(external.target.as_deref(), Some("javascript"));
+        assert_eq!(external.module, "../gleam_stdlib.mjs");
+        assert_eq!(external.function, "print");
+        assert_eq!(
+            typed.interface.functions.get("print"),
+            Some(&Type::Function { params: vec![Type::String], return_type: Box::new(Type::Nil) })
+        );
     }
 
     #[test]

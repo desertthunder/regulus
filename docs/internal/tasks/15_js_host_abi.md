@@ -68,9 +68,9 @@ The public ABI contract lives in
 
 ### Bodyless externals
 
-- [ ] Parse bodyless `@external` declarations from project and dependency
+- [x] Parse bodyless `@external` declarations from project and dependency
       source.
-- [ ] Represent bodyless externals in AST, resolver interfaces, and typed
+- [x] Represent bodyless externals in AST, resolver interfaces, and typed
       module interfaces.
 - [ ] Select the target-specific external before lowering.
 - [ ] Lower selected JavaScript externals through the same ABI as handwritten

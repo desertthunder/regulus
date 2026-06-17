@@ -1406,6 +1406,37 @@ if erlang {
     }
 
     #[test]
+    fn resolves_bodyless_externals_across_project_modules() {
+        let dir = tempdir().expect("tempdir");
+        write(
+            &dir.path().join("gleam.toml"),
+            "name = \"sample\"\nversion = \"1.0.0\"\n",
+        );
+        write(
+            &dir.path().join("src/host.gleam"),
+            "@external(javascript, \"regulus/js\", \"read\")\npub fn read(key: String) -> String\n",
+        );
+        write(
+            &dir.path().join("src/main.gleam"),
+            "import host\nfn main() { host.read(\"key\") }\n",
+        );
+        let project = project::load_project(dir.path()).expect("load project");
+
+        let resolved = resolve_project(&project).expect("resolve project");
+
+        assert_eq!(resolved.modules.len(), 2);
+        assert!(resolved.modules.iter().any(|module| {
+            module.ast.declarations.iter().any(|declaration| {
+                matches!(
+                    declaration,
+                    Declaration::ExternalFunction(function)
+                        if function.body.target.as_ref().is_some_and(|target| target.text == "javascript")
+                )
+            })
+        }));
+    }
+
+    #[test]
     fn resolves_qualified_constructor_patterns_across_project_modules() {
         let dir = tempdir().expect("tempdir");
         write(

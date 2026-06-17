@@ -64,6 +64,7 @@ pub struct ExternalFunction {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExternalFunctionBody {
     pub span: Span,
+    pub target: Option<Name>,
     pub module: Literal,
     pub function: Literal,
 }
@@ -571,15 +572,31 @@ impl AstBuilder<'_> {
         let mut declarations = Vec::new();
         let mut imports = Vec::new();
         let mut functions = Vec::new();
+        let children = self.named_children(node);
+        let mut index = 0;
 
-        for child in self.named_children(node) {
-            let declaration = self.declaration(child)?;
+        while let Some(child) = children.get(index).copied() {
+            let declaration = if self.is_external_attribute(child) {
+                if let Some(function) = children
+                    .get(index + 1)
+                    .copied()
+                    .filter(|child| child.kind() == "function")
+                {
+                    index += 1;
+                    Declaration::ExternalFunction(self.bodyless_external_function(child, function)?)
+                } else {
+                    self.declaration(child)?
+                }
+            } else {
+                self.declaration(child)?
+            };
             match &declaration {
                 Declaration::Import(import) => imports.push(import.clone()),
                 Declaration::Function(function) => functions.push(function.clone()),
                 _ => {}
             }
             declarations.push(declaration);
+            index += 1;
         }
 
         Ok(Module { span: self.span(node), declarations, imports, functions })
@@ -635,6 +652,30 @@ impl AstBuilder<'_> {
         })
     }
 
+    fn bodyless_external_function(
+        &self, attribute_node: Node<'_>, function_node: Node<'_>,
+    ) -> Result<ExternalFunction, Diagnostics> {
+        let return_type = self
+            .type_field(function_node, "return_type")?
+            .ok_or_else(|| vec![self.missing(function_node, "external function return type")])?;
+        Ok(ExternalFunction {
+            span: Span {
+                file_id: self.span(attribute_node).file_id,
+                start: self.span(attribute_node).start,
+                end: self.span(function_node).end,
+            },
+            public: self.has_child_kind(function_node, "visibility_modifier"),
+            name: self.required_name_field(function_node, "name")?,
+            parameters: function_node
+                .child_by_field_name("parameters")
+                .map(|parameters| self.parameters(parameters))
+                .transpose()?
+                .unwrap_or_default(),
+            return_type,
+            body: self.external_attribute_body(attribute_node)?,
+        })
+    }
+
     fn external_function_body(&self, node: Node<'_>) -> Result<ExternalFunctionBody, Diagnostics> {
         let strings = self
             .named_children(node)
@@ -650,7 +691,44 @@ impl AstBuilder<'_> {
             .get(1)
             .cloned()
             .ok_or_else(|| vec![self.missing(node, "external function")])?;
-        Ok(ExternalFunctionBody { span: self.span(node), module, function })
+        Ok(ExternalFunctionBody { span: self.span(node), target: None, module, function })
+    }
+
+    fn external_attribute_body(&self, node: Node<'_>) -> Result<ExternalFunctionBody, Diagnostics> {
+        let values = node
+            .child_by_field_name("arguments")
+            .map(|arguments| self.named_children(arguments))
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|child| child.kind() == "attribute_value")
+            .collect::<Vec<_>>();
+        let target = values
+            .first()
+            .and_then(|value| {
+                self.named_children(*value)
+                    .into_iter()
+                    .find(|child| child.kind() == "identifier")
+            })
+            .map(|target| self.name(target))
+            .ok_or_else(|| vec![self.missing(node, "external target")])?;
+        let strings = values
+            .iter()
+            .filter_map(|value| {
+                self.named_children(*value)
+                    .into_iter()
+                    .find(|child| child.kind() == "string")
+                    .map(|string| self.literal(string, LiteralKind::String))
+            })
+            .collect::<Vec<_>>();
+        let module = strings
+            .first()
+            .cloned()
+            .ok_or_else(|| vec![self.missing(node, "external module")])?;
+        let function = strings
+            .get(1)
+            .cloned()
+            .ok_or_else(|| vec![self.missing(node, "external function")])?;
+        Ok(ExternalFunctionBody { span: self.span(node), target: Some(target), module, function })
     }
 
     fn external_type(&self, node: Node<'_>) -> Result<ExternalType, Diagnostics> {
@@ -742,6 +820,13 @@ impl AstBuilder<'_> {
                 .transpose()?
                 .unwrap_or_default(),
         })
+    }
+
+    fn is_external_attribute(&self, node: Node<'_>) -> bool {
+        node.kind() == "attribute"
+            && node
+                .child_by_field_name("name")
+                .is_some_and(|name| self.text(name) == "external")
     }
 
     fn target_group(&self, node: Node<'_>) -> Result<TargetGroup, Diagnostics> {
@@ -1636,6 +1721,31 @@ pub fn main() {
 
         assert_eq!(diagnostics[0].code, DiagnosticCode::ParseError);
         assert_eq!(diagnostics[0].labels.len(), 1);
+    }
+
+    #[test]
+    fn represents_bodyless_external_attributes_as_external_functions() {
+        let ast = parse_ast(
+            "@external(javascript, \"../gleam_stdlib.mjs\", \"print\")\npub fn print(string: String) -> Nil\n",
+        );
+
+        assert!(ast.functions.is_empty());
+        let Declaration::ExternalFunction(function) = &ast.declarations[0] else {
+            panic!("expected bodyless external function");
+        };
+        assert!(function.public);
+        assert_eq!(function.name.text, "print");
+        assert_eq!(
+            function.parameters[0].name.as_ref().map(|name| name.text.as_str()),
+            Some("string")
+        );
+        assert_eq!(function.return_type.source, "Nil");
+        assert_eq!(
+            function.body.target.as_ref().map(|target| target.text.as_str()),
+            Some("javascript")
+        );
+        assert_eq!(function.body.module.source, "\"../gleam_stdlib.mjs\"");
+        assert_eq!(function.body.function.source, "\"print\"");
     }
 
     #[test]

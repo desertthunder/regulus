@@ -157,6 +157,14 @@ Unsupported JS host imports, exports, value shapes, opaque handle uses, target
 profiles, and glue-generation requests should produce source-spanned diagnostics
 before Wasm emission.
 
+## Bodyless externals
+
+Source declarations of the form
+`@external(javascript, "module", "name") pub fn f(...) -> ...` are represented
+as external functions with target, module, and function metadata. Project and
+dependency module interfaces preserve that metadata so a later lowering phase
+can select the external that matches the compile target.
+
 ## Active tasks
 
 See [JS host ABI tasks](../tasks/15_js_host_abi.md).

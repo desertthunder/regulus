@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::ast::{self, Declaration};
-use crate::types::{ConstructorInfo, InterfaceEntry, ModuleInterface, Type};
+use crate::types::{ConstructorInfo, ExternalFunctionInfo, InterfaceEntry, ModuleInterface, Type};
 use crate::{labels::FunctionLabelMap, resolve::Namespace};
 use crate::{source::Span, stdlib::StdlibRegistry};
 
@@ -90,6 +90,7 @@ pub struct ResolveModuleInterface {
     pub package: Option<String>,
     pub module: String,
     pub members: HashMap<(Namespace, String), ResolveModuleMember>,
+    pub externals: HashMap<String, ExternalFunctionInfo>,
 }
 
 impl ResolveModuleInterface {
@@ -103,7 +104,7 @@ impl ResolveModuleInterface {
                 )
             })
             .collect();
-        Self { package: None, module: "prelude".to_string(), members }
+        Self { package: None, module: "prelude".to_string(), members, externals: HashMap::new() }
     }
 
     fn from_project(package: &str, name: &str, module: &ast::Module) -> Self {
@@ -118,6 +119,7 @@ impl From<&ast::Module> for ResolveModuleInterface {
     fn from(value: &ast::Module) -> Self {
         // TODO: can this be constructed from an iterator?
         let mut members = HashMap::new();
+        let mut externals = HashMap::new();
         for function in &value.functions {
             members.insert(
                 (Namespace::Value, function.name.text.clone()),
@@ -138,6 +140,7 @@ impl From<&ast::Module> for ResolveModuleInterface {
                         (Namespace::Value, function.name.text.clone()),
                         ResolveModuleMember { public: function.public, span: function.span },
                     );
+                    externals.insert(function.name.text.clone(), function.into());
                 }
                 Declaration::ExternalType(type_) => {
                     members.insert(
@@ -180,12 +183,13 @@ impl From<&ast::Module> for ResolveModuleInterface {
                         functions: Vec::new(),
                     });
                     members.extend(nested.members);
+                    externals.extend(nested.externals);
                 }
                 _ => {}
             }
         }
 
-        Self { package: None, module: String::new(), members }
+        Self { package: None, module: String::new(), members, externals }
     }
 }
 
@@ -300,6 +304,7 @@ fn stdlib_resolve_interfaces() -> HashMap<String, ResolveModuleInterface> {
                     package: Some("gleam_stdlib".to_string()),
                     module: module.name.to_string(),
                     members,
+                    externals: module.interface.externals.clone(),
                 },
             )
         })
@@ -340,8 +345,42 @@ fn dependency_resolve_interfaces(
             }
             (
                 module.clone(),
-                ResolveModuleInterface { package: Some(entry.package.clone()), module: entry.module.clone(), members },
+                ResolveModuleInterface {
+                    package: Some(entry.package.clone()),
+                    module: entry.module.clone(),
+                    members,
+                    externals: interface.externals.clone(),
+                },
             )
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        ast, parse,
+        source::{SourceFile, SourceFileId},
+    };
+
+    fn parse_module(source: &str) -> ast::Module {
+        let source = SourceFile::new(SourceFileId(0), source);
+        let cst = parse::parse(source).expect("parse source");
+        ast::build(&cst).expect("build ast")
+    }
+
+    #[test]
+    fn resolver_interfaces_preserve_bodyless_external_metadata() {
+        let module =
+            parse_module("@external(javascript, \"regulus/js\", \"read\")\npub fn read(key: String) -> String\n");
+
+        let interface = ResolveModuleInterface::from(&module);
+
+        let external = interface.externals.get("read").expect("external metadata");
+        assert_eq!(external.target.as_deref(), Some("javascript"));
+        assert_eq!(external.module, "regulus/js");
+        assert_eq!(external.function, "read");
+        assert!(interface.members.contains_key(&(Namespace::Value, "read".to_string())));
+    }
 }
