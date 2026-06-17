@@ -19,21 +19,24 @@ capabilities before they become design debt.
 
 ## Current compiler gaps
 
-The current CLI compiles one Gleam source file. `project` loads `gleam.toml` and
-prints discovered modules, but it does not compile or link a whole project.
+The current CLI builds supported `gleam.toml` projects into one linked Wasm
+artifact. It also keeps single-file compilation available for small tests and
+fixtures.
 
-The project model records dependency requirements, but the compiler does not
-load Hex packages, path dependencies, or dependency module interfaces. Lustre,
-Wisp, JSON helpers, HTTP helpers, and any example-local support modules require
-that work.
+The compiler can load selected Hex and path dependency source modules, but it
+does not compile arbitrary dependency code without subset limits.
 
-External functions are parsed, resolved, and type-checked, but lowering only
-materializes current stdlib host calls. General external functions need import
-lowering, target validation, and ABI diagnostics.
+General external functions lower to Wasm imports when the selected target and
+ABI shape are supported. Bodyless `@external` declarations from sources are
+still missing.
 
-The host ABI supports scalar values and managed pointers. JavaScript examples
-need stable adapter helpers for reading and writing strings, lists, records,
-result values, and host objects such as requests or responses.
+The low-level host ABI supports scalar values and borrowed managed pointers.
+The bundler JavaScript adapter is the current checked host path for strings,
+supported structured export results, import/export metadata, and adapter-owned
+opaque handle tables.
+
+Browser-specific host APIs, Node.js loading, structured imports, and
+opaque-handle externals are still incomplete.
 
 `gleam/dynamic`, `gleam/dynamic/decode`, `gleam/uri`, `gleam/pair`,
 `gleam/set`, `gleam/string_tree`, and `gleam/bytes_tree` are still unsupported
@@ -61,9 +64,9 @@ validation, ABI checks, and runtime adapters.
 
 The example is useful when it proves:
 
-1. Whole-project browser compilation works.
+1. The existing project build path can host a real browser app shape.
 2. Lustre dependency interfaces can be loaded or modeled.
-3. Target-specific browser externals lower to Wasm imports.
+3. Browser-specific host APIs are adapted through the JS host ABI.
 4. String and simple structured values cross the host boundary predictably.
 5. Unsupported dependency or ABI shapes fail with source-spanned diagnostics.
 
@@ -106,11 +109,12 @@ compiler-owned special cases.
 
 The example is useful when it proves:
 
-1. Whole-project JS-hosted server compilation works.
+1. The existing project build path can host a JS-server Wasm API shape.
 2. Wisp dependency interfaces can be loaded or modeled.
 3. Bundler-profile externals lower to Wasm imports.
 4. Static data can be embedded without brittle manual memory handling.
-5. The CLI can emit deployable Wasm plus minimal JS host glue.
+5. The emitted Wasm and bundler adapter are usable without manual pointer
+   handling in application code.
 
 ## Acceptance
 

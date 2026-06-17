@@ -63,8 +63,8 @@ The public ABI contract lives in
 - [x] Implement JS handle table ownership and release behavior.
 - [ ] Add ABI validation for externals that accept or return opaque handles.
 - [ ] Add JS adapter conversion for opaque handle imports and exports.
-- [ ] Add e2e tests for passing a handle through Gleam without exposing JS object
-      internals to guest memory.
+- [ ] Add e2e tests for passing a handle through Gleam without exposing JS
+      object internals to guest memory.
 
 ### Bodyless externals
 
@@ -93,11 +93,11 @@ The public ABI contract lives in
 - [x] Add bundler-profile validation for allowed external modules and names.
 - [x] Add bundler glue that exposes checked imports and typed exported calls.
 - [x] Add a bundler smoke test for one string import and one string export.
-- [ ] Add a bundler fixture for a string request input and string response
+- [x] Add a bundler fixture for a string request input and string response
       output.
-- [ ] Add a bundler fixture that returns tagged response data across the JS host
+- [x] Add a bundler fixture that returns tagged response data across the JS host
       ABI.
-- [ ] Wire bundler glue to structured value readers for tagged response data.
+- [x] Wire bundler glue to structured value readers for tagged response data.
 
 ### Node.js profile
 
@@ -111,11 +111,12 @@ The public ABI contract lives in
 
 - [x] Decide whether the CLI emits JS glue, copies a checked adapter template,
       or documents a stable handwritten adapter for the first milestone.
-- [ ] Emit or package deterministic JS host adapter files for browser, bundler,
-      and Node.js profiles.
-- [ ] Include import and export metadata needed by JS glue in debug output.
+- [ ] Emit or package deterministic JS host adapter files for browser and
+      Node.js profiles.
+- [x] Include import and export metadata needed by generated bundler glue.
+- [ ] Include import and export metadata in explicit debug output where useful.
 - [x] Generate or expose typed JS wrappers from import and export metadata.
-- [ ] Add CLI tests for stable JS adapter artifact paths.
+- [x] Add CLI tests for stable bundler JS adapter artifact paths.
 
 ## Done when
 

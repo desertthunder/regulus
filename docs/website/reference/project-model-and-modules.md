@@ -23,7 +23,8 @@ package fields used by current projects:
 
 Dependency entries may be plain version requirements or option tables with
 metadata such as `version`, `path`, or `git`. The project model records these as
-dependency hooks. Loading dependency source can build on this data later.
+dependency hooks. Selected Hex and path dependency sources can be loaded from
+this metadata when they fit the supported compiler subset.
 
 ## Module discovery
 
@@ -49,6 +50,7 @@ The project model produces package and module metadata:
 - source path
 - source file ID
 - dependency requirements
+- selected loaded dependency source modules
 
 Source file IDs are stable within a loaded project. Diagnostics use paths when
 no source span exists and normal spans once a source file is available.
@@ -62,6 +64,8 @@ The checked examples cover usable project shapes:
 
 - `examples/scalar_project` is the smallest working project build.
 - `examples/multi_module_project` exercises same-project imports.
+- `examples/browser_scalar` exercises browser-target scalar Wasm and a small
+  handwritten host.
 - `examples/diagnostics/duplicate_modules` shows a project-shape diagnostic.
 
 A larger long-term fixture should exercise real Gleam project structure,

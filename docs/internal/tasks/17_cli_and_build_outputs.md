@@ -10,11 +10,9 @@ Make compiler commands predictable and generated artifacts useful.
 
 - [x] Keep single-file compilation available for tests and examples.
 - [x] Add output path configuration.
-- [x] Add target selection for supported runtimes: Wasmtime, browser, and WASI
-      where implemented.
+- [x] Add target selection for supported runtimes and host profiles: Wasmtime,
+      browser, bundler, Node.js, and WASI where implemented.
 - [x] Return useful exit codes for success, diagnostics, and command misuse.
-- [ ] Add CLI target or profile selection for JS host profiles: browser,
-      bundler, and Node.js.
 - [ ] Keep project compilation flags consistent with single-file compilation.
 - [ ] Add CLI `run` or `exec` integration tests for Wasmtime execution.
 - [ ] Add ABI-aware rendering for managed `run` return values such as strings,
@@ -27,12 +25,13 @@ Make compiler commands predictable and generated artifacts useful.
 - [x] Add optional AST, resolved AST, typed output, and IR debug dumps.
 - [x] Emit Wasm bytes from a structured module without going through WAT.
 - [x] Add deterministic WAT snapshots generated from structured Wasm.
+- [x] Emit deterministic bundler `.mjs` adapter files when Wasm output is
+      requested for the `bundler` target.
+- [x] Expose bundler import and export metadata needed by checked host calls.
 - [ ] Add optional runtime layout and ABI debug output where helpful.
-- [ ] Include import and export metadata needed by host adapters.
-- [ ] Emit stable artifact paths for example host adapters.
-- [ ] Decide whether JS glue is emitted, copied from checked templates, or
-      documented as a stable handwritten adapter.
-- [ ] Emit or package deterministic JS host adapter files when requested.
+- [ ] Include import and export metadata in explicit debug output where useful.
+- [ ] Emit or package deterministic browser and Node.js host adapter files when
+      requested.
 
 ### Backend cleanup
 
@@ -56,12 +55,12 @@ Make compiler commands predictable and generated artifacts useful.
 
 ### Integration tests
 
-- [ ] Add CLI integration tests for project compilation commands.
-- [ ] Add CLI integration tests for diagnostics across multiple files.
-- [ ] Add tests for output path handling and optional WAT/debug artifacts.
+- [x] Add CLI integration tests for project compilation commands.
+- [x] Add CLI integration tests for diagnostics across multiple files.
+- [x] Add tests for output path handling and optional WAT/debug artifacts.
 - [ ] Add tests for target selection and unsupported target combinations.
-- [ ] Add tests for browser, bundler, and Node.js JS host profile output.
-- [ ] Add tests for stable host adapter artifact paths.
+- [ ] Add tests for browser and Node.js JS host profile output.
+- [x] Add tests for bundler host adapter artifact paths.
 
 ## Done when
 

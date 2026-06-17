@@ -17,7 +17,7 @@ Gleam source -> parse -> AST -> resolve -> type check -> IR -> Wasm
 | Type checking               | Broad subset                    |
 | Managed runtime values      | Partial                         |
 | Standard library            | Selected modules and intrinsics |
-| Browser and JS ABI          | Incomplete                      |
+| Browser and JS ABI          | Partial                         |
 | WASI ABI                    | Incomplete                      |
 | Memory management           | Bump allocation only            |
 
@@ -28,7 +28,8 @@ Gleam source -> parse -> AST -> resolve -> type check -> IR -> Wasm
 - Compile one Gleam source file to `.wasm`.
 - Compile supported Gleam projects to one linked `.wasm` artifact.
 - Load `gleam.toml` and discover project modules.
-- Filter target-group declarations for Wasmtime, browser, and WASI targets.
+- Filter target-group declarations for Wasmtime, browser, bundler, Node.js, and
+  WASI targets.
 - Emit optional debug dumps: AST, resolved AST, typed AST, IR, and WAT.
 
 ### Language surface
@@ -153,6 +154,8 @@ Regulus can:
 - assign stable source file IDs
 - detect duplicate modules
 - report missing modules
+- load selected Hex and path dependency source modules
+- link supported dependency source modules into the final artifact
 - keep single-file loading available for tests and examples
 
 Project builds compile discovered project modules into one linked Wasm output.
@@ -186,14 +189,20 @@ The compiler:
 - filters target-specific declarations
 - validates selected target modules
 - rejects unsupported ABI shapes before byte emission
+- emits bundler-oriented JavaScript adapter glue for the `bundler` target when
+  Wasm output is requested
+
+The bundler adapter is the most complete JavaScript host path today. Browser
+and Node.js targets are accepted and validated, but complete profile-specific
+host glue and API adapters are still in progress.
 
 ## Not yet supported
 
 ### Projects and dependencies
 
-- Fetching Hex packages.
-- Loading dependency source modules.
-- Linking compiled dependency modules.
+- Compiling every valid Gleam project shape.
+- Broad dependency source compilation without subset limits.
+- Bodyless `@external` declarations from project and dependency source.
 - Full stdlib source compilation.
 
 ### Host interop
@@ -201,7 +210,7 @@ The compiler:
 - Full browser, bundler, and Node.js JS ABI.
 - Complete WASI adapters.
 - Rich managed-value wrappers for arbitrary imports and exports.
-- Opaque JS handle representation and lifetime rules.
+- Opaque JS handle validation and conversion for external imports and exports.
 
 ### Runtime and memory management
 

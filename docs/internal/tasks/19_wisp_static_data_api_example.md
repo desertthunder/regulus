@@ -15,9 +15,8 @@ small developer reference catalog.
 - [ ] Add a compile-only fixture that captures the first unsupported compiler
       diagnostic.
 
-## Milestone 2: project and dependency support
+## Milestone 2: dependency support
 
-- [ ] Reuse project compilation from the Lustre example milestone.
 - [ ] Load enough dependency metadata for Wisp and direct support packages.
 - [ ] Support dependency module interfaces used by routing, request parsing,
       and response construction.
@@ -27,7 +26,6 @@ small developer reference catalog.
 ## Milestone 3: bundler-profile JS host
 
 - [ ] Configure the example to use the JS host bundler profile.
-- [ ] Lower general external functions to bundler-profile Wasm imports.
 - [ ] Start with string request inputs and string or tagged response outputs.
 - [ ] Add adapter helpers for status, headers, and body data when needed.
 - [ ] Add a Gleam route table fixture that returns tagged response data without

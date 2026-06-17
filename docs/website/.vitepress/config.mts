@@ -20,7 +20,7 @@ const sidebar: DefaultTheme.Config["sidebar"] = [
       { text: "Overview", link: "/reference/" },
       { text: "Supported subset", link: "/reference/supported-subset" },
       { text: "CLI and outputs", link: "/reference/cli-and-build-outputs" },
-      { text: "Project model", link: "/reference/project-model-and-modules" },
+      { text: "Projects", link: "/reference/project-model-and-modules" },
       { text: "Gleam syntax", link: "/reference/full-gleam-syntax" },
       { text: "Name resolution", link: "/reference/full-name-resolution" },
       {
@@ -45,6 +45,7 @@ const sidebar: DefaultTheme.Config["sidebar"] = [
       { text: "Runtime memory", link: "/development/runtime-memory" },
       { text: "Wasm backend", link: "/development/wasm-backend-and-runtime" },
       { text: "JS host ABI", link: "/development/js_abi_contract" },
+      { text: "Project Model", link: "development/projects" },
     ],
   },
   {

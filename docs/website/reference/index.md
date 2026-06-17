@@ -5,8 +5,9 @@ lookup-friendly form.
 
 ## Usage Reference
 
-- [Supported subset](./supported-subset.md)
-- [CLI and build outputs](./cli-and-build-outputs.md)
+- [Supported Subset](./supported-subset.md)
+- [CLI Usage](./cli-and-build-outputs.md)
+- [Project Compilation][project-compilation]
 
 ## Compiler Internals & Project Reference
 
@@ -17,3 +18,5 @@ lookup-friendly form.
 - [Type inference](./type-and-generic-inference.md)
 - [Pattern matching](./pattern-matching.md)
 - [Closures](./closures.md)
+
+[project-compilation]: ./compiling-projects.md

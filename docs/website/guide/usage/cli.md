@@ -17,7 +17,7 @@ regulus build
 
 ## Build a project
 
-Use `build` for normal Gleam projects with a `gleam.toml` file.
+Use `build` for Gleam projects with a `gleam.toml` file.
 
 ```sh
 reggie build
@@ -29,36 +29,12 @@ With no project argument, the current directory is used. A directory argument
 builds that project root. A `gleam.toml` argument builds the project that owns
 that manifest.
 
-By default, project builds write:
+Project builds write `build/<package>.wasm` by default. Use `--output` to
+choose an exact final path or `--out-dir` to write compiler-named artifacts into
+a directory.
 
-```text
-build/<package>.wasm
-```
-
-Use `--output` to choose the exact final Wasm path:
-
-```sh
-reggie build examples/scalar_project --output out/app.wasm
-```
-
-Use `--out-dir` to write compiler-named artifacts into a directory:
-
-```sh
-reggie build examples/scalar_project --out-dir build/examples
-```
-
-Project builds print dependency progress to stderr. Quiet output keeps package
-messages stable, while `--verbose` adds paths and other local details.
-
-```text
-Resolving dependencies
-Using cached gleam_stdlib 0.50.0
-Extracting gleam_stdlib 0.50.0
-```
-
-Path dependencies and selected package sources are loaded from the project graph
-and can be compiled into the linked Wasm module when they use the supported
-language subset.
+See [Project compilation and dependencies][project-compilation] for dependency
+loading, linked output, and current project limits.
 
 ## Compile one file
 
@@ -101,11 +77,19 @@ Both `build` and `compile` accept `--target`:
 
 ```sh
 reggie build examples/browser_scalar --target browser
+reggie build examples/scalar_project --target bundler
 reggie compile path/to/module.gleam --target wasmtime
 ```
 
-Supported target values are `wasmtime`, `browser`, and `wasi`. Project builds
-use the target from `gleam.toml` when `--target` is not provided.
+Supported target values are `wasmtime`, `browser`, `bundler`, `nodejs`, and
+`wasi`. Project builds use the target from `gleam.toml` when `--target` is not
+provided.
+
+`bundler` emits a deterministic `.mjs` adapter next to the `.wasm` artifact
+when Wasm output is requested. That adapter loads the Wasm module, checks
+imports, converts scalar and string calls, and reads supported structured
+export results. `browser` and `nodejs` are accepted targets, but their complete
+host glue and profile-specific APIs are still in progress.
 
 ## Artifacts
 
@@ -154,5 +138,7 @@ reggie list examples/multi_module_project
 ## Current limitations
 
 Project compilation is still growing. Broad Hex dependency language coverage,
-general external functions, and richer host ABI adapters are tracked in
-`docs/internal`.
+bodyless externals from dependency source, and richer host ABI adapters are
+tracked in `docs/internal`.
+
+[project-compilation]: ../../reference/compiling-projects.md

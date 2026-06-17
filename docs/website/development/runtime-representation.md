@@ -110,5 +110,5 @@ future JS table lookups for that handle id.
 
 Runtime tests inspect encoded objects directly.
 
-Wasmtime tests inspect static and dynamic memory for tags, lengths, fields, payload
-bytes, and alignment.
+Wasmtime tests inspect static and dynamic memory for tags, lengths, fields,
+payload bytes, and alignment.
