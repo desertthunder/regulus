@@ -1263,7 +1263,7 @@ pub fn main() -> String {
         let dir = tempdir().expect("tempdir");
         write(
             &dir.path().join("gleam.toml"),
-            "name = \"sample\"\nversion = \"1.0.0\"\n",
+            "name = \"sample\"\nversion = \"1.0.0\"\ntarget = \"javascript\"\n",
         );
         write(
             &dir.path().join("src/app.gleam"),
@@ -1410,7 +1410,7 @@ if erlang {
         let dir = tempdir().expect("tempdir");
         write(
             &dir.path().join("gleam.toml"),
-            "name = \"sample\"\nversion = \"1.0.0\"\n",
+            "name = \"sample\"\nversion = \"1.0.0\"\ntarget = \"javascript\"\n",
         );
         write(
             &dir.path().join("src/host.gleam"),

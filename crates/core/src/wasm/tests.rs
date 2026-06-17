@@ -257,8 +257,8 @@ fn structured_codegen_runs_dynamic_record_literals() {
     let record_type = Type::Record {
         name: "Point".into(),
         fields: vec![
-            types::FieldInfo { name: "x".into(), type_: Type::Int },
-            types::FieldInfo { name: "y".into(), type_: Type::Int },
+            types::FieldInfo::new("x".into(), Type::Int),
+            types::FieldInfo::new("y".into(), Type::Int),
         ],
     };
     let function = ir::Function {
@@ -815,6 +815,25 @@ pub fn main(input: String) -> String { request_text(input) }"#,
             wasm.wat
         );
     }
+}
+
+#[test]
+fn bundler_target_lowers_bodyless_js_externals_to_host_imports() {
+    let wasm = compile_wasm_target(
+        r#"@external(javascript, "regulus/js", "request_text")
+pub fn request_text(input: String) -> String
+
+pub fn main(input: String) -> String { request_text(input) }"#,
+        CompileTarget::Bundler,
+    )
+    .expect("compile bodyless bundler external import");
+
+    assert!(
+        wasm.wat
+            .contains("(import \"regulus/js\" \"request_text\" (func (type 0) (param i32) (result i32)))"),
+        "{}",
+        wasm.wat
+    );
 }
 
 #[test]

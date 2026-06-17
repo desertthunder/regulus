@@ -71,6 +71,7 @@ impl TargetSelector {
     fn select_declaration(&mut self, declaration: ast::Declaration) -> Vec<ast::Declaration> {
         match declaration {
             ast::Declaration::TargetGroup(group) => self.select_group(group),
+            ast::Declaration::ExternalFunction(function) => self.select_external_function(function),
             declaration => vec![declaration],
         }
     }
@@ -83,6 +84,17 @@ impl TargetSelector {
             return Vec::new();
         }
         self.select_declarations(group.declarations)
+    }
+
+    fn select_external_function(&mut self, function: ast::ExternalFunction) -> Vec<ast::Declaration> {
+        let Some(target) = function.body.target.as_ref() else {
+            return vec![ast::Declaration::ExternalFunction(function)];
+        };
+        if external_target_matches(&target.text, target.span, self.target, &mut self.diagnostics) {
+            vec![ast::Declaration::ExternalFunction(function)]
+        } else {
+            Vec::new()
+        }
     }
 }
 
@@ -108,6 +120,16 @@ fn target_name(name: &str, span: Span, diagnostics: &mut Diagnostics) -> Option<
             );
             None
         }
+    }
+}
+
+fn external_target_matches(name: &str, span: Span, selected: CompileTarget, diagnostics: &mut Diagnostics) -> bool {
+    match name {
+        "javascript" => matches!(
+            selected,
+            CompileTarget::Browser | CompileTarget::Bundler | CompileTarget::Nodejs
+        ),
+        _ => target_name(name, span, diagnostics) == Some(selected),
     }
 }
 
@@ -166,5 +188,28 @@ pub fn main() -> Int { 1 }
 
         let resolved = resolve::resolve(module).expect("resolve selected module");
         types::check(resolved).expect("non-selected invalid code should be ignored");
+    }
+
+    #[test]
+    fn selects_javascript_bodyless_externals_for_js_family_targets() {
+        let source = r#"@external(javascript, "regulus/js", "request_text")
+pub fn request_text(input: String) -> String
+"#;
+
+        let bundler = select_module(ast_for(source), CompileTarget::Bundler).expect("select bundler target");
+        let wasmtime = select_module(ast_for(source), CompileTarget::Wasmtime).expect("select wasmtime target");
+
+        assert!(
+            bundler
+                .declarations
+                .iter()
+                .any(|declaration| matches!(declaration, ast::Declaration::ExternalFunction(_)))
+        );
+        assert!(
+            !wasmtime
+                .declarations
+                .iter()
+                .any(|declaration| matches!(declaration, ast::Declaration::ExternalFunction(_)))
+        );
     }
 }

@@ -72,10 +72,10 @@ The public ABI contract lives in
       source.
 - [x] Represent bodyless externals in AST, resolver interfaces, and typed
       module interfaces.
-- [ ] Select the target-specific external before lowering.
-- [ ] Lower selected JavaScript externals through the same ABI as handwritten
+- [x] Select the target-specific external before lowering.
+- [x] Lower selected JavaScript externals through the same ABI as handwritten
       project externals.
-- [ ] Add diagnostics for missing selected externals and unsupported external
+- [x] Add diagnostics for missing selected externals and unsupported external
       ABI shapes.
 
 ### Browser profile

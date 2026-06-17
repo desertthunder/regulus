@@ -1,5 +1,5 @@
 use super::FunctionContext;
-use crate::ast::{self, Expression as AstExpression, LiteralKind};
+use crate::ast::{self, LiteralKind};
 use crate::{runtime, source::Span, types::Type};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -82,7 +82,7 @@ pub fn ast_bit_array_literal(bit_array: &ast::BitArray) -> BitArrayLiteral {
         .iter()
         .filter_map(|segment| {
             let value = match &segment.value {
-                AstExpression::Literal(literal) if literal.kind == LiteralKind::Int => {
+                ast::Expression::Literal(literal) if literal.kind == LiteralKind::Int => {
                     literal.source.parse::<u64>().ok()?
                 }
                 _ => return None,

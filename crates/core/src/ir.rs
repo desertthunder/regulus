@@ -5,7 +5,7 @@ mod lowerer;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::{
-    ast::{self, Declaration as AstDeclaration, LiteralKind},
+    ast::{self, LiteralKind},
     diagnostic::{Diagnostic, DiagnosticCode, Diagnostics, Label},
     naming::{
         BackendItem, BackendItemKind, BackendName, CompilerGeneratedIndex, HelperKind, ModuleName, render_backend_name,
@@ -227,70 +227,70 @@ pub struct FieldMetadata {
     pub type_: Type,
 }
 
-impl From<&AstDeclaration> for DeclarationMetadata {
-    fn from(declaration: &AstDeclaration) -> Self {
+impl From<&ast::Declaration> for DeclarationMetadata {
+    fn from(declaration: &ast::Declaration) -> Self {
         match declaration {
-            AstDeclaration::Import(import) => Self {
+            ast::Declaration::Import(import) => Self {
                 name: Some(import.module.text.clone()),
                 kind: DeclarationKind::Import,
                 visibility: Visibility::Private,
                 span: import.span,
             },
-            AstDeclaration::Function(function) => Self {
+            ast::Declaration::Function(function) => Self {
                 name: Some(function.name.text.clone()),
                 kind: DeclarationKind::Function,
                 visibility: visibility(function.public),
                 span: function.span,
             },
-            AstDeclaration::Constant(constant) => Self {
+            ast::Declaration::Constant(constant) => Self {
                 name: Some(constant.name.text.clone()),
                 kind: DeclarationKind::Constant,
                 visibility: visibility(constant.public),
                 span: constant.span,
             },
-            AstDeclaration::ExternalFunction(function) => Self {
+            ast::Declaration::ExternalFunction(function) => Self {
                 name: Some(function.name.text.clone()),
                 kind: DeclarationKind::ExternalFunction,
                 visibility: visibility(function.public),
                 span: function.span,
             },
-            AstDeclaration::ExternalType(type_) => Self {
+            ast::Declaration::ExternalType(type_) => Self {
                 name: Some(type_.name.text.clone()),
                 kind: DeclarationKind::ExternalType,
                 visibility: visibility(type_.public),
                 span: type_.span,
             },
-            AstDeclaration::TypeAlias(alias) => Self {
+            ast::Declaration::TypeAlias(alias) => Self {
                 name: Some(alias.name.text.clone()),
                 kind: DeclarationKind::TypeAlias,
                 visibility: visibility(alias.public),
                 span: alias.span,
             },
-            AstDeclaration::TypeDefinition(type_) => Self {
+            ast::Declaration::TypeDefinition(type_) => Self {
                 name: Some(type_.name.text.clone()),
                 kind: DeclarationKind::TypeDefinition,
                 visibility: visibility(type_.public),
                 span: type_.span,
             },
-            AstDeclaration::Attribute(attribute) => Self {
+            ast::Declaration::Attribute(attribute) => Self {
                 name: Some(attribute.name.text.clone()),
                 kind: DeclarationKind::Attribute,
                 visibility: Visibility::Private,
                 span: attribute.span,
             },
-            AstDeclaration::TargetGroup(group) => Self {
+            ast::Declaration::TargetGroup(group) => Self {
                 name: Some(group.target.text.clone()),
                 kind: DeclarationKind::TargetGroup,
                 visibility: Visibility::Private,
                 span: group.span,
             },
-            AstDeclaration::Comment(comment) => Self {
+            ast::Declaration::Comment(comment) => Self {
                 name: None,
                 kind: DeclarationKind::Statement,
                 visibility: Visibility::Private,
                 span: comment.span,
             },
-            AstDeclaration::Statement(raw) => raw_metadata(raw, DeclarationKind::Statement, ""),
+            ast::Declaration::Statement(raw) => raw_metadata(raw, DeclarationKind::Statement, ""),
         }
     }
 }
@@ -1006,6 +1006,13 @@ fn unsupported_dependency_member_diagnostics(project: &TypedProject) -> Diagnost
                     let SymbolKind::Imported { module: dependency_module, member, .. } = &symbol.kind else {
                         continue;
                     };
+                    if project
+                        .interfaces
+                        .get(dependency_module)
+                        .is_some_and(|entry| entry.interface.externals.contains_key(member))
+                    {
+                        continue;
+                    }
                     if dependency_modules.contains(dependency_module.as_str())
                         && reported.insert((reference.name.span, dependency_module.clone(), member.clone()))
                     {
@@ -1027,6 +1034,9 @@ fn unsupported_dependency_member_diagnostics(project: &TypedProject) -> Diagnost
                     let Some(entry) = project.interfaces.get(dependency_module) else {
                         continue;
                     };
+                    if entry.interface.externals.contains_key(&member.text) {
+                        continue;
+                    }
                     if !(entry.interface.functions.contains_key(&member.text)
                         || entry.interface.constructors.contains_key(&member.text))
                     {
@@ -1721,6 +1731,7 @@ fn visibility(public: bool) -> Visibility {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
     use std::path::{Path, PathBuf};
 
     use crate::{
@@ -1802,6 +1813,77 @@ ProjectError: duplicate generated backend name `generated/run`
                     kind: ReferenceKind::Imported,
                     ..
                 } if package == "dep_pkg" && module == "dep/foo"
+            )
+        }));
+    }
+
+    #[test]
+    fn links_dependency_bodyless_externals_as_host_imports() {
+        let temp = tempfile::tempdir().expect("create temp project");
+        let root = temp.path();
+        fs::create_dir_all(root.join("dep_pkg/src/dep")).expect("create dependency src");
+        fs::create_dir_all(root.join("src")).expect("create app src");
+        fs::write(
+            root.join("dep_pkg/gleam.toml"),
+            r#"name = "dep_pkg"
+version = "0.1.0"
+description = "Dependency fixture with a bodyless external."
+licences = ["Apache-2.0"]
+target = "javascript"
+"#,
+        )
+        .expect("write dependency manifest");
+        fs::write(
+            root.join("dep_pkg/src/dep/host.gleam"),
+            r#"@external(javascript, "regulus/js", "request_text")
+pub fn request_text(input: String) -> String
+"#,
+        )
+        .expect("write dependency module");
+        fs::write(
+            root.join("gleam.toml"),
+            r#"name = "bodyless_external_app"
+version = "1.0.0"
+description = "App fixture for dependency bodyless externals."
+licences = ["Apache-2.0"]
+target = "javascript"
+
+[dependencies]
+dep_pkg = { path = "dep_pkg" }
+"#,
+        )
+        .expect("write app manifest");
+        fs::write(
+            root.join("src/app.gleam"),
+            r#"import dep/host.{request_text}
+
+pub fn main(input: String) -> String {
+  request_text(input)
+}
+"#,
+        )
+        .expect("write app module");
+
+        let project = project::load_project(root.join("gleam.toml")).expect("load project");
+        let typed = types::check_project(&project).expect("type check project");
+        let module = lower_project(typed).expect("lower linked project");
+
+        assert!(module.functions.iter().any(|function| {
+            matches!(
+                &function.abi.boundary,
+                CallBoundary::HostImport { module, name }
+                    if module == "regulus/js" && name == "request_text"
+            )
+        }));
+        assert!(module.functions.iter().any(|function| {
+            matches!(
+                &function.body.result.kind,
+                ExpressionKind::DirectCall(call)
+                    if matches!(
+                        &call.abi.boundary,
+                        CallBoundary::HostImport { module, name }
+                            if module == "regulus/js" && name == "request_text"
+                    )
             )
         }));
     }

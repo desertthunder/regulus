@@ -164,7 +164,7 @@ impl TypeTerm {
                 name,
                 fields: fields
                     .into_iter()
-                    .map(|field| Some(FieldInfo { name: field.name, type_: field.type_.into_type()? }))
+                    .map(|field| Some(FieldInfo::new(field.name, field.type_.into_type()?)))
                     .collect::<Option<Vec<_>>>()?,
             }),
             Self::Custom { name, args } => {

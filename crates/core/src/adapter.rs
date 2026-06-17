@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::ir::{self, CallBoundary, ExportKind};
-use crate::types::Type;
+use crate::types::{FieldInfo, Type};
 
 const BUNDLER_ADAPTER: &str = include_str!("adapter.js");
 
@@ -198,10 +198,7 @@ fn substitute_generics(type_: &Type, substitutions: &HashMap<String, Type>) -> T
             name: name.clone(),
             fields: fields
                 .iter()
-                .map(|field| crate::types::FieldInfo {
-                    name: field.name.clone(),
-                    type_: substitute_generics(&field.type_, substitutions),
-                })
+                .map(|field| FieldInfo::new(field.name.clone(), substitute_generics(&field.type_, substitutions)))
                 .collect(),
         },
         Type::Custom { name, args } => Type::Custom {

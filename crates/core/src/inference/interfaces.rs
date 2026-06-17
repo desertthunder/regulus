@@ -122,7 +122,7 @@ mod tests {
             "Box".into(),
             ConstructorInfo {
                 name: "Box".into(),
-                fields: vec![FieldInfo { name: "value".into(), type_: Type::Generic("a".into()) }],
+                fields: vec![FieldInfo::new("value".into(), Type::Generic("a".into()))],
                 return_type: Type::Custom { name: "Box".into(), args: vec![Type::Generic("a".into())] },
                 span: span(),
             },

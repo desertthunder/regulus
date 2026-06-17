@@ -165,6 +165,18 @@ as external functions with target, module, and function metadata. Project and
 dependency module interfaces preserve that metadata so a later lowering phase
 can select the external that matches the compile target.
 
+Selected JavaScript externals lower through the same host-import ABI as
+handwritten `external fn ... = "module" "name"` declarations. Imported
+bodyless externals from project modules or dependency interfaces become
+synthetic host-import functions in IR, using generated backend names for linked
+modules while preserving the declared JavaScript module and function names.
+
+If dependency source cannot be compiled and a referenced dependency member is
+not represented by selected external metadata, lowering reports a source-spanned
+missing-member diagnostic instead of emitting unresolved calls. Unsupported
+parameter or return ABI shapes are validated before Wasm emission for both
+local external declarations and imported bodyless external metadata.
+
 ## Active tasks
 
 See [JS host ABI tasks](../tasks/15_js_host_abi.md).

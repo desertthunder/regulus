@@ -1,13 +1,13 @@
 use std::collections::{HashMap, HashSet};
 
 use super::*;
-use crate::abi::validate_extern_function_abi;
-use crate::ast::{self, Declaration as AstDeclaration, Expression as AstExpression, Pattern, Statement};
+use crate::abi::{validate_extern_function_abi, validate_external_info_abi};
+use crate::ast::{self, Pattern, Statement};
 use crate::diagnostic::{Diagnostic, DiagnosticCode, Diagnostics, Label};
 use crate::labels::{FunctionLabelMap, call_argument_order, function_label_map, use_callback_placement};
 use crate::resolve::ReferenceTarget;
 use crate::stdlib::{MemberStrategy, StdlibRegistry};
-use crate::types::{ConstructorInfo, TypedModule};
+use crate::types::{ConstructorInfo, ExternalFunctionInfo, FieldInfo, InterfaceEntry, TypedModule};
 use bit_slices::{ast_bit_array_literal, bit_array_literal, bit_string_pattern_segments};
 
 pub fn lower(module: TypedModule) -> Result<Module, Diagnostics> {
@@ -15,7 +15,7 @@ pub fn lower(module: TypedModule) -> Result<Module, Diagnostics> {
 }
 
 pub fn lower_with_project_interfaces(
-    module: TypedModule, interfaces: &HashMap<String, crate::types::InterfaceEntry>,
+    module: TypedModule, interfaces: &HashMap<String, InterfaceEntry>,
 ) -> Result<Module, Diagnostics> {
     Lowerer::new(module).with_project_interfaces(interfaces).lower()
 }
@@ -28,6 +28,7 @@ pub struct Lowerer {
     constructors: HashMap<String, ConstructorInfo>,
     expression_types: HashMap<Span, Type>,
     external_imports: HashMap<String, ExternalImport>,
+    imported_external_imports: HashMap<String, ImportedExternalImport>,
     diagnostics: Diagnostics,
     pub lifted_functions: Vec<Function>,
     anonymous_counter: usize,
@@ -61,13 +62,14 @@ impl Lowerer {
             constructors,
             expression_types,
             external_imports,
+            imported_external_imports: HashMap::new(),
             diagnostics: Vec::new(),
             lifted_functions: Vec::new(),
             anonymous_counter: 0,
         }
     }
 
-    fn with_project_interfaces(mut self, interfaces: &HashMap<String, crate::types::InterfaceEntry>) -> Self {
+    fn with_project_interfaces(mut self, interfaces: &HashMap<String, InterfaceEntry>) -> Self {
         for (module, entry) in interfaces {
             let interface = &entry.interface;
             for (name, type_) in &interface.functions {
@@ -101,9 +103,60 @@ impl Lowerer {
                         .unwrap_or_else(|| format!("{}.{}", import.module.text, imported.name.text));
                     self.imported_functions.entry(local.clone()).or_insert(lowered_name);
                 }
+                if let Some(external) = interface.externals.get(&imported.name.text) {
+                    let Some(type_) = interface.functions.get(&imported.name.text).cloned() else {
+                        continue;
+                    };
+                    let lowered_name = self
+                        .import_package(import)
+                        .map(|package| format!("{package}:{}.{}", import.module.text, imported.name.text))
+                        .unwrap_or_else(|| format!("{}.{}", import.module.text, imported.name.text));
+                    self.external_imports
+                        .entry(local.clone())
+                        .or_insert_with(|| ExternalImport::from(external));
+                    self.external_imports
+                        .entry(lowered_name.clone())
+                        .or_insert_with(|| ExternalImport::from(external));
+                    self.function_types
+                        .entry(lowered_name.clone())
+                        .or_insert_with(|| type_.clone());
+                    self.imported_external_imports
+                        .entry(lowered_name)
+                        .or_insert_with(|| ImportedExternalImport {
+                            external: external.clone(),
+                            type_,
+                            span: imported.span,
+                        });
+                }
                 if let Some(labels) = interface.function_labels.get(&imported.name.text) {
                     self.function_labels.entry(local).or_insert_with(|| labels.clone());
                 }
+            }
+            for (name, external) in &interface.externals {
+                let Some(type_) = interface.functions.get(name).cloned() else {
+                    continue;
+                };
+                let qualified = format!("{}.{}", import.module.text, name);
+                let lowered_name = self
+                    .import_package(import)
+                    .map(|package| format!("{package}:{qualified}"))
+                    .unwrap_or_else(|| qualified.clone());
+                self.external_imports
+                    .entry(qualified)
+                    .or_insert_with(|| ExternalImport::from(external));
+                self.external_imports
+                    .entry(lowered_name.clone())
+                    .or_insert_with(|| ExternalImport::from(external));
+                self.function_types
+                    .entry(lowered_name.clone())
+                    .or_insert_with(|| type_.clone());
+                self.imported_external_imports
+                    .entry(lowered_name)
+                    .or_insert_with(|| ImportedExternalImport {
+                        external: external.clone(),
+                        type_,
+                        span: external.span,
+                    });
             }
         }
         self
@@ -151,13 +204,13 @@ impl Lowerer {
         if ast
             .declarations
             .iter()
-            .any(|declaration| matches!(declaration, AstDeclaration::Constant(_)))
+            .any(|declaration| matches!(declaration, ast::Declaration::Constant(_)))
         {
             init.steps.push(InitStep::RuntimeSetup { span: ast.span });
         }
 
         for declaration in &ast.declarations {
-            if let AstDeclaration::Constant(raw) = declaration {
+            if let ast::Declaration::Constant(raw) = declaration {
                 let id = ConstantId(constants.len() as u32);
                 let constant = self.lower_constant(id, raw);
                 if constant.public {
@@ -244,16 +297,20 @@ impl Lowerer {
         for declaration in self.module.resolved.ast.declarations.clone() {
             self.validate_external_function_abi_in_declaration(&declaration);
         }
+        for (name, import) in &self.imported_external_imports {
+            self.diagnostics
+                .extend(validate_external_info_abi(name, &import.external, &import.type_));
+        }
     }
 
-    fn validate_external_function_abi_in_declaration(&mut self, declaration: &AstDeclaration) {
+    fn validate_external_function_abi_in_declaration(&mut self, declaration: &ast::Declaration) {
         match declaration {
-            AstDeclaration::ExternalFunction(function) => {
+            ast::Declaration::ExternalFunction(function) => {
                 if let Some(type_) = self.function_types.get(&function.name.text) {
                     self.diagnostics.extend(validate_extern_function_abi(function, type_));
                 }
             }
-            AstDeclaration::TargetGroup(group) => {
+            ast::Declaration::TargetGroup(group) => {
                 for declaration in &group.declarations {
                     self.validate_external_function_abi_in_declaration(declaration);
                 }
@@ -303,10 +360,10 @@ impl Lowerer {
         }
         for declaration in &self.module.resolved.ast.declarations {
             match declaration {
-                AstDeclaration::TypeDefinition(type_) if type_.public => {
+                ast::Declaration::TypeDefinition(type_) if type_.public => {
                     exports.push(Export::type_(type_.name.text.clone(), type_.span))
                 }
-                AstDeclaration::TypeAlias(alias) if alias.public => {
+                ast::Declaration::TypeAlias(alias) if alias.public => {
                     exports.push(Export::type_(alias.name.text.clone(), alias.span))
                 }
                 _ => {}
@@ -325,13 +382,11 @@ impl Lowerer {
                     ReferenceTarget::Symbol(id) => {
                         let symbol = self.module.resolved.symbols.symbol(*id);
                         let (module, name) = match &symbol.kind {
-                            crate::resolve::SymbolKind::Imported { module, member, .. } => {
-                                (Some(module.clone()), member.clone())
-                            }
+                            SymbolKind::Imported { module, member, .. } => (Some(module.clone()), member.clone()),
                             _ => (None, symbol.name.clone()),
                         };
                         let package = match &symbol.kind {
-                            crate::resolve::SymbolKind::Imported { package, .. } => package.clone(),
+                            SymbolKind::Imported { package, .. } => package.clone(),
                             _ => None,
                         };
                         ReferenceTargetName::LocalSymbol {
@@ -345,7 +400,7 @@ impl Lowerer {
                         let module_symbol = self.module.resolved.symbols.symbol(*module);
                         let resolved = symbol.map(|id| self.module.resolved.symbols.symbol(id).name.clone());
                         let package = match &module_symbol.kind {
-                            crate::resolve::SymbolKind::Import { package, .. } => package.clone(),
+                            SymbolKind::Import { package, .. } => package.clone(),
                             _ => None,
                         };
                         ReferenceTargetName::QualifiedMember {
@@ -440,7 +495,7 @@ impl Lowerer {
                     });
                     self.bind_assert_pattern(context, &mut instructions, &value, &pattern, let_assert.span);
                 }
-                Statement::Expression(AstExpression::Use(use_)) => {
+                Statement::Expression(ast::Expression::Use(use_)) => {
                     result = self.lower_use(context, use_, &block.statements[index + 1..], block.span)?;
                     break;
                 }
@@ -461,15 +516,15 @@ impl Lowerer {
     }
 
     pub fn lower_expression(
-        &mut self, context: &mut FunctionContext, expression: &AstExpression,
+        &mut self, context: &mut FunctionContext, expression: &ast::Expression,
     ) -> Option<Expression> {
         match expression {
-            AstExpression::Literal(literal) => Some(Expression {
+            ast::Expression::Literal(literal) => Some(Expression {
                 type_: Type::from(&literal.kind),
                 span: literal.span,
                 kind: ExpressionKind::Literal(Literal { kind: literal.kind.clone(), source: literal.source.clone() }),
             }),
-            AstExpression::Variable(name) => {
+            ast::Expression::Variable(name) => {
                 if let Some(local) = context.lookup(&name.text) {
                     let type_ = context.local(local).type_.clone();
                     return Some(Expression { type_, span: name.span, kind: ExpressionKind::LocalGet(local) });
@@ -488,9 +543,9 @@ impl Lowerer {
                     type_,
                 })
             }
-            AstExpression::Call(call) => self.lower_call(context, call),
-            AstExpression::Block(block) => Some(*self.lower_block(context, block)?.result),
-            AstExpression::Case(case) => {
+            ast::Expression::Call(call) => self.lower_call(context, call),
+            ast::Expression::Block(block) => Some(*self.lower_block(context, block)?.result),
+            ast::Expression::Case(case) => {
                 let subjects = case
                     .subjects
                     .iter()
@@ -527,7 +582,7 @@ impl Lowerer {
                     }),
                 })
             }
-            AstExpression::FieldAccess(field_access) => {
+            ast::Expression::FieldAccess(field_access) => {
                 if let Some(stdlib_value) = stdlib_call(&self.module.resolved.ast, expression)
                     && stdlib_value.strategy == MemberStrategy::Intrinsic
                     && !matches!(stdlib_value.type_, Type::Function { .. })
@@ -560,7 +615,7 @@ impl Lowerer {
                     },
                 })
             }
-            AstExpression::Tuple(tuple) => Some(Expression {
+            ast::Expression::Tuple(tuple) => Some(Expression {
                 type_: self
                     .typed_expression_type(tuple.span)
                     .unwrap_or(Type::Tuple(Vec::new())),
@@ -573,7 +628,7 @@ impl Lowerer {
                         .collect::<Option<Vec<_>>>()?,
                 ),
             }),
-            AstExpression::List(list) => Some(Expression {
+            ast::Expression::List(list) => Some(Expression {
                 type_: self
                     .typed_expression_type(list.span)
                     .unwrap_or_else(|| Type::List(Box::new(Type::Int))),
@@ -585,7 +640,7 @@ impl Lowerer {
                         .collect::<Option<Vec<_>>>()?,
                 ),
             }),
-            AstExpression::Record(record) => {
+            ast::Expression::Record(record) => {
                 let type_ = self.typed_expression_type(record.span).unwrap_or(Type::Nil);
                 let name = self.resolved_constructor_name(&constructor_name(&record.constructor));
                 let arguments = self.lower_constructor_arguments(context, &name, &record.arguments)?;
@@ -595,44 +650,44 @@ impl Lowerer {
                     kind: ExpressionKind::Constructor(ConstructorValue { name, arguments }),
                 })
             }
-            AstExpression::BitArray(bit_array) => Some(Expression {
+            ast::Expression::BitArray(bit_array) => Some(Expression {
                 type_: Type::BitArray,
                 span: bit_array.span,
                 kind: ExpressionKind::BitArray(ast_bit_array_literal(bit_array)),
             }),
-            AstExpression::Panic(panic) => Some(Expression {
+            ast::Expression::Panic(panic) => Some(Expression {
                 type_: self.typed_expression_type(panic.span).unwrap_or(Type::Nil),
                 span: panic.span,
                 kind: ExpressionKind::Failure(FailurePath { reason: FailureReason::Panic, span: panic.span }),
             }),
-            AstExpression::Todo(todo) => Some(Expression {
+            ast::Expression::Todo(todo) => Some(Expression {
                 type_: self.typed_expression_type(todo.span).unwrap_or(Type::Nil),
                 span: todo.span,
                 kind: ExpressionKind::Failure(FailurePath { reason: FailureReason::Todo, span: todo.span }),
             }),
-            AstExpression::Assert(assert) => Some(Expression {
+            ast::Expression::Assert(assert) => Some(Expression {
                 type_: self.typed_expression_type(assert.span).unwrap_or(Type::Nil),
                 span: assert.span,
                 kind: ExpressionKind::Failure(FailurePath { reason: FailureReason::Assert, span: assert.span }),
             }),
-            AstExpression::Raw(raw) if raw.kind == "bit_string" => Some(Expression {
+            ast::Expression::Raw(raw) if raw.kind == "bit_string" => Some(Expression {
                 type_: Type::BitArray,
                 span: raw.span,
                 kind: ExpressionKind::BitArray(bit_array_literal(raw)),
             }),
-            AstExpression::Raw(raw) if raw.kind == "tuple" => Some(Expression {
+            ast::Expression::Raw(raw) if raw.kind == "tuple" => Some(Expression {
                 type_: self.typed_expression_type(raw.span).unwrap_or(Type::Tuple(Vec::new())),
                 span: raw.span,
                 kind: ExpressionKind::Tuple(raw_literal_arguments(raw)?),
             }),
-            AstExpression::Raw(raw) if raw.kind == "list" => Some(Expression {
+            ast::Expression::Raw(raw) if raw.kind == "list" => Some(Expression {
                 type_: self
                     .typed_expression_type(raw.span)
                     .unwrap_or_else(|| Type::List(Box::new(Type::Int))),
                 span: raw.span,
                 kind: ExpressionKind::List(raw_literal_arguments(raw)?),
             }),
-            AstExpression::Raw(raw) if raw.kind == "record" => {
+            ast::Expression::Raw(raw) if raw.kind == "record" => {
                 let type_ = self.typed_expression_type(raw.span).unwrap_or(Type::Nil);
                 Some(Expression {
                     type_,
@@ -643,7 +698,7 @@ impl Lowerer {
                     }),
                 })
             }
-            AstExpression::Raw(raw) if matches!(raw.kind.as_str(), "panic" | "todo" | "assert") => Some(Expression {
+            ast::Expression::Raw(raw) if matches!(raw.kind.as_str(), "panic" | "todo" | "assert") => Some(Expression {
                 type_: self.typed_expression_type(raw.span).unwrap_or(Type::Nil),
                 span: raw.span,
                 kind: ExpressionKind::Failure(FailurePath {
@@ -655,16 +710,16 @@ impl Lowerer {
                     span: raw.span,
                 }),
             }),
-            AstExpression::BinaryOperation(operation) => self.lower_binary_operation(context, operation),
-            AstExpression::Pipeline(pipeline) => self.lower_pipeline(context, pipeline),
-            AstExpression::UnaryOperation(operation) => self.lower_unary_operation(context, operation),
-            AstExpression::Use(use_) => self.lower_use(context, use_, &[], use_.span),
-            AstExpression::AnonymousFunction(function) => self.lower_anonymous_function(context, function),
-            AstExpression::Capture(capture) => self.lower_capture(context, capture),
-            AstExpression::RecordUpdate(update) => self.lower_record_update(context, update),
-            AstExpression::TupleAccess(access) => self.lower_tuple_access(context, access),
-            AstExpression::Echo(echo) => self.lower_expression(context, &echo.value),
-            AstExpression::Raw(raw) => self.unsupported_ast_expression(&raw.kind, raw.span),
+            ast::Expression::BinaryOperation(operation) => self.lower_binary_operation(context, operation),
+            ast::Expression::Pipeline(pipeline) => self.lower_pipeline(context, pipeline),
+            ast::Expression::UnaryOperation(operation) => self.lower_unary_operation(context, operation),
+            ast::Expression::Use(use_) => self.lower_use(context, use_, &[], use_.span),
+            ast::Expression::AnonymousFunction(function) => self.lower_anonymous_function(context, function),
+            ast::Expression::Capture(capture) => self.lower_capture(context, capture),
+            ast::Expression::RecordUpdate(update) => self.lower_record_update(context, update),
+            ast::Expression::TupleAccess(access) => self.lower_tuple_access(context, access),
+            ast::Expression::Echo(echo) => self.lower_expression(context, &echo.value),
+            ast::Expression::Raw(raw) => self.unsupported_ast_expression(&raw.kind, raw.span),
         }
     }
 
@@ -739,7 +794,7 @@ impl Lowerer {
         let (callback_type, return_type) = self.use_callback_and_return_types(use_)?;
         let callback = self.lower_use_callback(context, use_, continuation, block_span, callback_type)?;
         match use_.value.as_ref() {
-            AstExpression::Call(call) => self.lower_call_with_callback(context, call, callback, return_type),
+            ast::Expression::Call(call) => self.lower_call_with_callback(context, call, callback, return_type),
             value => {
                 let callee = self.lower_expression(context, value)?;
                 let callee_type = callee.type_.clone();
@@ -758,14 +813,14 @@ impl Lowerer {
 
     fn use_callback_and_return_types(&mut self, use_: &ast::Use) -> Option<(Type, Type)> {
         let function_type = match use_.value.as_ref() {
-            AstExpression::Call(call) => self.ast_function_type(&call.function)?,
+            ast::Expression::Call(call) => self.ast_function_type(&call.function)?,
             value => self.typed_expression_type(Span::from(value))?,
         };
         let Type::Function { params, return_type } = function_type else {
             return None;
         };
         let callback_index = match use_.value.as_ref() {
-            AstExpression::Call(call) => {
+            ast::Expression::Call(call) => {
                 use_callback_placement(self.call_function_labels(call), &call.arguments, params.len())
                     .ok()?
                     .callback_index
@@ -776,9 +831,9 @@ impl Lowerer {
         Some((callback_type, *return_type))
     }
 
-    fn ast_function_type(&self, expression: &AstExpression) -> Option<Type> {
+    fn ast_function_type(&self, expression: &ast::Expression) -> Option<Type> {
         match expression {
-            AstExpression::Variable(name) => self.function_types.get(&name.text).cloned(),
+            ast::Expression::Variable(name) => self.function_types.get(&name.text).cloned(),
             expression => self.typed_expression_type(Span::from(expression)),
         }
     }
@@ -874,9 +929,9 @@ impl Lowerer {
 
     fn call_function_labels(&self, call: &ast::Call) -> Option<&[Option<String>]> {
         match call.function.as_ref() {
-            AstExpression::Variable(name) => self.function_labels.get(&name.text).map(Vec::as_slice),
-            AstExpression::FieldAccess(access) => match access.record.as_ref() {
-                AstExpression::Variable(module) => self
+            ast::Expression::Variable(name) => self.function_labels.get(&name.text).map(Vec::as_slice),
+            ast::Expression::FieldAccess(access) => match access.record.as_ref() {
+                ast::Expression::Variable(module) => self
                     .function_labels
                     .get(&format!("{}.{}", module.text, access.field.text))
                     .map(Vec::as_slice),
@@ -909,16 +964,16 @@ impl Lowerer {
             .symbols
             .symbols
             .iter()
-            .find(|symbol| symbol.namespace == crate::resolve::Namespace::Module && symbol.name == local)
+            .find(|symbol| symbol.namespace == Namespace::Module && symbol.name == local)
             .and_then(|symbol| match &symbol.kind {
-                crate::resolve::SymbolKind::Import { package, .. } => package.clone(),
+                SymbolKind::Import { package, .. } => package.clone(),
                 _ => None,
             })
     }
 
-    fn qualified_function(&self, function: &AstExpression) -> Option<(String, Type)> {
-        let AstExpression::FieldAccess(access) = function else { return None };
-        let AstExpression::Variable(module) = access.record.as_ref() else { return None };
+    fn qualified_function(&self, function: &ast::Expression) -> Option<(String, Type)> {
+        let ast::Expression::FieldAccess(access) = function else { return None };
+        let ast::Expression::Variable(module) = access.record.as_ref() else { return None };
         let import = self
             .module
             .resolved
@@ -941,7 +996,7 @@ impl Lowerer {
     fn lower_call_with_callback(
         &mut self, context: &mut FunctionContext, call: &ast::Call, callback: Expression, return_type: Type,
     ) -> Option<Expression> {
-        if let AstExpression::Variable(function_name) = call.function.as_ref()
+        if let ast::Expression::Variable(function_name) = call.function.as_ref()
             && let Some(function_type) = self.function_types.get(&function_name.text).cloned()
         {
             let arguments = self.lower_use_call_arguments(context, call, callback)?;
@@ -1166,7 +1221,7 @@ impl Lowerer {
             });
         }
 
-        if let AstExpression::Variable(function_name) = call.function.as_ref()
+        if let ast::Expression::Variable(function_name) = call.function.as_ref()
             && let Some(function_type) = self.function_types.get(&function_name.text).cloned()
         {
             let Type::Function { return_type, .. } = function_type.clone() else {
@@ -1194,13 +1249,16 @@ impl Lowerer {
             let Type::Function { return_type, .. } = function_type.clone() else {
                 return None;
             };
+            let boundary = self
+                .external_import_boundary(&function_name)
+                .unwrap_or(CallBoundary::Internal);
             return Some(Expression {
                 type_: *return_type,
                 span: call.span,
                 kind: ExpressionKind::DirectCall(DirectCall {
                     function: function_name,
                     arguments: self.lower_ordered_call_arguments(context, call)?,
-                    abi: call_abi(&function_type, CallBoundary::Internal),
+                    abi: call_abi(&function_type, boundary),
                 }),
             });
         }
@@ -1994,14 +2052,14 @@ impl Lowerer {
         let mut imports = Vec::new();
         for declaration in &ast.declarations {
             match declaration {
-                AstDeclaration::ExternalFunction(function) => {
+                ast::Declaration::ExternalFunction(function) => {
                     if let Some(import) = self.lower_external_host_import(function) {
                         imports.push(import);
                     }
                 }
-                AstDeclaration::TargetGroup(group) => {
+                ast::Declaration::TargetGroup(group) => {
                     for declaration in &group.declarations {
-                        if let AstDeclaration::ExternalFunction(function) = declaration
+                        if let ast::Declaration::ExternalFunction(function) = declaration
                             && let Some(import) = self.lower_external_host_import(function)
                         {
                             imports.push(import);
@@ -2011,6 +2069,7 @@ impl Lowerer {
                 _ => {}
             }
         }
+        imports.extend(self.lower_imported_external_host_imports());
         imports
     }
 
@@ -2056,6 +2115,48 @@ impl Lowerer {
                 span: function.span,
             },
             span: function.span,
+        })
+    }
+
+    fn lower_imported_external_host_imports(&self) -> Vec<Function> {
+        let mut imports = self
+            .imported_external_imports
+            .iter()
+            .filter_map(|(name, import)| {
+                self.lower_external_info_host_import(name, &import.external, &import.type_, import.span)
+            })
+            .collect::<Vec<_>>();
+        imports.sort_by(|left, right| left.name.cmp(&right.name));
+        imports
+    }
+
+    fn lower_external_info_host_import(
+        &self, name: &str, external: &ExternalFunctionInfo, type_: &Type, span: Span,
+    ) -> Option<Function> {
+        let Type::Function { params, return_type } = type_.clone() else {
+            return None;
+        };
+        let locals = params
+            .iter()
+            .enumerate()
+            .map(|(index, type_)| Local {
+                id: LocalId(index as u32),
+                name: format!("arg{index}"),
+                type_: type_.clone(),
+                span,
+            })
+            .collect::<Vec<_>>();
+        let boundary = CallBoundary::HostImport { module: external.module.clone(), name: external.function.clone() };
+        Some(Function {
+            name: name.to_string(),
+            public: false,
+            closure_captures: Vec::new(),
+            params: locals.clone(),
+            locals,
+            return_type: *return_type,
+            abi: call_abi(type_, boundary),
+            body: Block { instructions: Vec::new(), result: Box::new(self.nil_expression(span)), span },
+            span,
         })
     }
 
@@ -2123,9 +2224,9 @@ impl Lowerer {
         }
     }
 
-    fn ast_constant_value(&self, expression: &AstExpression) -> ConstantValue {
+    fn ast_constant_value(&self, expression: &ast::Expression) -> ConstantValue {
         match expression {
-            AstExpression::Literal(literal) => {
+            ast::Expression::Literal(literal) => {
                 ConstantValue::Literal(Literal { kind: literal.kind.clone(), source: literal.source.clone() })
             }
             _ => ConstantValue::Raw(format!("{expression:?}")),
@@ -2139,6 +2240,19 @@ struct ExternalImport {
     function: String,
 }
 
+impl From<&ExternalFunctionInfo> for ExternalImport {
+    fn from(info: &ExternalFunctionInfo) -> Self {
+        Self { module: info.module.clone(), function: info.function.clone() }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ImportedExternalImport {
+    external: ExternalFunctionInfo,
+    type_: Type,
+    span: Span,
+}
+
 fn external_imports(module: &ast::Module) -> HashMap<String, ExternalImport> {
     let mut imports = HashMap::new();
     for declaration in &module.declarations {
@@ -2147,9 +2261,9 @@ fn external_imports(module: &ast::Module) -> HashMap<String, ExternalImport> {
     imports
 }
 
-fn collect_external_import(declaration: &AstDeclaration, imports: &mut HashMap<String, ExternalImport>) {
+fn collect_external_import(declaration: &ast::Declaration, imports: &mut HashMap<String, ExternalImport>) {
     match declaration {
-        AstDeclaration::ExternalFunction(function) => {
+        ast::Declaration::ExternalFunction(function) => {
             imports.insert(
                 function.name.text.clone(),
                 ExternalImport {
@@ -2158,7 +2272,7 @@ fn collect_external_import(declaration: &AstDeclaration, imports: &mut HashMap<S
                 },
             );
         }
-        AstDeclaration::TargetGroup(group) => {
+        ast::Declaration::TargetGroup(group) => {
             for declaration in &group.declarations {
                 collect_external_import(declaration, imports);
             }
@@ -2167,6 +2281,7 @@ fn collect_external_import(declaration: &AstDeclaration, imports: &mut HashMap<S
     }
 }
 
+// TODO: add a shared text utils module
 fn unquote(source: &str) -> String {
     source.trim_matches('"').to_string()
 }
@@ -2179,11 +2294,11 @@ struct StdlibCall {
     type_: Type,
 }
 
-fn stdlib_call(module: &ast::Module, function: &AstExpression) -> Option<StdlibCall> {
+fn stdlib_call(module: &ast::Module, function: &ast::Expression) -> Option<StdlibCall> {
     let registry = StdlibRegistry::new();
     let (module_name, member_name) = match function {
-        AstExpression::FieldAccess(access) => {
-            let AstExpression::Variable(module_alias) = access.record.as_ref() else {
+        ast::Expression::FieldAccess(access) => {
+            let ast::Expression::Variable(module_alias) = access.record.as_ref() else {
                 return None;
             };
             let import = module.imports.iter().find(|import| {
@@ -2196,7 +2311,7 @@ fn stdlib_call(module: &ast::Module, function: &AstExpression) -> Option<StdlibC
             })?;
             (import.module.text.clone(), access.field.text.clone())
         }
-        AstExpression::Variable(name) => module.imports.iter().find_map(|import| {
+        ast::Expression::Variable(name) => module.imports.iter().find_map(|import| {
             import.unqualified.iter().find_map(|unqualified| {
                 let local = unqualified.alias.as_ref().unwrap_or(&unqualified.name).text.as_str();
                 (local == name.text).then(|| (import.module.text.clone(), unqualified.name.text.clone()))
@@ -2318,24 +2433,24 @@ impl UsedStdlibHostCalls for ast::Module {
 }
 
 fn collect_stdlib_host_calls_in_declaration(
-    module: &ast::Module, declaration: &AstDeclaration, calls: &mut HashSet<(String, String)>,
+    module: &ast::Module, declaration: &ast::Declaration, calls: &mut HashSet<(String, String)>,
 ) {
     match declaration {
-        AstDeclaration::Function(function) => collect_stdlib_host_calls_in_block(module, &function.body, calls),
-        AstDeclaration::Constant(constant) => collect_stdlib_host_calls_in_expression(module, &constant.value, calls),
-        AstDeclaration::TargetGroup(group) => {
+        ast::Declaration::Function(function) => collect_stdlib_host_calls_in_block(module, &function.body, calls),
+        ast::Declaration::Constant(constant) => collect_stdlib_host_calls_in_expression(module, &constant.value, calls),
+        ast::Declaration::TargetGroup(group) => {
             for declaration in &group.declarations {
                 collect_stdlib_host_calls_in_declaration(module, declaration, calls);
             }
         }
-        AstDeclaration::Import(_)
-        | AstDeclaration::ExternalFunction(_)
-        | AstDeclaration::ExternalType(_)
-        | AstDeclaration::TypeAlias(_)
-        | AstDeclaration::TypeDefinition(_)
-        | AstDeclaration::Attribute(_)
-        | AstDeclaration::Comment(_)
-        | AstDeclaration::Statement(_) => {}
+        ast::Declaration::Import(_)
+        | ast::Declaration::ExternalFunction(_)
+        | ast::Declaration::ExternalType(_)
+        | ast::Declaration::TypeAlias(_)
+        | ast::Declaration::TypeDefinition(_)
+        | ast::Declaration::Attribute(_)
+        | ast::Declaration::Comment(_)
+        | ast::Declaration::Statement(_) => {}
     }
 }
 
@@ -2355,9 +2470,9 @@ fn collect_stdlib_host_calls_in_block(module: &ast::Module, block: &ast::Block, 
 }
 
 fn collect_stdlib_host_calls_in_expression(
-    module: &ast::Module, expression: &AstExpression, calls: &mut HashSet<(String, String)>,
+    module: &ast::Module, expression: &ast::Expression, calls: &mut HashSet<(String, String)>,
 ) {
-    if let AstExpression::Call(call) = expression
+    if let ast::Expression::Call(call) = expression
         && let Some(stdlib_call) = stdlib_call(module, &call.function)
         && stdlib_call.strategy == MemberStrategy::HostImport
     {
@@ -2365,15 +2480,15 @@ fn collect_stdlib_host_calls_in_expression(
     }
 
     match expression {
-        AstExpression::Call(call) => {
+        ast::Expression::Call(call) => {
             collect_stdlib_host_calls_in_expression(module, &call.function, calls);
             for argument in &call.arguments {
                 collect_stdlib_host_calls_in_expression(module, &argument.value, calls);
             }
         }
-        AstExpression::FieldAccess(access) => collect_stdlib_host_calls_in_expression(module, &access.record, calls),
-        AstExpression::Block(block) => collect_stdlib_host_calls_in_block(module, block, calls),
-        AstExpression::Case(case) => {
+        ast::Expression::FieldAccess(access) => collect_stdlib_host_calls_in_expression(module, &access.record, calls),
+        ast::Expression::Block(block) => collect_stdlib_host_calls_in_block(module, block, calls),
+        ast::Expression::Case(case) => {
             for subject in &case.subjects {
                 collect_stdlib_host_calls_in_expression(module, subject, calls);
             }
@@ -2384,43 +2499,45 @@ fn collect_stdlib_host_calls_in_expression(
                 collect_stdlib_host_calls_in_expression(module, &clause.value, calls);
             }
         }
-        AstExpression::BinaryOperation(operation) => {
+        ast::Expression::BinaryOperation(operation) => {
             collect_stdlib_host_calls_in_expression(module, &operation.left, calls);
             collect_stdlib_host_calls_in_expression(module, &operation.right, calls);
         }
-        AstExpression::Pipeline(pipeline) => {
+        ast::Expression::Pipeline(pipeline) => {
             collect_stdlib_host_calls_in_expression(module, &pipeline.value, calls);
             collect_stdlib_host_calls_in_expression(module, &pipeline.into, calls);
         }
-        AstExpression::UnaryOperation(operation) => {
+        ast::Expression::UnaryOperation(operation) => {
             collect_stdlib_host_calls_in_expression(module, &operation.value, calls);
         }
-        AstExpression::Use(use_) => collect_stdlib_host_calls_in_expression(module, &use_.value, calls),
-        AstExpression::AnonymousFunction(function) => collect_stdlib_host_calls_in_block(module, &function.body, calls),
-        AstExpression::Capture(capture) => {
+        ast::Expression::Use(use_) => collect_stdlib_host_calls_in_expression(module, &use_.value, calls),
+        ast::Expression::AnonymousFunction(function) => {
+            collect_stdlib_host_calls_in_block(module, &function.body, calls)
+        }
+        ast::Expression::Capture(capture) => {
             collect_stdlib_host_calls_in_expression(module, &capture.function, calls);
             for argument in capture.arguments.iter().flatten() {
                 collect_stdlib_host_calls_in_expression(module, &argument.value, calls);
             }
         }
-        AstExpression::Record(record) => {
+        ast::Expression::Record(record) => {
             for argument in &record.arguments {
                 collect_stdlib_host_calls_in_expression(module, &argument.value, calls);
             }
         }
-        AstExpression::RecordUpdate(update) => {
+        ast::Expression::RecordUpdate(update) => {
             collect_stdlib_host_calls_in_expression(module, &update.spread, calls);
             for argument in &update.updates {
                 collect_stdlib_host_calls_in_expression(module, &argument.value, calls);
             }
         }
-        AstExpression::Tuple(tuple) => {
+        ast::Expression::Tuple(tuple) => {
             for element in &tuple.elements {
                 collect_stdlib_host_calls_in_expression(module, element, calls);
             }
         }
-        AstExpression::TupleAccess(access) => collect_stdlib_host_calls_in_expression(module, &access.tuple, calls),
-        AstExpression::List(list) => {
+        ast::Expression::TupleAccess(access) => collect_stdlib_host_calls_in_expression(module, &access.tuple, calls),
+        ast::Expression::List(list) => {
             for element in &list.elements {
                 collect_stdlib_host_calls_in_expression(module, element, calls);
             }
@@ -2428,15 +2545,17 @@ fn collect_stdlib_host_calls_in_expression(
                 collect_stdlib_host_calls_in_expression(module, spread, calls);
             }
         }
-        AstExpression::Panic(failure) | AstExpression::Todo(failure) => {
+        ast::Expression::Panic(failure) | ast::Expression::Todo(failure) => {
             if let Some(message) = &failure.message {
                 collect_stdlib_host_calls_in_expression(module, message, calls);
             }
         }
-        AstExpression::Assert(assert) => collect_stdlib_host_calls_in_expression(module, &assert.value, calls),
-        AstExpression::Echo(echo) => collect_stdlib_host_calls_in_expression(module, &echo.value, calls),
-        AstExpression::Literal(_) | AstExpression::Variable(_) | AstExpression::BitArray(_) | AstExpression::Raw(_) => {
-        }
+        ast::Expression::Assert(assert) => collect_stdlib_host_calls_in_expression(module, &assert.value, calls),
+        ast::Expression::Echo(echo) => collect_stdlib_host_calls_in_expression(module, &echo.value, calls),
+        ast::Expression::Literal(_)
+        | ast::Expression::Variable(_)
+        | ast::Expression::BitArray(_)
+        | ast::Expression::Raw(_) => {}
     }
 }
 
@@ -2481,9 +2600,11 @@ fn substitute_type_generics(type_: &Type, substitutions: &HashMap<String, Type>)
             name: name.clone(),
             fields: fields
                 .iter()
-                .map(|field| crate::types::FieldInfo {
-                    name: field.name.clone(),
-                    type_: substitute_type_generics(&field.type_, substitutions),
+                .map(|field| {
+                    FieldInfo::new(
+                        field.name.clone(),
+                        substitute_type_generics(&field.type_, substitutions),
+                    )
                 })
                 .collect(),
         },

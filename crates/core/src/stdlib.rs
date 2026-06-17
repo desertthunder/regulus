@@ -211,12 +211,12 @@ impl StdlibModule {
             vec![
                 constructor(
                     "Ok",
-                    vec![field("value", Type::generic("a"))],
+                    vec![FieldInfo::new("value".to_string(), Type::generic("a"))],
                     result(Type::generic("a"), Type::generic("e")),
                 ),
                 constructor(
                     "Error",
-                    vec![field("reason", Type::generic("e"))],
+                    vec![FieldInfo::new("reason".to_string(), Type::generic("e"))],
                     result(Type::generic("a"), Type::generic("e")),
                 ),
             ],
@@ -249,7 +249,7 @@ impl StdlibModule {
             vec![
                 constructor(
                     "Some",
-                    vec![field("value", Type::generic("a"))],
+                    vec![FieldInfo::new("value".to_string(), Type::generic("a"))],
                     option(Type::generic("a")),
                 ),
                 constructor("None", vec![], option(Type::generic("a"))),
@@ -421,9 +421,9 @@ impl StdlibModule {
             vec![constructor(
                 "DecodeError",
                 vec![
-                    field("expected", Type::String),
-                    field("found", Type::String),
-                    field("path", list(Type::String)),
+                    FieldInfo::new("expected".to_string(), Type::String),
+                    FieldInfo::new("found".to_string(), Type::String),
+                    FieldInfo::new("path".to_string(), list(Type::String)),
                 ],
                 decode_error(),
             )],
@@ -717,10 +717,6 @@ fn type_decl(name: &str, parameters: Vec<&str>, opaque: bool, constructors: Vec<
 
 fn constructor(name: &str, fields: Vec<FieldInfo>, return_type: Type) -> ConstructorInfo {
     ConstructorInfo { name: name.into(), fields, return_type, span: STDLIB_SPAN }
-}
-
-fn field(name: &str, type_: Type) -> FieldInfo {
-    FieldInfo { name: name.into(), type_ }
 }
 
 fn fn_type(params: Vec<Type>, return_type: Type) -> Type {

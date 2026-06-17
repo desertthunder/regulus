@@ -81,6 +81,12 @@ pub struct FieldInfo {
     pub type_: Type,
 }
 
+impl FieldInfo {
+    pub fn new(name: String, type_: Type) -> Self {
+        Self { name, type_ }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConstructorInfo {
     pub name: String,
@@ -368,6 +374,7 @@ fn external_function_info(function: &ast::ExternalFunction) -> ExternalFunctionI
     function.into()
 }
 
+// TODO: add a shared text utils module
 fn unquote(value: &str) -> String {
     value
         .strip_prefix('"')
@@ -2056,10 +2063,7 @@ impl TypeChecker {
                 name: name.clone(),
                 fields: fields
                     .iter()
-                    .map(|field| FieldInfo {
-                        name: field.name.clone(),
-                        type_: self.resolve_inference_type(&field.type_),
-                    })
+                    .map(|field| FieldInfo::new(field.name.clone(), self.resolve_inference_type(&field.type_)))
                     .collect(),
             },
             Type::Custom { name, args } => Type::Custom {
@@ -2145,9 +2149,11 @@ impl TypeChecker {
             fields: constructor
                 .fields
                 .iter()
-                .map(|field| FieldInfo {
-                    name: field.name.clone(),
-                    type_: self.instantiate_named_generics_with(&field.type_, &mut substitutions),
+                .map(|field| {
+                    FieldInfo::new(
+                        field.name.clone(),
+                        self.instantiate_named_generics_with(&field.type_, &mut substitutions),
+                    )
                 })
                 .collect(),
             return_type: self.instantiate_named_generics_with(&constructor.return_type, &mut substitutions),
@@ -2172,9 +2178,11 @@ impl TypeChecker {
                 name: name.clone(),
                 fields: fields
                     .iter()
-                    .map(|field| FieldInfo {
-                        name: field.name.clone(),
-                        type_: self.instantiate_named_generics_with(&field.type_, substitutions),
+                    .map(|field| {
+                        FieldInfo::new(
+                            field.name.clone(),
+                            self.instantiate_named_generics_with(&field.type_, substitutions),
+                        )
                     })
                     .collect(),
             },
@@ -2244,7 +2252,7 @@ impl TypeChecker {
                 name,
                 fields: fields
                     .iter()
-                    .map(|field| FieldInfo { name: field.name.clone(), type_: self.finalize_type(&field.type_, names) })
+                    .map(|field| FieldInfo::new(field.name.clone(), self.finalize_type(&field.type_, names)))
                     .collect(),
             },
             Type::Custom { name, args } => {
@@ -2405,7 +2413,7 @@ fn type_term_to_type(type_: &TypeTerm) -> Option<Type> {
             name: name.clone(),
             fields: fields
                 .iter()
-                .map(|field| Some(FieldInfo { name: field.name.clone(), type_: type_term_to_type(&field.type_)? }))
+                .map(|field| Some(FieldInfo::new(field.name.clone(), type_term_to_type(&field.type_)?)))
                 .collect::<Option<Vec<_>>>()?,
         }),
         TypeTerm::Custom { name, args } => Some(Type::Custom {
@@ -2619,13 +2627,15 @@ fn type_definition_from_ast(type_: &ast::TypeDefinition) -> Option<TypeDeclarati
                 .arguments
                 .iter()
                 .enumerate()
-                .map(|(index, argument)| FieldInfo {
-                    name: argument
-                        .label
-                        .as_ref()
-                        .map(|label| label.text.clone())
-                        .unwrap_or_else(|| format!("_{index}")),
-                    type_: parse_type_source(&argument.type_annotation.source).unwrap_or(Type::Nil),
+                .map(|(index, argument)| {
+                    FieldInfo::new(
+                        argument
+                            .label
+                            .as_ref()
+                            .map(|label| label.text.clone())
+                            .unwrap_or_else(|| format!("_{index}")),
+                        parse_type_source(&argument.type_annotation.source).unwrap_or(Type::Nil),
+                    )
                 })
                 .collect(),
             return_type: return_type.clone(),
