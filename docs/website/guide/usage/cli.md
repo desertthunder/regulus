@@ -127,6 +127,33 @@ dumps include per-module AST, resolved AST, typed output, linked IR, and WAT.
 If compilation fails, Regulus does not write the final Wasm artifact. Debug
 artifacts are only written when the requested compiler phase completes.
 
+## Inspect one source file
+
+Use `debug` when changing parser or AST support for one `.gleam` file. The
+`dbg` command is an alias.
+
+```sh
+reggie debug ts path/to/module.gleam
+reggie debug spans path/to/module.gleam
+reggie debug ast path/to/module.gleam
+reggie debug json path/to/module.gleam --ast --spans
+```
+
+The debug views are:
+
+| View    | Output                                               |
+| ------- | ---------------------------------------------------- |
+| `ts`    | Tree-sitter concrete syntax tree S-expression.       |
+| `spans` | Tree-sitter nodes with spans, positions, and fields. |
+| `ast`   | Regulus AST built from the tree-sitter tree.         |
+| `json`  | Selected debug views as JSON.                        |
+
+`spans` is for tree-sitter nodes. `json --spans` includes tree-sitter span
+details. If no `json` view flags are passed, `json` defaults to tree-sitter
+output.
+
+By default, debug/dbg require a source file and at least one view flag.
+
 ## List project modules
 
 Use `list` to inspect discovered modules without building artifacts.

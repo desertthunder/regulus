@@ -11,7 +11,7 @@ use std::process::ExitCode;
 use compiler_core::source::SourceFile;
 use compiler_core::{diagnostic::Diagnostics, target::CompileTarget};
 
-use super::args::Command;
+use super::args::{Command, DebugCommand};
 use super::echo;
 
 use builder::Builder;
@@ -56,8 +56,33 @@ pub fn run(command: Command) -> ExitCode {
             let runner = Runner { input: &input, function: &function, args: &args, target, verbose, json };
             runner.run()
         }
-        Command::Debug { input, tree_sitter } => Debugger::new(&input, tree_sitter).run(),
+        Command::Debug { view, input, tree_sitter, ast, spans, json, no_color } => {
+            run_debug(view, input.as_deref(), tree_sitter, ast, spans, json, no_color)
+        }
         Command::List { project } => list(project.as_deref().unwrap_or_else(|| Path::new("."))),
+    }
+}
+
+fn run_debug(
+    view: Option<DebugCommand>, input: Option<&Path>, ts: bool, ast: bool, spans: bool, json: bool, no_color: bool,
+) -> ExitCode {
+    match view {
+        Some(DebugCommand::Ts(args)) => Debugger::new(&args.input, true, false, false, args.json, args.no_color).run(),
+        Some(DebugCommand::Spans(args)) => {
+            Debugger::new(&args.input, true, false, true, args.json, args.no_color).run()
+        }
+        Some(DebugCommand::Ast(args)) => Debugger::new(&args.input, false, true, false, args.json, args.no_color).run(),
+        Some(DebugCommand::Json(args)) => {
+            let tree_sitter = args.tree_sitter || args.spans || !args.ast;
+            Debugger::new(&args.input, tree_sitter, args.ast, args.spans, true, false).run()
+        }
+        None => {
+            let Some(input) = input else {
+                echo::error("debug requires a subcommand or a source file with at least one view flag");
+                return ExitCode::FAILURE;
+            };
+            Debugger::new(input, ts, ast, spans, json, no_color).run()
+        }
     }
 }
 

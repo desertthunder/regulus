@@ -147,6 +147,178 @@ fn debug_alias_prints_tree_sitter_tree() {
 }
 
 #[test]
+fn debug_subcommands_select_views() {
+    let temp = unique_temp_dir("regulus_cli_debug_subcommands");
+    fs::create_dir_all(&temp).expect("create temp dir");
+
+    let input = temp.join("app.gleam");
+    fs::write(&input, "pub fn main() -> Int { 1 }\n").expect("write Gleam input");
+
+    let ts_output = Command::new(env!("CARGO_BIN_EXE_reggie"))
+        .arg("dbg")
+        .arg("ts")
+        .arg(&input)
+        .output()
+        .expect("run reggie dbg ts");
+    assert!(
+        ts_output.status.success(),
+        "dbg ts failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&ts_output.stdout),
+        String::from_utf8_lossy(&ts_output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&ts_output.stdout).contains("(source_file"),
+        "missing tree output"
+    );
+
+    let ast_output = Command::new(env!("CARGO_BIN_EXE_reggie"))
+        .arg("debug")
+        .arg("ast")
+        .arg(&input)
+        .arg("--no-color")
+        .output()
+        .expect("run reggie debug ast");
+    assert!(
+        ast_output.status.success(),
+        "debug ast failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&ast_output.stdout),
+        String::from_utf8_lossy(&ast_output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&ast_output.stdout).contains("Function("),
+        "missing AST output"
+    );
+
+    let json_output = Command::new(env!("CARGO_BIN_EXE_reggie"))
+        .arg("debug")
+        .arg("json")
+        .arg(&input)
+        .arg("--ast")
+        .arg("--spans")
+        .output()
+        .expect("run reggie debug json");
+    assert!(
+        json_output.status.success(),
+        "debug json failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&json_output.stdout),
+        String::from_utf8_lossy(&json_output.stderr)
+    );
+
+    let json_stdout = String::from_utf8_lossy(&json_output.stdout);
+    assert!(
+        json_stdout.contains("\"tree_sitter\""),
+        "missing tree JSON: {json_stdout}"
+    );
+    assert!(json_stdout.contains("\"ast\""), "missing AST JSON: {json_stdout}");
+
+    let _ = fs::remove_dir_all(temp);
+}
+
+#[test]
+fn debug_without_subcommand_requires_view_flags() {
+    let output = Command::new(env!("CARGO_BIN_EXE_reggie"))
+        .arg("dbg")
+        .output()
+        .expect("run reggie dbg");
+
+    assert!(!output.status.success(), "plain dbg should fail");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("debug requires a subcommand"),
+        "unexpected stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn debug_prints_ast_spans_and_json_views() {
+    let temp = unique_temp_dir("regulus_cli_debug_views");
+    fs::create_dir_all(&temp).expect("create temp dir");
+
+    let input = temp.join("app.gleam");
+    fs::write(&input, "pub fn main() -> Int { 1 }\n").expect("write Gleam input");
+
+    let ast_output = Command::new(env!("CARGO_BIN_EXE_reggie"))
+        .arg("debug")
+        .arg(&input)
+        .arg("--ast")
+        .arg("--no-color")
+        .output()
+        .expect("run reggie debug --ast");
+    assert!(
+        ast_output.status.success(),
+        "debug --ast failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&ast_output.stdout),
+        String::from_utf8_lossy(&ast_output.stderr)
+    );
+
+    let ast_stdout = String::from_utf8_lossy(&ast_output.stdout);
+    assert!(ast_stdout.contains("ast:"), "missing AST heading: {ast_stdout}");
+    assert!(ast_stdout.contains("Function("), "missing AST function: {ast_stdout}");
+    assert!(
+        !ast_stdout.contains("\u{1b}["),
+        "--no-color should disable ANSI codes: {ast_stdout:?}"
+    );
+
+    let spans_output = Command::new(env!("CARGO_BIN_EXE_reggie"))
+        .arg("debug")
+        .arg(&input)
+        .arg("--ts")
+        .arg("--spans")
+        .arg("--no-color")
+        .output()
+        .expect("run reggie debug --ts --spans");
+    assert!(
+        spans_output.status.success(),
+        "debug --spans failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&spans_output.stdout),
+        String::from_utf8_lossy(&spans_output.stderr)
+    );
+
+    let spans_stdout = String::from_utf8_lossy(&spans_output.stdout);
+    assert!(
+        spans_stdout.contains("tree-sitter:"),
+        "missing tree heading: {spans_stdout}"
+    );
+    assert!(
+        spans_stdout.contains("source_file [0.."),
+        "missing root span: {spans_stdout}"
+    );
+    assert!(
+        spans_stdout.contains("field=name"),
+        "missing field names: {spans_stdout}"
+    );
+
+    let json_output = Command::new(env!("CARGO_BIN_EXE_reggie"))
+        .arg("debug")
+        .arg(&input)
+        .arg("--ts")
+        .arg("--ast")
+        .arg("--spans")
+        .arg("--json")
+        .output()
+        .expect("run reggie debug --json");
+    assert!(
+        json_output.status.success(),
+        "debug --json failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&json_output.stdout),
+        String::from_utf8_lossy(&json_output.stderr)
+    );
+
+    let json_stdout = String::from_utf8_lossy(&json_output.stdout);
+    assert!(
+        json_stdout.contains("\"tree_sitter\""),
+        "missing tree JSON: {json_stdout}"
+    );
+    assert!(
+        json_stdout.contains("\"start_byte\""),
+        "missing span JSON: {json_stdout}"
+    );
+    assert!(json_stdout.contains("\"ast\""), "missing AST JSON: {json_stdout}");
+
+    let _ = fs::remove_dir_all(temp);
+}
+
+#[test]
 fn builds_package_owned_overlap_fixture() {
     let fixture = workspace_root().join("fixtures/projects/generated_names/dependency_module_overlap");
     let out_dir = unique_temp_dir("regulus_cli_overlap_build");

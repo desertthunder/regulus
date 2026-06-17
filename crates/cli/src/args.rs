@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Args as ClapArgs, Parser, Subcommand, ValueEnum};
 use compiler_core::target::CompileTarget;
 
 #[derive(Debug, Parser)]
@@ -90,20 +90,88 @@ pub enum Command {
     /// Inspect compiler-internal views of one Gleam source file.
     #[command(visible_alias = "dbg")]
     Debug {
+        #[command(subcommand)]
+        view: Option<DebugCommand>,
         /// Gleam source file to inspect.
-        input: PathBuf,
+        ///
+        /// Required when no debug subcommand is used.
+        input: Option<PathBuf>,
         /// Print the raw tree-sitter concrete syntax tree as an S-expression.
         ///
         /// Use this to look at exact node kinds, field names, or the way Gleam
         /// syntax is split across adjacent tree-sitter nodes.
         #[arg(long = "ts", alias = "tree-sitter")]
         tree_sitter: bool,
+        /// Print the Regulus AST built from the tree-sitter tree.
+        #[arg(long)]
+        ast: bool,
+        /// Include tree-sitter byte spans, positions, and field names.
+        #[arg(long)]
+        spans: bool,
+        /// Print selected debug views as JSON.
+        #[arg(long)]
+        json: bool,
+        /// Disable ANSI colors in human-readable debug output.
+        #[arg(long)]
+        no_color: bool,
     },
     /// Load a Gleam project and print discovered modules.
     List {
         /// Project directory or gleam.toml path. Defaults to the current directory.
         project: Option<PathBuf>,
     },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum DebugCommand {
+    /// Print the raw tree-sitter concrete syntax tree.
+    #[command(visible_alias = "tree-sitter")]
+    Ts(DebugTreeArgs),
+    /// Print tree-sitter nodes with byte spans, positions, and field names.
+    Spans(DebugTreeArgs),
+    /// Print the Regulus AST built from the tree-sitter tree.
+    Ast(DebugAstArgs),
+    /// Print selected debug views as JSON.
+    Json(DebugJsonArgs),
+}
+
+#[derive(Debug, ClapArgs)]
+pub struct DebugTreeArgs {
+    /// Gleam source file to inspect.
+    pub input: PathBuf,
+    /// Print this view as JSON.
+    #[arg(long)]
+    pub json: bool,
+    /// Disable ANSI colors in human-readable output.
+    #[arg(long)]
+    pub no_color: bool,
+}
+
+#[derive(Debug, ClapArgs)]
+pub struct DebugAstArgs {
+    /// Gleam source file to inspect.
+    pub input: PathBuf,
+    /// Print this view as JSON.
+    #[arg(long)]
+    pub json: bool,
+    /// Disable ANSI colors in human-readable output.
+    #[arg(long)]
+    pub no_color: bool,
+}
+
+#[derive(Debug, ClapArgs)]
+pub struct DebugJsonArgs {
+    /// Gleam source file to inspect.
+    pub input: PathBuf,
+    /// Include the tree-sitter S-expression.
+    #[arg(long = "ts", alias = "tree-sitter")]
+    pub tree_sitter: bool,
+    /// Include the Regulus AST.
+    #[arg(long)]
+    pub ast: bool,
+    /// Include tree-sitter span details instead of only the S-expression.
+    #[arg(long)]
+    pub spans: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
