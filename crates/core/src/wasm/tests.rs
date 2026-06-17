@@ -893,7 +893,7 @@ pub fn main() -> String { load("weather") }"#,
 #[test]
 fn table_tests_selected_external_target_groups() {
     let source = r#"if javascript {
-external fn selected(key: String) -> String = "browser" "selected"
+external fn selected(key: String) -> String = "regulus/js" "selected"
 }
 
 if erlang {
@@ -904,7 +904,7 @@ pub fn main() -> String { selected("key") }"#;
     let cases = [
         (
             CompileTarget::Browser,
-            "(import \"browser\" \"selected\"",
+            "(import \"regulus/js\" \"selected\"",
             "(import \"env\" \"selected\"",
         ),
         (
@@ -1011,7 +1011,8 @@ fn table_tests_browser_and_worker_style_external_imports() {
     let cases = [
         (
             "fetch",
-            r#"external fn host(url: String) -> String = "browser" "fetch"
+            r#"pub opaque type Response { Response }
+external fn host(url: String) -> Response = "browser" "fetch"
 pub fn main() -> Int { 1 }"#,
             "(import \"browser\" \"fetch\" (func (type 0) (param i32) (result i32)))",
         ),
@@ -1032,6 +1033,22 @@ pub fn main() -> Int { 1 }"#,
             wasm.wat
         );
     }
+}
+
+#[test]
+fn rejects_unknown_browser_profile_import_names() {
+    let diagnostics = compile_wasm_target(
+        r#"external fn selected(key: String) -> String = "browser" "selected"
+pub fn main() -> String { selected("key") }"#,
+        CompileTarget::Browser,
+    )
+    .expect_err("unknown browser import should be rejected");
+
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic
+            .message
+            .contains("imports host function `browser.selected`, but target Browser does not allow that import name")
+    }));
 }
 
 #[test]

@@ -353,58 +353,7 @@ fn compile_bundler_target_emits_adapter_and_runs_string_smoke_test() {
     let out_dir = temp.join("out");
     fs::create_dir_all(&out_dir).expect("create output dir");
     let input = temp.join("app.gleam");
-    fs::write(
-        &input,
-        // TODO: embed as lunar.gleam
-        r#"import gleam/option.{Some}
-import gleam/result.{Ok}
-
-pub type Response {
-  Response(status: Int, body: String)
-}
-
-pub opaque type Request {
-  Request
-}
-
-external fn request_text(input: String) -> String = "regulus/js" "request_text"
-external fn describe(count: Int, ratio: Float, enabled: Bool, input: String) -> String = "regulus/js" "describe"
-external fn pass_request(input: Request) -> Request = "regulus/js" "pass_request"
-
-pub fn main(input: String) -> String {
-  request_text(input)
-}
-
-pub fn describe_from_js(count: Int, ratio: Float, enabled: Bool, input: String) -> String {
-  describe(count, ratio, enabled, input)
-}
-
-pub fn keep_bool(value: Bool) -> Bool {
-  value
-}
-
-pub fn response() -> Response {
-  Response(200, "ok")
-}
-
-pub fn names() -> List(String) {
-  ["Ada", "Joe"]
-}
-
-pub fn maybe_name() -> Option(String) {
-  Some("Ada")
-}
-
-pub fn result_name() -> Result(String, Int) {
-  Ok("Ada")
-}
-
-pub fn round_trip_request(input: Request) -> Request {
-  pass_request(input)
-}
-"#,
-    )
-    .expect("write Gleam input");
+    fs::write(&input, include_str!("fixtures/lunar.gleam")).expect("write Gleam input");
 
     let output = Command::new(env!("CARGO_BIN_EXE_reggie"))
         .arg("compile")
@@ -425,105 +374,60 @@ pub fn round_trip_request(input: Request) -> Request {
     assert!(out_dir.join("app.wasm").is_file());
     assert!(out_dir.join("app.mjs").is_file());
 
-    fs::write(
-        out_dir.join("smoke.mjs"),
-        // TODO: embed this as apollo.js
-        r#"import { abi, call, callString, getHandle, init, releaseHandle, wrapHandle } from "./app.mjs";
-
-if (abi.exports.describe_from_js.result !== "String") {
-  throw new Error("missing export ABI metadata");
-}
-if (abi.imports["regulus/js.describe"].params.join(",") !== "Int,Float,Bool,String") {
-  throw new Error("missing import ABI metadata");
-}
-if (abi.imports["regulus/js.pass_request"].params.join(",") !== "Handle") {
-  throw new Error("missing handle import ABI metadata");
-}
-if (abi.exports.round_trip_request.result !== "Handle") {
-  throw new Error("missing handle export ABI metadata");
-}
-
-const request = { url: "https://example.test/" };
-await init(new URL("./app.wasm", import.meta.url), {
-  "regulus/js": {
-    request_text(input) {
-      return `${input} from JS`;
-    },
-    describe(count, ratio, enabled, input) {
-      return `${input}:${count}:${ratio}:${enabled}`;
-    },
-    pass_request(input) {
-      if (input !== request) {
-        throw new Error("opaque handle import did not resolve to the original JS object");
-      }
-      return input;
-    },
-  },
-});
-
-const result = callString("main", "hello");
-if (result !== "hello from JS") {
-  throw new Error(`unexpected result: ${result}`);
-}
-
-const described = call("describe_from_js", 7n, 2.5, true, "shape");
-if (described !== "shape:7:2.5:true") {
-  throw new Error(`unexpected described result: ${described}`);
-}
-
-const kept = call("keep_bool", true);
-if (kept !== true) {
-  throw new Error(`unexpected bool result: ${kept}`);
-}
-
-const response = call("response");
-if (response.tag !== "Response" || response.fields.status !== 200n || response.fields.body !== "ok") {
-  throw new Error(`unexpected response: ${response.tag}`);
-}
-
-const names = call("names");
-if (names.join(",") !== "Ada,Joe") {
-  throw new Error(`unexpected names: ${names}`);
-}
-
-const maybeName = call("maybe_name");
-if (maybeName.tag !== "Some" || maybeName.value !== "Ada") {
-  throw new Error(`unexpected option: ${JSON.stringify(maybeName)}`);
-}
-
-const resultName = call("result_name");
-if (resultName.tag !== "Ok" || resultName.value !== "Ada") {
-  throw new Error(`unexpected result: ${JSON.stringify(resultName)}`);
-}
-
-const roundTripped = call("round_trip_request", request);
-if (roundTripped !== request) {
-  throw new Error("opaque handle did not pass through Gleam");
-}
-
-const handle = wrapHandle(request, 42);
-if (getHandle(handle, 42) !== request) {
-  throw new Error("opaque handle did not round trip through the adapter table");
-}
-if (!releaseHandle(handle, 42)) {
-  throw new Error("opaque handle was not released");
-}
-try {
-  getHandle(handle, 42);
-  throw new Error("released opaque handle lookup should fail");
-} catch (error) {
-  if (!String(error.message).includes("released")) {
-    throw error;
-  }
-}
-"#,
-    )
-    .expect("write JS smoke test");
+    fs::write(out_dir.join("smoke.mjs"), include_str!("fixtures/apollo.mjs")).expect("write JS smoke test");
 
     let smoke = Command::new("node")
         .arg(out_dir.join("smoke.mjs"))
         .output()
         .expect("run node smoke test");
+
+    assert!(
+        smoke.status.success(),
+        "node smoke failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&smoke.stdout),
+        String::from_utf8_lossy(&smoke.stderr)
+    );
+
+    let _ = fs::remove_dir_all(temp);
+}
+
+#[test]
+fn compile_browser_target_emits_page_adapter_and_runs_string_smoke_test() {
+    let temp = unique_temp_dir("regulus_cli_browser_smoke");
+    let out_dir = temp.join("out");
+    fs::create_dir_all(&out_dir).expect("create output dir");
+    let input = temp.join("app.gleam");
+    fs::write(&input, include_str!("fixtures/browser_smoke.gleam")).expect("write Gleam input");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_reggie"))
+        .arg("compile")
+        .arg(&input)
+        .arg("--target")
+        .arg("browser")
+        .arg("--out-dir")
+        .arg(&out_dir)
+        .output()
+        .expect("run reggie compile");
+
+    assert!(
+        output.status.success(),
+        "compile failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(out_dir.join("app.wasm").is_file());
+    assert!(out_dir.join("app.mjs").is_file());
+
+    let adapter = fs::read_to_string(out_dir.join("app.mjs")).expect("read browser adapter");
+    assert!(adapter.contains("function createBrowserImports"), "{adapter}");
+    assert!(adapter.contains("function initBrowserPage"), "{adapter}");
+
+    fs::write(out_dir.join("smoke.mjs"), include_str!("fixtures/browser_smoke.mjs")).expect("write browser smoke test");
+
+    let smoke = Command::new("node")
+        .arg(out_dir.join("smoke.mjs"))
+        .output()
+        .expect("run node browser smoke test");
 
     assert!(
         smoke.status.success(),

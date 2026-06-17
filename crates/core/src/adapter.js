@@ -18,6 +18,18 @@ const handles = new Map();
 export const abi = metadata;
 
 /**
+ * Stable browser-profile import function names.
+ */
+export const browserImportNames = Object.freeze({
+  fetch: "fetch",
+  localStorageGetItem: "localStorage.getItem",
+  localStorageSetItem: "localStorage.setItem",
+  localStorageRemoveItem: "localStorage.removeItem",
+  timeNow: "time.now",
+  onlineIsOnline: "online.isOnline",
+});
+
+/**
  * Instantiate the Regulus Wasm module and wrap host imports through the JS ABI.
  *
  * @param {URL|string|ArrayBuffer|ArrayBufferView|WebAssembly.Module} wasm Wasm
@@ -42,6 +54,74 @@ export async function init(wasm = defaultWasmUrl, imports = {}) {
   }
   clearHandles();
   return instance.exports;
+}
+
+/**
+ * Instantiate a browser-profile module with the standard browser imports.
+ *
+ * @param {URL|string|ArrayBuffer|ArrayBufferView|WebAssembly.Module} wasm Wasm
+ *   module, bytes, or URL. Defaults to the generated sibling `.wasm` file.
+ * @param {Record<string, Record<string, Function|object>>=} imports
+ *   Additional or overriding imports.
+ * @param {object=} options Browser API overrides passed to
+ *   `createBrowserImports`.
+ * @returns {Promise<WebAssembly.Exports>} The instantiated Wasm exports.
+ */
+export async function initBrowserPage(wasm = defaultWasmUrl, imports = {}, options = {}) {
+  return init(wasm, mergeImports(createBrowserImports(options), imports));
+}
+
+/**
+ * Build the standard browser-profile imports.
+ *
+ * Returned functions use JavaScript values. `init` wraps them through the
+ * generated ABI metadata before passing them to WebAssembly.instantiate.
+ *
+ * @param {object=} options Browser API overrides for tests or custom hosts.
+ * @param {Function=} options.fetch Fetch implementation. Defaults to global
+ *   `fetch` and returns the resulting Promise as an opaque handle.
+ * @param {Storage=} options.localStorage Storage implementation. Defaults to
+ *   global `localStorage`.
+ * @param {Function=} options.now Clock implementation. Defaults to
+ *   `Date.now` and returns Unix time in milliseconds.
+ * @param {Navigator=} options.navigator Navigator implementation. Defaults to
+ *   global `navigator`.
+ * @returns {{ browser: Record<string, Function> }} Browser import module.
+ */
+export function createBrowserImports(options = {}) {
+  const fetchFn = options.fetch ?? globalThis.fetch?.bind(globalThis);
+  const storage = options.localStorage ?? globalThis.localStorage;
+  const now = options.now ?? (() => Date.now());
+  const navigator = options.navigator ?? globalThis.navigator;
+
+  return {
+    browser: {
+      [browserImportNames.fetch](url) {
+        if (typeof fetchFn !== "function") {
+          throw new Error("browser.fetch import requires a fetch implementation");
+        }
+        return fetchFn(String(url));
+      },
+      [browserImportNames.localStorageGetItem](key) {
+        ensureStorage(storage, "localStorage.getItem");
+        return storage.getItem(String(key)) ?? "";
+      },
+      [browserImportNames.localStorageSetItem](key, value) {
+        ensureStorage(storage, "localStorage.setItem");
+        storage.setItem(String(key), String(value));
+      },
+      [browserImportNames.localStorageRemoveItem](key) {
+        ensureStorage(storage, "localStorage.removeItem");
+        storage.removeItem(String(key));
+      },
+      [browserImportNames.timeNow]() {
+        return BigInt(Math.trunc(Number(now())));
+      },
+      [browserImportNames.onlineIsOnline]() {
+        return Boolean(navigator?.onLine ?? true);
+      },
+    },
+  };
 }
 
 /**
@@ -407,6 +487,22 @@ function normalizeImport(moduleName, name, importSpec) {
 }
 
 /**
+ * Merge import modules. Later imports override earlier ones by module/name.
+ *
+ * @param {...Record<string, Record<string, Function|object>>} imports Import maps.
+ * @returns {Record<string, Record<string, Function|object>>} Merged imports.
+ */
+function mergeImports(...imports) {
+  const merged = {};
+  for (const importMap of imports) {
+    for (const [moduleName, moduleImports] of Object.entries(importMap ?? {})) {
+      merged[moduleName] = { ...(merged[moduleName] ?? {}), ...moduleImports };
+    }
+  }
+  return merged;
+}
+
+/**
  * Look up the ABI shape for a host import.
  *
  * @param {string} moduleName Import module name.
@@ -608,6 +704,19 @@ function constructorHash(name) {
     hash = Math.imul(hash, 0x0100_0193) ^ char;
   }
   return hash >>> 0;
+}
+
+/**
+ * Check that a browser storage object is available before an import uses it.
+ *
+ * @param {Storage|undefined} storage Browser storage object.
+ * @param {string} importName Import name for diagnostics.
+ * @returns {void}
+ */
+function ensureStorage(storage, importName) {
+  if (!storage) {
+    throw new Error(`browser.${importName} import requires localStorage`);
+  }
 }
 
 /**

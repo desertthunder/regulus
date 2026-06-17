@@ -102,6 +102,30 @@ impl WasmTarget {
             Self::Wasi => module == "wasi_snapshot_preview1",
         }
     }
+
+    fn accepts_host_import(self, module: &str, name: &str) -> bool {
+        if !self.accepts_host_module(module) {
+            return false;
+        }
+        match self {
+            Self::Browser if module == "browser" => matches!(
+                name,
+                "fetch"
+                    | "localStorage.getItem"
+                    | "localStorage.setItem"
+                    | "localStorage.removeItem"
+                    | "time.now"
+                    | "online.isOnline"
+                    | "print"
+                    | "println"
+                    | "debug_i64"
+                    | "debug_f64"
+                    | "debug_bool"
+                    | "debug_value"
+            ),
+            _ => true,
+        }
+    }
 }
 
 // FIXME: this implementation being here doesn't sit right with me.

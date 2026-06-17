@@ -112,9 +112,12 @@ impl Builder<'_> {
                 return echo::fail("write", output.display(), error);
             }
             echo::status("wasm", format!("{} ({} bytes)", output.display(), wasm.bytes.len()));
-            if matches!(self.target, Some(Target::Bundler)) {
+            if matches!(
+                target,
+                compiler_core::target::CompileTarget::Browser | compiler_core::target::CompileTarget::Bundler
+            ) {
                 let adapter_path = super::artifact_path(self.out_dir.as_deref(), &output, &artifact_base, "mjs");
-                let adapter = compiler_core::adapter::bundler_adapter_for_module(
+                let adapter = compiler_core::adapter::js_adapter_for_module(
                     output
                         .file_name()
                         .and_then(|name| name.to_str())

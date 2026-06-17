@@ -20,19 +20,19 @@ reset point.
 
 ## Value shapes
 
-| Gleam shape      | Wasm ABI                       | JavaScript contract                    |
-| ---------------- | ------------------------------ | -------------------------------------- |
-| `Int`            | `i64`                          | JS `BigInt`,                           |
-| `Float`          | `f64`                          | JS `number`.                           |
-| `Bool`           | `i32`                          | `0` is `false`; `1` is `true`.         |
-| `Nil` return     | no result                      | JS `undefined`.                        |
-| `String`         | managed `i32` pointer          | Read and write through string helpers. |
-| tuples           | managed `i32` pointer          | Read through value helpers.            |
-| records          | managed `i32` pointer          | Read through value helpers.            |
-| custom types     | managed `i32` pointer          | Read through value helpers.            |
-| lists            | managed `i32` pointer          | Read as JavaScript arrays.             |
-| opaque externals | managed `i32` opaque pointer   | JS adapter handle table entry.         |
-| functions        | none                           | Unsupported across the JS host ABI.    |
+| Gleam shape      | Wasm ABI                     | JavaScript contract                    |
+| ---------------- | ---------------------------- | -------------------------------------- |
+| `Int`            | `i64`                        | JS `BigInt`,                           |
+| `Float`          | `f64`                        | JS `number`.                           |
+| `Bool`           | `i32`                        | `0` is `false`; `1` is `true`.         |
+| `Nil` return     | no result                    | JS `undefined`.                        |
+| `String`         | managed `i32` pointer        | Read and write through string helpers. |
+| tuples           | managed `i32` pointer        | Read through value helpers.            |
+| records          | managed `i32` pointer        | Read through value helpers.            |
+| custom types     | managed `i32` pointer        | Read through value helpers.            |
+| lists            | managed `i32` pointer        | Read as JavaScript arrays.             |
+| opaque externals | managed `i32` opaque pointer | JS adapter handle table entry.         |
+| functions        | none                         | Unsupported across the JS host ABI.    |
 
 The first stable call conversion layer is scalar and string focused. Managed
 structured values can be read from borrowed pointers with explicit reader
@@ -132,7 +132,7 @@ not store source field names or type parameters.
 Tuple readers return arrays. Tuple shape items are in tuple field order:
 
 ```js
-readTuple(ptr, ["Int", "String"])
+readTuple(ptr, ["Int", "String"]);
 // => [1n, "text"]
 ```
 
@@ -143,7 +143,7 @@ declaration order:
 readRecord(ptr, [
   { name: "status", type: "Int" },
   { name: "body", type: "String" },
-])
+]);
 // => { status: 200n, body: "ok" }
 ```
 
@@ -156,7 +156,7 @@ object.
 readCustom(ptr, {
   Created: { fields: [{ name: "id", type: "String" }] },
   Deleted: { fields: ["String"] },
-})
+});
 // => { tag: "Created", fields: { id: "abc" } }
 ```
 
@@ -165,7 +165,7 @@ empty list. They return JavaScript arrays and recursively read each head with
 the item shape. A list of strings uses the normal string shape:
 
 ```js
-readList(ptr, "String")
+readList(ptr, "String");
 // => ["a", "b", "c"]
 ```
 
@@ -173,7 +173,7 @@ readList(ptr, "String")
 constructor tags. JS readers return tagged objects:
 
 ```js
-readResult(ptr, "String", "Int")
+readResult(ptr, "String", "Int");
 // => { tag: "Ok", value: "done" }
 // => { tag: "Error", value: 404n }
 ```
@@ -182,7 +182,7 @@ readResult(ptr, "String", "Int")
 tags. JS readers return tagged objects:
 
 ```js
-readOption(ptr, "String")
+readOption(ptr, "String");
 // => { tag: "Some", value: "found" }
 // => { tag: "None" }
 ```
@@ -191,8 +191,8 @@ The generic `readValue(ptr, shape)` helper accepts scalar names and structured
 shape objects:
 
 ```js
-readValue(ptr, { kind: "List", item: "String" })
-readValue(ptr, { kind: "Result", ok: "String", error: "Int" })
+readValue(ptr, { kind: "List", item: "String" });
+readValue(ptr, { kind: "Result", ok: "String", error: "Int" });
 ```
 
 Bundler adapters embed export ABI metadata for supported structured returns.
@@ -215,6 +215,24 @@ The `browser` module is reserved for browser APIs such as fetch, local storage,
 time, and online state. The `nodejs` module is reserved for Node-specific APIs.
 The compiler does not implement those APIs; host glue provides them.
 
+Browser-profile glue exposes `createBrowserImports(options)` for the first
+standard browser APIs. It returns a `browser` import module with these names:
+
+| Import name               | Gleam ABI shape           | JavaScript behavior                                                                         |
+| ------------------------- | ------------------------- | ------------------------------------------------------------------------------------------- |
+| `fetch`                   | `String -> opaque handle` | Calls `fetch(url)` and stores the returned promise or response in the adapter handle table. |
+| `localStorage.getItem`    | `String -> String`        | Reads a key and maps missing values to the empty string.                                    |
+| `localStorage.setItem`    | `String, String -> Nil`   | Writes a string value for a key.                                                            |
+| `localStorage.removeItem` | `String -> Nil`           | Removes a key.                                                                              |
+| `time.now`                | `Nil -> Int`              | Returns Unix time in milliseconds.                                                          |
+| `online.isOnline`         | `Nil -> Bool`             | Reads `navigator.onLine`, defaulting to `true` when unavailable.                            |
+
+The helper accepts `fetch`, `localStorage`, `now`, and `navigator` overrides so
+tests and custom browser hosts can supply checked implementations.
+Browser-profile adapters also expose `initBrowserPage(wasm, imports, options)`,
+which merges those standard browser imports with additional application imports
+and instantiates the Wasm module.
+
 Non-JS targets use different modules and are outside this contract. Wasmtime
 uses `env`, and WASI uses `wasi_snapshot_preview1`.
 
@@ -229,6 +247,7 @@ Supported imported parameter shapes are:
 - `Float`
 - `Bool`
 - `String`
+- opaque external types
 
 Supported imported return shapes are:
 
@@ -237,12 +256,13 @@ Supported imported return shapes are:
 - `Bool`
 - `String`
 - `Nil`
+- opaque external types
 
 Structured managed values may lower as borrowed pointers internally. Stable JS
 conversion for imported structured parameters and returns is deferred until
-structured writers and generated import metadata are complete. Opaque types,
-generic values, and function values are unsupported across JS host imports until
-their ABI contracts are defined.
+structured writers and generated import metadata are complete. Generic values
+and function values are unsupported across JS host imports until their ABI
+contracts are defined.
 
 ## Exported functions
 
@@ -302,7 +322,6 @@ This contract intentionally does not define:
 
 - writing structured JavaScript values into Gleam
 - structured import parameters or returns
-- browser API semantics
 - Node.js loading semantics
 - generated binding metadata
 

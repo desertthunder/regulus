@@ -3,18 +3,22 @@ use std::collections::HashMap;
 use crate::ir::{self, CallBoundary, ExportKind};
 use crate::types::{FieldInfo, Type};
 
-const BUNDLER_ADAPTER: &str = include_str!("adapter.js");
+const JS_ADAPTER: &str = include_str!("adapter.js");
 
 pub fn bundler_adapter(wasm_file: &str) -> String {
-    bundler_adapter_with_metadata(wasm_file, None)
+    js_adapter_with_metadata(wasm_file, None)
 }
 
 pub fn bundler_adapter_for_module(wasm_file: &str, module: &ir::Module) -> String {
-    bundler_adapter_with_metadata(wasm_file, Some(&js_abi_metadata(module)))
+    js_adapter_for_module(wasm_file, module)
 }
 
-fn bundler_adapter_with_metadata(wasm_file: &str, metadata: Option<&str>) -> String {
-    BUNDLER_ADAPTER.replace("__WASM_FILE__", wasm_file).replace(
+pub fn js_adapter_for_module(wasm_file: &str, module: &ir::Module) -> String {
+    js_adapter_with_metadata(wasm_file, Some(&js_abi_metadata(module)))
+}
+
+fn js_adapter_with_metadata(wasm_file: &str, metadata: Option<&str>) -> String {
+    JS_ADAPTER.replace("__WASM_FILE__", wasm_file).replace(
         "__REGULUS_JS_ABI_METADATA__",
         metadata.unwrap_or("{\"imports\":{},\"exports\":{}}"),
     )

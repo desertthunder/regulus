@@ -124,12 +124,26 @@ Those differences should not change the core value ABI.
 
 ## Browser profile
 
-The browser profile should define import module names for browser APIs used by
-examples, such as fetch, local storage, time, and online state. These imports
-are ordinary Gleam external functions with target validation and ABI checks.
+The browser profile reserves the `browser` import module for browser APIs used
+by examples. The first stable names are:
+
+| Import module | Import name               | Gleam ABI shape             | JavaScript behavior |
+| ------------- | ------------------------- | --------------------------- | ------------------- |
+| `browser`     | `fetch`                   | `String -> opaque handle`   | Calls `fetch(url)` and stores the returned promise or response in the adapter handle table. |
+| `browser`     | `localStorage.getItem`    | `String -> String`          | Reads a key and maps missing values to the empty string. |
+| `browser`     | `localStorage.setItem`    | `String, String -> Nil`     | Writes a string value for a key. |
+| `browser`     | `localStorage.removeItem` | `String -> Nil`             | Removes a key. |
+| `browser`     | `time.now`                | `Nil -> Int`                | Returns Unix time in milliseconds. |
+| `browser`     | `online.isOnline`         | `Nil -> Bool`               | Reads `navigator.onLine`, defaulting to `true` when unavailable. |
+
+These imports are ordinary Gleam external functions with target validation and
+ABI checks.
 
 The compiler should not implement browser API semantics. The JS host profile
 owns the real browser calls and adapts values through the JS host ABI.
+Browser glue exposes `initBrowserPage(wasm, imports, options)`, which
+instantiates the Wasm module with checked browser imports from
+`createBrowserImports(options)` and any additional application imports.
 
 ## Bundler profile
 

@@ -80,12 +80,12 @@ The public ABI contract lives in
 
 ### Browser profile
 
-- [ ] Define browser import module names for fetch, local storage, time, and
+- [x] Define browser import module names for fetch, local storage, time, and
       online state.
-- [ ] Implement browser adapter imports for the defined browser APIs.
-- [ ] Add browser-profile validation for allowed external modules and names.
-- [ ] Add browser-page glue that instantiates Wasm with checked imports.
-- [ ] Add a browser smoke test for one string import and one string export.
+- [x] Implement browser adapter imports for the defined browser APIs.
+- [x] Add browser-profile validation for allowed external modules and names.
+- [x] Add browser-page glue that instantiates Wasm with checked imports.
+- [x] Add a browser smoke test for one string import and one string export.
 
 ### Bundler profile
 

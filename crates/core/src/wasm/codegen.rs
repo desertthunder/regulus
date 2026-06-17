@@ -333,8 +333,23 @@ impl<'a> StructuredEmitter<'a> {
             ir::CallBoundary::HostImport { module, name } if module == STDLIB_IO_HOST_MODULE => {
                 Ok(Some(self.stdlib_io_import(name, function.span)?))
             }
-            ir::CallBoundary::HostImport { module, name } if self.options.target.accepts_host_module(module) => {
+            ir::CallBoundary::HostImport { module, name }
+                if self.options.target.accepts_host_import(module, name) =>
+            {
                 Ok(Some((module.clone(), name.clone())))
+            }
+            ir::CallBoundary::HostImport { module, name } if self.options.target.accepts_host_module(module) => {
+                Err(StructuredError::Diagnostics(vec![
+                    Diagnostic::new(
+                        DiagnosticCode::WasmError,
+                        format!(
+                            "function `{}` imports host function `{module}.{name}`, but target {:?} does not allow that import name",
+                            function.name,
+                            self.options.target
+                        ),
+                    )
+                    .with_label(Label::primary(function.span, "unsupported target import here")),
+                ]))
             }
             ir::CallBoundary::HostImport { module, .. } => Err(StructuredError::Diagnostics(vec![
                 Diagnostic::new(

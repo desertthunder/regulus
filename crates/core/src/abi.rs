@@ -29,6 +29,33 @@ impl AbiPosition {
     }
 }
 
+#[derive(Clone, Copy)]
+struct NamedFunction<'a> {
+    func_name: &'a str,
+    module: &'a str,
+    function: &'a str,
+}
+
+impl<'a> NamedFunction<'a> {
+    fn new(func_name: &'a str, module: &'a str, function: &'a str) -> Self {
+        Self { func_name, module, function }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ValidateParams<'a> {
+    pos: AbiPosition,
+    type_: &'a Type,
+    span: Span,
+    allow_nil: bool,
+}
+
+impl<'a> ValidateParams<'a> {
+    fn new(pos: AbiPosition, type_: &'a Type, span: Span, allow_nil: bool) -> Self {
+        Self { pos, type_, span, allow_nil }
+    }
+}
+
 pub fn validate_extern_function_abi(func: &ast::ExternalFunction, type_: &Type) -> Diagnostics {
     let mut diagnostics = Vec::new();
     let Type::Function { params, return_type } = type_ else {
@@ -44,21 +71,15 @@ pub fn validate_extern_function_abi(func: &ast::ExternalFunction, type_: &Type) 
             .unwrap_or(func.span);
         validate_value(
             func,
-            AbiPosition::Parameter { index },
-            type_,
-            span,
-            false,
             &mut diagnostics,
+            &ValidateParams::new(AbiPosition::Parameter { index }, type_, span, false),
         );
     }
 
     validate_value(
         func,
-        AbiPosition::Return,
-        return_type,
-        func.return_type.span,
-        true,
         &mut diagnostics,
+        &ValidateParams::new(AbiPosition::Return, return_type, func.return_type.span, true),
     );
 
     diagnostics
@@ -72,36 +93,23 @@ pub fn validate_external_info_abi(name: &str, info: &ExternalFunctionInfo, type_
 
     for (index, type_) in params.iter().enumerate() {
         validate_named_value(
-            name,
-            &info.module,
-            &info.function,
-            AbiPosition::Parameter { index },
-            type_,
-            info.span,
-            false,
+            NamedFunction::new(name, &info.module, &info.function),
             &mut diagnostics,
+            ValidateParams::new(AbiPosition::Parameter { index }, type_, info.span, false),
         );
     }
 
     validate_named_value(
-        name,
-        &info.module,
-        &info.function,
-        AbiPosition::Return,
-        return_type,
-        info.span,
-        true,
+        NamedFunction::new(name, &info.module, &info.function),
         &mut diagnostics,
+        ValidateParams::new(AbiPosition::Return, return_type, info.span, true),
     );
 
     diagnostics
 }
 
-fn validate_value(
-    func: &ast::ExternalFunction, pos: AbiPosition, type_: &Type, span: Span, allow_nil: bool,
-    diagnostics: &mut Diagnostics,
-) {
-    if is_supported_extern_abi_value(type_, allow_nil) {
+fn validate_value(func: &ast::ExternalFunction, diagnostics: &mut Diagnostics, params: &ValidateParams) {
+    if is_supported_extern_abi_value(params.type_, params.allow_nil) {
         return;
     }
 
@@ -111,11 +119,11 @@ fn validate_value(
             format!(
                 "external function `{}` {} uses unsupported ABI shape `{:?}`",
                 func.name.text,
-                pos.description(),
-                type_
+                params.pos.description(),
+                params.type_
             ),
         )
-        .with_label(Label::primary(span, "unsupported external ABI shape here"))
+        .with_label(Label::primary(params.span, "unsupported external ABI shape here"))
         .with_note(format!(
             "host import `{}.{}` must use concrete scalar values, managed values, or Nil returns",
             unquote(&func.body.module.source),
@@ -124,11 +132,8 @@ fn validate_value(
     );
 }
 
-fn validate_named_value(
-    func_name: &str, module: &str, function: &str, pos: AbiPosition, type_: &Type, span: Span, allow_nil: bool,
-    diagnostics: &mut Diagnostics,
-) {
-    if is_supported_extern_abi_value(type_, allow_nil) {
+fn validate_named_value(named_func: NamedFunction, diagnostics: &mut Diagnostics, params: ValidateParams) {
+    if is_supported_extern_abi_value(params.type_, params.allow_nil) {
         return;
     }
 
@@ -137,14 +142,15 @@ fn validate_named_value(
             DiagnosticCode::LoweringError,
             format!(
                 "external function `{}` {} uses unsupported ABI shape `{:?}`",
-                func_name,
-                pos.description(),
-                type_
+                named_func.func_name,
+                params.pos.description(),
+                params.type_
             ),
         )
-        .with_label(Label::primary(span, "unsupported external ABI shape here"))
+        .with_label(Label::primary(params.span, "unsupported external ABI shape here"))
         .with_note(format!(
-            "host import `{module}.{function}` must use concrete scalar values, managed values, or Nil returns"
+            "host import `{}.{}` must use concrete scalar values, managed values, or Nil returns",
+            named_func.module, named_func.function
         )),
     );
 }
