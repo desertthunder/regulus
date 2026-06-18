@@ -439,6 +439,54 @@ fn compile_browser_target_emits_page_adapter_and_runs_string_smoke_test() {
     let _ = fs::remove_dir_all(temp);
 }
 
+#[test]
+fn compile_nodejs_target_emits_adapter_and_loads_generated_wasm() {
+    let temp = unique_temp_dir("regulus_cli_nodejs_load");
+    let out_dir = temp.join("out");
+    fs::create_dir_all(&out_dir).expect("create output dir");
+
+    let input = temp.join("app.gleam");
+    fs::write(&input, "pub fn main(input: String) -> String { input }\n").expect("write Gleam input");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_reggie"))
+        .arg("compile")
+        .arg(&input)
+        .arg("--target")
+        .arg("nodejs")
+        .arg("--out-dir")
+        .arg(&out_dir)
+        .output()
+        .expect("run reggie compile");
+
+    assert!(
+        output.status.success(),
+        "compile failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(out_dir.join("app.wasm").is_file());
+    assert!(out_dir.join("app.mjs").is_file());
+
+    let adapter = fs::read_to_string(out_dir.join("app.mjs")).expect("read node adapter");
+    assert!(adapter.contains("async function initNode"), "{adapter}");
+
+    fs::write(out_dir.join("smoke.mjs"), include_str!("fixtures/node_load.mjs")).expect("write node smoke test");
+
+    let smoke = Command::new("node")
+        .arg(out_dir.join("smoke.mjs"))
+        .output()
+        .expect("run node load smoke test");
+
+    assert!(
+        smoke.status.success(),
+        "node smoke failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&smoke.stdout),
+        String::from_utf8_lossy(&smoke.stderr)
+    );
+
+    let _ = fs::remove_dir_all(temp);
+}
+
 fn workspace_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()

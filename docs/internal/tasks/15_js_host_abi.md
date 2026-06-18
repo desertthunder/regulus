@@ -101,8 +101,8 @@ The public ABI contract lives in
 
 ### Node.js profile
 
-- [ ] Define Node.js loading for generated or packaged `.wasm` files.
-- [ ] Implement Node.js loading for generated or packaged `.wasm` files.
+- [x] Define Node.js loading for generated or packaged `.wasm` files.
+- [x] Implement Node.js loading for generated or packaged `.wasm` files.
 - [ ] Add Node.js-profile validation for allowed external modules and names.
 - [ ] Add Node.js glue that instantiates Wasm with checked imports.
 - [ ] Add a Node.js smoke test for one string import and one string export.

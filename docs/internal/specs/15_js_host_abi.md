@@ -165,6 +165,14 @@ bundler profiles.
 Node support is useful for CLI smoke tests, local examples, and host-side tests
 that should not require a browser.
 
+Node glue is emitted as an ES module next to the generated `.wasm` file. The
+default Wasm location is the sibling `.wasm` URL resolved from
+`import.meta.url`. The adapter exposes `initNode(wasm, imports)`, which accepts
+the default sibling artifact, a relative or absolute filesystem path, a `file:`
+URL, bytes, or a precompiled `WebAssembly.Module`. File-backed loads use
+`node:fs/promises` and then instantiate with the same checked import wrapping
+and export helpers as the browser and bundler profiles.
+
 ## Diagnostics
 
 Unsupported JS host imports, exports, value shapes, opaque handle uses, target

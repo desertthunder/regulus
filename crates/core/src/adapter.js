@@ -57,6 +57,22 @@ export async function init(wasm = defaultWasmUrl, imports = {}) {
 }
 
 /**
+ * Instantiate a Node.js-profile module from a filesystem `.wasm` artifact.
+ *
+ * Relative paths are resolved next to this generated adapter. URL, bytes, and
+ * precompiled module inputs follow the same rules as `init`.
+ *
+ * @param {URL|string|ArrayBuffer|ArrayBufferView|WebAssembly.Module} wasm Wasm
+ *   module, bytes, URL, or filesystem path. Defaults to the generated sibling
+ *   `.wasm` file.
+ * @param {Record<string, Record<string, Function|object>>} imports Host imports.
+ * @returns {Promise<WebAssembly.Exports>} The instantiated Wasm exports.
+ */
+export async function initNode(wasm = defaultWasmUrl, imports = {}) {
+  return init(wasm, imports);
+}
+
+/**
  * Instantiate a browser-profile module with the standard browser imports.
  *
  * @param {URL|string|ArrayBuffer|ArrayBufferView|WebAssembly.Module} wasm Wasm

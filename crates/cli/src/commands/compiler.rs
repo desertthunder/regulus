@@ -69,7 +69,7 @@ impl Compiler<'_> {
                 "wasm",
                 format!("{} ({} bytes)", output.display(), compiled.wasm.bytes.len()),
             );
-            if matches!(self.target, Target::Browser | Target::Bundler) {
+            if matches!(self.target, Target::Browser | Target::Bundler | Target::Nodejs) {
                 let adapter_path = super::artifact_path(self.out_dir.as_deref(), &output, artifact_base, "mjs");
                 let adapter = compiler_core::adapter::js_adapter_for_module(
                     output

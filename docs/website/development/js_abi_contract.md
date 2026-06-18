@@ -233,6 +233,13 @@ Browser-profile adapters also expose `initBrowserPage(wasm, imports, options)`,
 which merges those standard browser imports with additional application imports
 and instantiates the Wasm module.
 
+Node-profile adapters expose `initNode(wasm, imports)`. The generated adapter
+defaults to loading the sibling `.wasm` file resolved from `import.meta.url`.
+Hosts may also pass a relative or absolute filesystem path, a `file:` URL,
+bytes, or a precompiled `WebAssembly.Module`. Filesystem-backed loads use
+`node:fs/promises`; after bytes are loaded, imports and exports use the same
+checked JS ABI conversion as the browser and bundler profiles.
+
 Non-JS targets use different modules and are outside this contract. Wasmtime
 uses `env`, and WASI uses `wasi_snapshot_preview1`.
 
