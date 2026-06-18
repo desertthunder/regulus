@@ -233,12 +233,24 @@ Browser-profile adapters also expose `initBrowserPage(wasm, imports, options)`,
 which merges those standard browser imports with additional application imports
 and instantiates the Wasm module.
 
-Node-profile adapters expose `initNode(wasm, imports)`. The generated adapter
-defaults to loading the sibling `.wasm` file resolved from `import.meta.url`.
-Hosts may also pass a relative or absolute filesystem path, a `file:` URL,
-bytes, or a precompiled `WebAssembly.Module`. Filesystem-backed loads use
-`node:fs/promises`; after bytes are loaded, imports and exports use the same
-checked JS ABI conversion as the browser and bundler profiles.
+Node-profile glue exposes `createNodeImports(options)` for the first standard
+Node APIs. It returns a `nodejs` import module with these names:
+
+| Import name | Gleam ABI shape | JavaScript behavior |
+| ----------- | --------------- | ------------------- |
+| `env.get`   | `String -> String` | Reads an environment key and maps missing values to the empty string. |
+| `time.now`  | `Nil -> Int` | Returns Unix time in milliseconds. |
+
+The helper accepts `env` and `now` overrides so tests and custom Node hosts can
+supply checked implementations.
+
+Node-profile adapters also expose `initNode(wasm, imports, options)`. The
+generated adapter defaults to loading the sibling `.wasm` file resolved from
+`import.meta.url`. Hosts may also pass a relative or absolute filesystem path,
+a `file:` URL, bytes, or a precompiled `WebAssembly.Module`. Filesystem-backed
+loads use `node:fs/promises`; after bytes are loaded, standard Node imports,
+additional application imports, and exports use the same checked JS ABI
+conversion as the browser and bundler profiles.
 
 Non-JS targets use different modules and are outside this contract. Wasmtime
 uses `env`, and WASI uses `wasi_snapshot_preview1`.
@@ -329,7 +341,6 @@ This contract intentionally does not define:
 
 - writing structured JavaScript values into Gleam
 - structured import parameters or returns
-- Node.js loading semantics
 - generated binding metadata
 
 Those pieces build on the scalar, string, module-name, and validation contract

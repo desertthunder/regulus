@@ -30,6 +30,14 @@ export const browserImportNames = Object.freeze({
 });
 
 /**
+ * Stable Node.js-profile import function names.
+ */
+export const nodeImportNames = Object.freeze({
+  envGet: "env.get",
+  timeNow: "time.now",
+});
+
+/**
  * Instantiate the Regulus Wasm module and wrap host imports through the JS ABI.
  *
  * @param {URL|string|ArrayBuffer|ArrayBufferView|WebAssembly.Module} wasm Wasm
@@ -66,10 +74,11 @@ export async function init(wasm = defaultWasmUrl, imports = {}) {
  *   module, bytes, URL, or filesystem path. Defaults to the generated sibling
  *   `.wasm` file.
  * @param {Record<string, Record<string, Function|object>>} imports Host imports.
+ * @param {object=} options Node API overrides passed to `createNodeImports`.
  * @returns {Promise<WebAssembly.Exports>} The instantiated Wasm exports.
  */
-export async function initNode(wasm = defaultWasmUrl, imports = {}) {
-  return init(wasm, imports);
+export async function initNode(wasm = defaultWasmUrl, imports = {}, options = {}) {
+  return init(wasm, mergeImports(createNodeImports(options), imports));
 }
 
 /**
@@ -135,6 +144,35 @@ export function createBrowserImports(options = {}) {
       },
       [browserImportNames.onlineIsOnline]() {
         return Boolean(navigator?.onLine ?? true);
+      },
+    },
+  };
+}
+
+/**
+ * Build the standard Node.js-profile imports.
+ *
+ * Returned functions use JavaScript values. `initNode` wraps them through the
+ * generated ABI metadata before passing them to WebAssembly.instantiate.
+ *
+ * @param {object=} options Node API overrides for tests or custom hosts.
+ * @param {Record<string, string|undefined>=} options.env Environment map.
+ *   Defaults to `process.env` when available.
+ * @param {Function=} options.now Clock implementation. Defaults to
+ *   `Date.now` and returns Unix time in milliseconds.
+ * @returns {{ nodejs: Record<string, Function> }} Node import module.
+ */
+export function createNodeImports(options = {}) {
+  const env = options.env ?? globalThis.process?.env ?? {};
+  const now = options.now ?? (() => Date.now());
+
+  return {
+    nodejs: {
+      [nodeImportNames.envGet](key) {
+        return env[String(key)] ?? "";
+      },
+      [nodeImportNames.timeNow]() {
+        return BigInt(Math.trunc(Number(now())));
       },
     },
   };

@@ -123,6 +123,7 @@ impl WasmTarget {
                     | "debug_bool"
                     | "debug_value"
             ),
+            Self::Nodejs if module == "nodejs" => matches!(name, "env.get" | "time.now"),
             _ => true,
         }
     }

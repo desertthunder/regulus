@@ -6,7 +6,7 @@ Define and implement the first usable JavaScript host ABI for Regulus. This is
 the primary usability milestone before broad stdlib completion.
 
 The public ABI contract lives in
-[JavaScript host ABI contract](../../website/development/js_abi_contract.md).
+[JavaScript host ABI contract](../../website/development/js_abi.md).
 
 ## Milestone slice
 
@@ -103,9 +103,9 @@ The public ABI contract lives in
 
 - [x] Define Node.js loading for generated or packaged `.wasm` files.
 - [x] Implement Node.js loading for generated or packaged `.wasm` files.
-- [ ] Add Node.js-profile validation for allowed external modules and names.
-- [ ] Add Node.js glue that instantiates Wasm with checked imports.
-- [ ] Add a Node.js smoke test for one string import and one string export.
+- [x] Add Node.js-profile validation for allowed external modules and names.
+- [x] Add Node.js glue that instantiates Wasm with checked imports.
+- [x] Add a Node.js smoke test for one string import and one string export.
 
 ### Generated or packaged JS glue
 

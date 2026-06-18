@@ -167,11 +167,22 @@ that should not require a browser.
 
 Node glue is emitted as an ES module next to the generated `.wasm` file. The
 default Wasm location is the sibling `.wasm` URL resolved from
-`import.meta.url`. The adapter exposes `initNode(wasm, imports)`, which accepts
-the default sibling artifact, a relative or absolute filesystem path, a `file:`
-URL, bytes, or a precompiled `WebAssembly.Module`. File-backed loads use
-`node:fs/promises` and then instantiate with the same checked import wrapping
-and export helpers as the browser and bundler profiles.
+`import.meta.url`. The adapter exposes `initNode(wasm, imports, options)`,
+which accepts the default sibling artifact, a relative or absolute filesystem
+path, a `file:` URL, bytes, or a precompiled `WebAssembly.Module`.
+File-backed loads use `node:fs/promises` and then instantiate with the same
+checked import wrapping and export helpers as the browser and bundler profiles.
+
+The first stable Node-specific imports are:
+
+| Import module | Import name | Gleam ABI shape | JavaScript behavior |
+| ------------- | ----------- | --------------- | ------------------- |
+| `nodejs`      | `env.get`   | `String -> String` | Reads an environment key and maps missing values to the empty string. |
+| `nodejs`      | `time.now`  | `Nil -> Int` | Returns Unix time in milliseconds. |
+
+Node glue exposes `createNodeImports(options)` for those APIs. `initNode`
+merges those standard imports with any additional application imports before
+calling the shared checked JS ABI instantiation path.
 
 ## Diagnostics
 

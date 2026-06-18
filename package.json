@@ -7,6 +7,7 @@
     "docs:dev": "pnpm --filter regulus-docs docs:dev",
     "docs:build": "pnpm --filter regulus-docs docs:build",
     "docs:preview": "pnpm --filter regulus-docs docs:preview",
+    "docs:deploy": "pnpm --filter regulus-docs docs:deploy",
     "test:js": "pnpm --filter @regulus/js-tests test"
   }
 }

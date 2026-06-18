@@ -1093,6 +1093,49 @@ pub fn main(i: Int, f: Float, b: Bool, s: String) -> String { host(i, f, b, s) }
 }
 
 #[test]
+fn nodejs_target_accepts_stable_node_import_names() {
+    let wasm = compile_wasm_target(
+        r#"external fn env_get(key: String) -> String = "nodejs" "env.get"
+external fn time_now() -> Int = "nodejs" "time.now"
+pub fn main(key: String) -> String {
+  let _ = time_now()
+  env_get(key)
+}"#,
+        CompileTarget::Nodejs,
+    )
+    .expect("compile Node.js external imports");
+
+    assert!(
+        wasm.wat
+            .contains("(import \"nodejs\" \"env.get\" (func (type 0) (param i32) (result i32)))"),
+        "{}",
+        wasm.wat
+    );
+    assert!(
+        wasm.wat
+            .contains("(import \"nodejs\" \"time.now\" (func (type 1) (result i64)))"),
+        "{}",
+        wasm.wat
+    );
+}
+
+#[test]
+fn nodejs_target_rejects_unknown_node_import_names() {
+    let diagnostics = compile_wasm_target(
+        r#"external fn read(path: String) -> String = "nodejs" "fs.read"
+pub fn main(path: String) -> String { read(path) }"#,
+        CompileTarget::Nodejs,
+    )
+    .expect_err("unknown Node.js import should be rejected");
+
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic
+            .message
+            .contains("imports host function `nodejs.fs.read`, but target Nodejs does not allow that import name")
+    }));
+}
+
+#[test]
 fn emits_string_export_adapters_for_host_boundaries() {
     let wasm = compile_wasm("pub fn greeting() { \"hello\" }");
     assert!(wasm.wat.contains("(func $greeting__data"));

@@ -446,7 +446,13 @@ fn compile_nodejs_target_emits_adapter_and_loads_generated_wasm() {
     fs::create_dir_all(&out_dir).expect("create output dir");
 
     let input = temp.join("app.gleam");
-    fs::write(&input, "pub fn main(input: String) -> String { input }\n").expect("write Gleam input");
+    fs::write(
+        &input,
+        r#"external fn env_get(key: String) -> String = "nodejs" "env.get"
+pub fn main(input: String) -> String { env_get(input) }
+"#,
+    )
+    .expect("write Gleam input");
 
     let output = Command::new(env!("CARGO_BIN_EXE_reggie"))
         .arg("compile")
@@ -469,6 +475,7 @@ fn compile_nodejs_target_emits_adapter_and_loads_generated_wasm() {
 
     let adapter = fs::read_to_string(out_dir.join("app.mjs")).expect("read node adapter");
     assert!(adapter.contains("async function initNode"), "{adapter}");
+    assert!(adapter.contains("function createNodeImports"), "{adapter}");
 
     fs::write(out_dir.join("smoke.mjs"), include_str!("fixtures/node_load.mjs")).expect("write node smoke test");
 
