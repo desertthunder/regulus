@@ -23,12 +23,12 @@ constrained environments.
 
 ### Runtime object validation
 
-- [ ] Add a runtime helper inventory grouped by allocation, managed values,
+- [x] Add a runtime helper inventory grouped by allocation, managed values,
       closures, equality, debug, dynamic values, and host adapters.
-- [ ] Validate object tags, sizes, arity, and field indexes in exported reader
+- [x] Validate object tags, sizes, arity, and field indexes in exported reader
       helpers.
-- [ ] Add tests for invalid host reader calls.
-- [ ] Document which helper failures trap and which return sentinel values.
+- [x] Add tests for invalid host reader calls.
+- [x] Document which helper failures trap and which return sentinel values.
 
 ### Ownership and lifetimes
 

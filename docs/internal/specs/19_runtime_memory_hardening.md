@@ -43,6 +43,62 @@ Hosts may inspect guest-managed values through exported helpers. Hosts must not
 mutate runtime object memory. Future APIs that accept host-provided handles or
 managed pointers must document ownership and lifetime rules.
 
+## Runtime helper inventory
+
+Allocation helpers:
+
+- `__alloc`, `__allocation_fail`, and `__last_panic`
+
+Managed value helpers:
+
+- tuple, record, custom, closure, opaque, option, order, error, and panic
+  constructors
+- raw field readers used by generated code
+
+Closure helpers:
+
+- closure allocation and indirect-call capture layout helpers
+
+Equality and ordering helpers:
+
+- structural equality and comparison for strings, bit arrays, lists, tuples,
+  records, custom values, and scalar slots
+
+Debug helpers:
+
+- debug tags, panic/error reasons, and payload readers
+
+Dynamic value helpers:
+
+- dynamic value constructors, classifiers, field readers, decoder
+  constructors, and decoder runners
+
+Host adapter helpers:
+
+- JS adapter exports for allocation, string creation/reading, managed value
+  tags, arity, constructors, fields, and opaque handle readers
+
+## Host reader validation
+
+Exported JS adapter reader helpers validate object headers before reading:
+
+- `__regulus_value_tag(0)` returns `0` as the nil-list/null sentinel.
+- Non-zero reader pointers must reference a known runtime object tag.
+- String readers require tag `1` and validate the byte range.
+- Handle readers require tag `8` and validate the opaque payload range.
+- `__regulus_value_arity` validates the object range. It returns field counts
+  for field objects and `0` for strings and bit arrays.
+- `__regulus_value_constructor` validates the object range. It returns the
+  constructor or reason tag for custom, error, and panic objects, and `0` for
+  other valid objects.
+- `__regulus_value_field` only accepts list cons, tuple, record, custom, error,
+  and panic objects. It traps when the field index is out of range.
+
+Malformed non-zero pointers, unknown tags, wrong reader/object pairs, oversized
+payloads, and out-of-range field indexes trap. The only sentinel returns in the
+reader surface are nil tag `0`, non-constructor value constructor `0`, and
+non-field byte-object arity `0`.
+
 ## Active tasks
 
 See [Runtime memory hardening tasks](../tasks/20_runtime_memory_hardening.md).

@@ -31,6 +31,33 @@ Hosts must not cache JavaScript typed-array views across calls that may allocate
 or grow memory. Wasmtime hosts must also avoid retaining raw host pointers or
 unsafe slices across growth, because the underlying memory can relocate.
 
+## Host reader failures
+
+JavaScript host targets export low-level reader helpers for strings, managed
+values, and opaque handles. These helpers validate runtime object headers before
+reading guest memory.
+
+The following failures trap:
+
+- non-zero pointers that do not fit in memory
+- unknown runtime object tags
+- object payloads whose declared size extends past memory
+- string readers called for non-string objects
+- handle readers called for non-opaque objects
+- field readers called for strings, bit arrays, closures, or opaque objects
+- field indexes greater than or equal to the object arity
+
+Only these reader results are sentinels instead of traps:
+
+- `__regulus_value_tag(0)` returns `0` for the nil-list/null pointer.
+- `__regulus_value_constructor(ptr)` returns `0` for valid objects that do not
+  carry a constructor or reason tag.
+- `__regulus_value_arity(ptr)` returns `0` for valid strings and bit arrays.
+
+All other malformed helper calls should be treated as caller bugs. Hosts should
+use the generated adapter layer when possible instead of calling raw readers
+directly.
+
 [^wasm-grow]: MDN, [`memory.grow`](https://developer.mozilla.org/en-US/docs/WebAssembly/Reference/Memory/grow).
 [^js-grow]: MDN, [`WebAssembly.Memory.prototype.grow()`](https://developer.mozilla.org/en-US/docs/WebAssembly/Reference/JavaScript_interface/Memory/grow).
 [^wasmtime-grow]: Wasmtime Rust API, [`Memory::grow`](https://docs.wasmtime.dev/api/wasmtime/struct.Memory.html#method.grow).

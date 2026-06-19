@@ -388,41 +388,165 @@ impl<'a> StructuredEmitter<'a> {
     call $__string_new
   )
   (export "__regulus_string_new" (func $__regulus_string_new))
-  (func $__regulus_string_len (param $ptr i32) (result i32)
-    local.get $ptr
-    call $__string_len
+  (func $__regulus_trap_if (param $condition i32)
+    local.get $condition
+    if
+      unreachable
+    end
   )
-  (export "__regulus_string_len" (func $__regulus_string_len))
-  (func $__regulus_string_data (param $ptr i32) (result i32)
-    local.get $ptr
-    call $__string_data
+  (func $__regulus_memory_bytes (result i64)
+    memory.size
+    i64.extend_i32_u
+    i64.const 65536
+    i64.mul
   )
-  (export "__regulus_string_data" (func $__regulus_string_data))
-  (func $__regulus_value_tag (param $ptr i32) (result i32)
-    local.get $ptr
-    i32.load
+  (func $__regulus_validate_range (param $start i32) (param $len i64)
+    (local $start64 i64) (local $end i64)
+    local.get $start
+    i64.extend_i32_u
+    local.set $start64
+    local.get $start64
+    local.get $len
+    i64.add
+    local.set $end
+    local.get $end
+    local.get $start64
+    i64.lt_u
+    call $__regulus_trap_if
+    local.get $end
+    call $__regulus_memory_bytes
+    i64.gt_u
+    call $__regulus_trap_if
   )
-  (export "__regulus_value_tag" (func $__regulus_value_tag))
-  (func $__regulus_value_arity (param $ptr i32) (result i32)
+  (func $__regulus_validate_object (param $ptr i32)
+    (local $tag i32) (local $size i32) (local $payload_len i64)
     local.get $ptr
-    i32.const 4
-    i32.add
-    i32.load
-  )
-  (export "__regulus_value_arity" (func $__regulus_value_arity))
-  (func $__regulus_value_constructor (param $ptr i32) (result i32)
+    i32.eqz
+    call $__regulus_trap_if
     local.get $ptr
-    i32.const 8
-    i32.add
-    i32.load
-  )
-  (export "__regulus_value_constructor" (func $__regulus_value_constructor))
-  (func $__regulus_value_field (param $ptr i32) (param $index i32) (result i64)
-    (local $tag i32)
+    i64.const 8
+    call $__regulus_validate_range
     local.get $ptr
     i32.load
     local.set $tag
     local.get $ptr
+    i32.const 4
+    i32.add
+    i32.load
+    local.set $size
+    local.get $tag
+    i32.const 1
+    i32.lt_u
+    local.get $tag
+    i32.const 10
+    i32.gt_u
+    i32.or
+    call $__regulus_trap_if
+    local.get $tag
+    i32.const 1
+    i32.eq
+    if
+      local.get $size
+      i64.extend_i32_u
+      local.set $payload_len
+    else
+      local.get $tag
+      i32.const 2
+      i32.eq
+      if
+        local.get $size
+        i32.const 2
+        i32.ne
+        call $__regulus_trap_if
+        i64.const 12
+        local.set $payload_len
+      else
+        local.get $tag
+        i32.const 3
+        i32.eq
+        local.get $tag
+        i32.const 4
+        i32.eq
+        i32.or
+        if
+          local.get $size
+          i64.extend_i32_u
+          i64.const 8
+          i64.mul
+          local.set $payload_len
+        else
+          local.get $tag
+          i32.const 5
+          i32.eq
+          local.get $tag
+          i32.const 9
+          i32.eq
+          i32.or
+          local.get $tag
+          i32.const 10
+          i32.eq
+          i32.or
+          if
+            local.get $size
+            i64.extend_i32_u
+            i64.const 8
+            i64.mul
+            i64.const 4
+            i64.add
+            local.set $payload_len
+          else
+            local.get $tag
+            i32.const 6
+            i32.eq
+            if
+              local.get $size
+              i64.extend_i32_u
+              i64.const 4
+              i64.mul
+              i64.const 4
+              i64.add
+              local.set $payload_len
+            else
+              local.get $tag
+              i32.const 7
+              i32.eq
+              if
+                local.get $size
+                i64.extend_i32_u
+                i64.const 7
+                i64.add
+                i64.const 8
+                i64.div_u
+                local.set $payload_len
+              else
+                local.get $size
+                i32.const 0
+                i32.ne
+                call $__regulus_trap_if
+                i64.const 8
+                local.set $payload_len
+              end
+            end
+          end
+        end
+      end
+    end
+    local.get $ptr
+    i32.const 8
+    i32.add
+    local.get $payload_len
+    call $__regulus_validate_range
+  )
+  (func $__regulus_validate_tag (param $ptr i32) (param $expected i32)
+    local.get $ptr
+    call $__regulus_validate_object
+    local.get $ptr
+    i32.load
+    local.get $expected
+    i32.ne
+    call $__regulus_trap_if
+  )
+  (func $__regulus_value_payload_offset (param $tag i32) (result i32)
     local.get $tag
     i32.const 5
     i32.eq
@@ -439,6 +563,130 @@ impl<'a> StructuredEmitter<'a> {
     else
       i32.const 8
     end
+  )
+  (func $__regulus_string_len (param $ptr i32) (result i32)
+    local.get $ptr
+    i32.const 1
+    call $__regulus_validate_tag
+    local.get $ptr
+    call $__string_len
+  )
+  (export "__regulus_string_len" (func $__regulus_string_len))
+  (func $__regulus_string_data (param $ptr i32) (result i32)
+    local.get $ptr
+    i32.const 1
+    call $__regulus_validate_tag
+    local.get $ptr
+    call $__string_data
+  )
+  (export "__regulus_string_data" (func $__regulus_string_data))
+  (func $__regulus_value_tag (param $ptr i32) (result i32)
+    local.get $ptr
+    i32.eqz
+    if (result i32)
+      i32.const 0
+    else
+      local.get $ptr
+      call $__regulus_validate_object
+      local.get $ptr
+      i32.load
+    end
+  )
+  (export "__regulus_value_tag" (func $__regulus_value_tag))
+  (func $__regulus_value_arity (param $ptr i32) (result i32)
+    local.get $ptr
+    call $__regulus_validate_object
+    local.get $ptr
+    i32.load
+    i32.const 1
+    i32.eq
+    local.get $ptr
+    i32.load
+    i32.const 7
+    i32.eq
+    i32.or
+    if (result i32)
+      i32.const 0
+    else
+      local.get $ptr
+      i32.const 4
+      i32.add
+      i32.load
+    end
+  )
+  (export "__regulus_value_arity" (func $__regulus_value_arity))
+  (func $__regulus_value_constructor (param $ptr i32) (result i32)
+    (local $tag i32)
+    local.get $ptr
+    call $__regulus_validate_object
+    local.get $ptr
+    i32.load
+    local.set $tag
+    local.get $tag
+    i32.const 5
+    i32.eq
+    local.get $tag
+    i32.const 9
+    i32.eq
+    i32.or
+    local.get $tag
+    i32.const 10
+    i32.eq
+    i32.or
+    if (result i32)
+      local.get $ptr
+      i32.const 8
+      i32.add
+      i32.load
+    else
+      i32.const 0
+    end
+  )
+  (export "__regulus_value_constructor" (func $__regulus_value_constructor))
+  (func $__regulus_value_field (param $ptr i32) (param $index i32) (result i64)
+    (local $tag i32) (local $arity i32)
+    local.get $ptr
+    call $__regulus_validate_object
+    local.get $ptr
+    i32.load
+    local.set $tag
+    local.get $ptr
+    i32.const 4
+    i32.add
+    i32.load
+    local.set $arity
+    local.get $tag
+    i32.const 2
+    i32.eq
+    local.get $tag
+    i32.const 3
+    i32.eq
+    i32.or
+    local.get $tag
+    i32.const 4
+    i32.eq
+    i32.or
+    local.get $tag
+    i32.const 5
+    i32.eq
+    i32.or
+    local.get $tag
+    i32.const 9
+    i32.eq
+    i32.or
+    local.get $tag
+    i32.const 10
+    i32.eq
+    i32.or
+    i32.eqz
+    call $__regulus_trap_if
+    local.get $index
+    local.get $arity
+    i32.ge_u
+    call $__regulus_trap_if
+    local.get $ptr
+    local.get $tag
+    call $__regulus_value_payload_offset
     i32.add
     local.get $index
     i32.const 8
@@ -456,11 +704,17 @@ impl<'a> StructuredEmitter<'a> {
   (func $__regulus_handle_type (param $ptr i32) (result i32)
     local.get $ptr
     i32.const 8
+    call $__regulus_validate_tag
+    local.get $ptr
+    i32.const 8
     i32.add
     i32.load
   )
   (export "__regulus_handle_type" (func $__regulus_handle_type))
   (func $__regulus_handle_id (param $ptr i32) (result i32)
+    local.get $ptr
+    i32.const 8
+    call $__regulus_validate_tag
     local.get $ptr
     i32.const 12
     i32.add

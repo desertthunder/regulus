@@ -28,6 +28,13 @@ fn compile_wasm_target(source: &str, target: CompileTarget) -> Result<WasmModule
     .map(|output| output.wasm)
 }
 
+fn object_header(tag: u32, size: u32) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(8);
+    bytes.extend_from_slice(&tag.to_le_bytes());
+    bytes.extend_from_slice(&size.to_le_bytes());
+    bytes
+}
+
 fn int_expr(source: &str, span: Span) -> ir::Expression {
     ir::Expression {
         type_: Type::Int,
@@ -178,6 +185,71 @@ fn js_host_helpers_allocate_opaque_handles() {
     assert_eq!(tag.call(&mut store, ptr).expect("read tag"), 8);
     assert_eq!(type_tag.call(&mut store, ptr).expect("read type tag"), 17);
     assert_eq!(handle_id.call(&mut store, ptr).expect("read handle id"), 3);
+}
+
+#[test]
+fn js_host_reader_helpers_validate_runtime_objects() {
+    let wasm = compile_wasm_target("pub fn main() -> Nil { Nil }", CompileTarget::Bundler).expect("emit wasm");
+
+    let engine = Engine::default();
+    let module = Module::new(&engine, &wasm.bytes).expect("compile wasm module");
+    let mut store = Store::new(&engine, ());
+    let instance = Instance::new(&mut store, &module, &[]).expect("instantiate module");
+    let alloc = instance
+        .get_typed_func::<i32, i32>(&mut store, "__regulus_alloc")
+        .expect("get alloc helper");
+    let tag = instance
+        .get_typed_func::<i32, i32>(&mut store, "__regulus_value_tag")
+        .expect("get tag reader");
+    let arity = instance
+        .get_typed_func::<i32, i32>(&mut store, "__regulus_value_arity")
+        .expect("get arity reader");
+    let constructor = instance
+        .get_typed_func::<i32, i32>(&mut store, "__regulus_value_constructor")
+        .expect("get constructor reader");
+    let field = instance
+        .get_typed_func::<(i32, i32), i64>(&mut store, "__regulus_value_field")
+        .expect("get field reader");
+    let string_len = instance
+        .get_typed_func::<i32, i32>(&mut store, "__regulus_string_len")
+        .expect("get string length reader");
+    let handle_type = instance
+        .get_typed_func::<i32, i32>(&mut store, "__regulus_handle_type")
+        .expect("get handle type reader");
+    let memory = instance.get_memory(&mut store, "memory").expect("memory export");
+
+    assert_eq!(tag.call(&mut store, 0).expect("nil tag sentinel"), 0);
+
+    let invalid_tag = alloc.call(&mut store, 16).expect("allocate invalid tag object");
+    memory
+        .write(&mut store, invalid_tag as usize, &object_header(99, 0))
+        .unwrap();
+    assert!(tag.call(&mut store, invalid_tag).is_err());
+
+    let tuple = alloc.call(&mut store, 16).expect("allocate tuple object");
+    let mut tuple_bytes = object_header(u32::from(ObjectTag::Tuple), 1);
+    tuple_bytes.extend_from_slice(&42i64.to_le_bytes());
+    memory.write(&mut store, tuple as usize, &tuple_bytes).unwrap();
+    assert_eq!(tag.call(&mut store, tuple).expect("tuple tag"), 3);
+    assert_eq!(arity.call(&mut store, tuple).expect("tuple arity"), 1);
+    assert_eq!(
+        constructor.call(&mut store, tuple).expect("tuple constructor sentinel"),
+        0
+    );
+    assert_eq!(field.call(&mut store, (tuple, 0)).expect("tuple field"), 42);
+    assert!(field.call(&mut store, (tuple, 1)).is_err());
+    assert!(string_len.call(&mut store, tuple).is_err());
+    assert!(handle_type.call(&mut store, tuple).is_err());
+
+    let oversized_tuple = alloc.call(&mut store, 16).expect("allocate oversized tuple object");
+    memory
+        .write(
+            &mut store,
+            oversized_tuple as usize,
+            &object_header(u32::from(ObjectTag::Tuple), u32::MAX),
+        )
+        .unwrap();
+    assert!(arity.call(&mut store, oversized_tuple).is_err());
 }
 
 #[test]
