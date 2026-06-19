@@ -18,5 +18,6 @@ lookup-friendly form.
 - [Type inference](./type-and-generic-inference.md)
 - [Pattern matching](./pattern-matching.md)
 - [Closures](./closures.md)
+- [Runtime memory](./runtime-memory.md)
 
 [project-compilation]: ./compiling-projects.md

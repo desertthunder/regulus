@@ -38,26 +38,36 @@ pub const ALLOC_HELPER: &str = r#"
     (local $ptr i32) (local $end i32) (local $pages i32)
     global.get $__heap
     local.set $ptr
-    global.get $__heap
+    local.get $ptr
+    i32.const -1
+    local.get $size
+    i32.sub
+    i32.gt_u
+    if
+      local.get $size
+      local.get $ptr
+      call $__allocation_fail
+      return
+    end
+    local.get $ptr
     local.get $size
     i32.add
+    local.set $end
+    local.get $end
+    i32.const -{alignment}
+    i32.gt_u
+    if
+      local.get $size
+      local.get $ptr
+      call $__allocation_fail
+      return
+    end
+    local.get $end
     i32.const {alignment_mask}
     i32.add
     i32.const -{alignment}
     i32.and
     local.set $end
-    local.get $end
-    local.get $ptr
-    i32.lt_u
-    if (result i32)
-      local.get $size
-      local.get $ptr
-      call $__allocation_fail
-      return
-    else
-      i32.const 0
-    end
-    drop
     local.get $end
     memory.size
     i32.const 65536

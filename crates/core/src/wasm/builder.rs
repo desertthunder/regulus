@@ -350,7 +350,6 @@ pub enum Instruction {
     I32Eqz,
     I32Eq,
     I32LtS,
-    I32LtU,
     I32GtS,
     I32GtU,
     I32LeS,
@@ -437,9 +436,7 @@ impl Instruction {
             I::F32Const(_) => StackEffect::new([], [F32]),
             I::F64Const(_) => StackEffect::new([], [F64]),
             I::I32Eqz => StackEffect::new([I32], [I32]),
-            I::I32Eq | I::I32LtS | I::I32LtU | I::I32GtS | I::I32GtU | I::I32LeS | I::I32GeS => {
-                StackEffect::new([I32, I32], [I32])
-            }
+            I::I32Eq | I::I32LtS | I::I32GtS | I::I32GtU | I::I32LeS | I::I32GeS => StackEffect::new([I32, I32], [I32]),
             I::I64Eq | I::I64LtS | I::I64GtS | I::I64LeS | I::I64GeS => StackEffect::new([I64, I64], [I32]),
             I::F64Eq | I::F64Lt | I::F64Gt | I::F64Le | I::F64Ge => StackEffect::new([F64, F64], [I32]),
             I::I32Add | I::I32Sub | I::I32And | I::I32Mul | I::I32DivS | I::I32ShrU => {
@@ -798,7 +795,6 @@ fn instruction_inline_wat(instruction: &Instruction) -> String {
         Instruction::I32Eqz => "i32.eqz".into(),
         Instruction::I32Eq => "i32.eq".into(),
         Instruction::I32LtS => "i32.lt_s".into(),
-        Instruction::I32LtU => "i32.lt_u".into(),
         Instruction::I32GtS => "i32.gt_s".into(),
         Instruction::I32GtU => "i32.gt_u".into(),
         Instruction::I32LeS => "i32.le_s".into(),

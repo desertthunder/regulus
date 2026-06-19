@@ -98,7 +98,6 @@ pub fn encode_instruction(instruction: &Instruction, out: &mut Vec<u8>, module: 
         Instruction::I32Eqz => out.push(0x45),
         Instruction::I32Eq => out.push(0x46),
         Instruction::I32LtS => out.push(0x48),
-        Instruction::I32LtU => out.push(0x49),
         Instruction::I32GtS => out.push(0x4a),
         Instruction::I32GtU => out.push(0x4b),
         Instruction::I32LeS => out.push(0x4c),

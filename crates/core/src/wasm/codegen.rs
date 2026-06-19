@@ -1033,23 +1033,32 @@ impl<'a> StructuredEmitter<'a> {
 
         out.push(Instruction::GlobalGet { global: heap, type_: ValueType::I32 });
         out.push(Instruction::LocalSet { local: ptr, type_: ValueType::I32 });
-        out.push(Instruction::GlobalGet { global: heap, type_: ValueType::I32 });
-        out.push(Instruction::I32Const(bytes as i32));
-        out.push(Instruction::I32Add);
-        out.push(Instruction::I32Const((self.config.layout.alignment - 1) as i32));
-        out.push(Instruction::I32Add);
-        out.push(Instruction::I32Const(-(self.config.layout.alignment as i32)));
-        out.push(Instruction::I32And);
-        out.push(Instruction::LocalSet { local: end, type_: ValueType::I32 });
-
-        out.push(Instruction::LocalGet { local: end, type_: ValueType::I32 });
         out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
-        out.push(Instruction::I32LtU);
+        out.push(Instruction::I32Const((u32::MAX - bytes) as i32));
+        out.push(Instruction::I32GtU);
         out.push(Instruction::If {
             type_: BlockType::empty(),
             then_body: vec![Instruction::Unreachable],
             else_body: Vec::new(),
         });
+        out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
+        out.push(Instruction::I32Const(bytes as i32));
+        out.push(Instruction::I32Add);
+        out.push(Instruction::LocalSet { local: end, type_: ValueType::I32 });
+        out.push(Instruction::LocalGet { local: end, type_: ValueType::I32 });
+        out.push(Instruction::I32Const(-(self.config.layout.alignment as i32)));
+        out.push(Instruction::I32GtU);
+        out.push(Instruction::If {
+            type_: BlockType::empty(),
+            then_body: vec![Instruction::Unreachable],
+            else_body: Vec::new(),
+        });
+        out.push(Instruction::LocalGet { local: end, type_: ValueType::I32 });
+        out.push(Instruction::I32Const((self.config.layout.alignment - 1) as i32));
+        out.push(Instruction::I32Add);
+        out.push(Instruction::I32Const(-(self.config.layout.alignment as i32)));
+        out.push(Instruction::I32And);
+        out.push(Instruction::LocalSet { local: end, type_: ValueType::I32 });
 
         out.push(Instruction::LocalGet { local: end, type_: ValueType::I32 });
         out.push(Instruction::MemorySize(memory));
@@ -1093,23 +1102,37 @@ impl<'a> StructuredEmitter<'a> {
         let pages = self.required_local(self.alloc_pages_local, "allocation pages")?;
         let heap = self.ensure_heap_global();
         let memory = self.ensure_memory();
+        out.push(Instruction::LocalSet { local: pages, type_: ValueType::I32 });
         out.push(Instruction::GlobalGet { global: heap, type_: ValueType::I32 });
         out.push(Instruction::LocalSet { local: ptr, type_: ValueType::I32 });
-        out.push(Instruction::GlobalGet { global: heap, type_: ValueType::I32 });
-        out.push(Instruction::I32Add);
-        out.push(Instruction::I32Const((self.config.layout.alignment - 1) as i32));
-        out.push(Instruction::I32Add);
-        out.push(Instruction::I32Const(-(self.config.layout.alignment as i32)));
-        out.push(Instruction::I32And);
-        out.push(Instruction::LocalSet { local: end, type_: ValueType::I32 });
-        out.push(Instruction::LocalGet { local: end, type_: ValueType::I32 });
         out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
-        out.push(Instruction::I32LtU);
+        out.push(Instruction::I32Const(-1));
+        out.push(Instruction::LocalGet { local: pages, type_: ValueType::I32 });
+        out.push(Instruction::I32Sub);
+        out.push(Instruction::I32GtU);
         out.push(Instruction::If {
             type_: BlockType::empty(),
             then_body: vec![Instruction::Unreachable],
             else_body: Vec::new(),
         });
+        out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
+        out.push(Instruction::LocalGet { local: pages, type_: ValueType::I32 });
+        out.push(Instruction::I32Add);
+        out.push(Instruction::LocalSet { local: end, type_: ValueType::I32 });
+        out.push(Instruction::LocalGet { local: end, type_: ValueType::I32 });
+        out.push(Instruction::I32Const(-(self.config.layout.alignment as i32)));
+        out.push(Instruction::I32GtU);
+        out.push(Instruction::If {
+            type_: BlockType::empty(),
+            then_body: vec![Instruction::Unreachable],
+            else_body: Vec::new(),
+        });
+        out.push(Instruction::LocalGet { local: end, type_: ValueType::I32 });
+        out.push(Instruction::I32Const((self.config.layout.alignment - 1) as i32));
+        out.push(Instruction::I32Add);
+        out.push(Instruction::I32Const(-(self.config.layout.alignment as i32)));
+        out.push(Instruction::I32And);
+        out.push(Instruction::LocalSet { local: end, type_: ValueType::I32 });
         out.push(Instruction::LocalGet { local: end, type_: ValueType::I32 });
         out.push(Instruction::MemorySize(memory));
         out.push(Instruction::I32Const(65536));

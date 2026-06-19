@@ -2653,6 +2653,44 @@ fn runtime_allocation_failure_writes_structured_panic_payload() {
 }
 
 #[test]
+fn runtime_allocation_traps_before_size_overflow() {
+    let instance = runtime_helper_instance(
+        r#"
+(func $overflow_size (export "overflow_size") (result i32)
+ i32.const -4096
+ call $__alloc)
+"#,
+    );
+    let (engine, mut store, instance) = instance;
+    let _engine = engine;
+    let overflow_size = instance
+        .get_typed_func::<(), i32>(&mut store, "overflow_size")
+        .expect("get overflow_size export");
+    assert!(overflow_size.call(&mut store, ()).is_err());
+
+    assert_allocation_panic_payload(&instance, &mut store, 4_294_963_200, 4096);
+}
+
+#[test]
+fn runtime_allocation_traps_before_alignment_overflow() {
+    let instance = runtime_helper_instance(
+        r#"
+(func $overflow_alignment (export "overflow_alignment") (result i32)
+ i32.const -4103
+ call $__alloc)
+"#,
+    );
+    let (engine, mut store, instance) = instance;
+    let _engine = engine;
+    let overflow_alignment = instance
+        .get_typed_func::<(), i32>(&mut store, "overflow_alignment")
+        .expect("get overflow_alignment export");
+    assert!(overflow_alignment.call(&mut store, ()).is_err());
+
+    assert_allocation_panic_payload(&instance, &mut store, 4_294_963_193, 4096);
+}
+
+#[test]
 fn runtime_host_borrowed_pointer_stays_stable_across_growth() {
     let instance = runtime_helper_instance(
         r#"
@@ -2937,4 +2975,23 @@ fn runtime_helper_instance_with_memory(extra_wat: &str, memory_wat: &str) -> (En
     let mut store = Store::new(&engine, ());
     let instance = Instance::new(&mut store, &module, &[]).expect("instantiate helper module");
     (engine, store, instance)
+}
+
+fn assert_allocation_panic_payload(instance: &Instance, store: &mut Store<()>, size: u64, heap: u64) {
+    let last_panic = instance
+        .get_typed_func::<(), i32>(&mut *store, "__last_panic")
+        .expect("get __last_panic export");
+    let pointer = last_panic.call(&mut *store, ()).expect("call __last_panic") as usize;
+    assert_eq!(pointer, 64);
+
+    let memory = instance.get_memory(&mut *store, "memory").expect("memory export");
+    let mut bytes = [0; 28];
+    memory
+        .read(&*store, pointer, &mut bytes)
+        .expect("read allocation panic");
+    assert_eq!(u32::from_le_bytes(bytes[0..4].try_into().unwrap()), 10);
+    assert_eq!(u32::from_le_bytes(bytes[4..8].try_into().unwrap()), 2);
+    assert_eq!(u32::from_le_bytes(bytes[8..12].try_into().unwrap()), 1);
+    assert_eq!(u64::from_le_bytes(bytes[12..20].try_into().unwrap()), size);
+    assert_eq!(u64::from_le_bytes(bytes[20..28].try_into().unwrap()), heap);
 }
