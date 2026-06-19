@@ -2691,6 +2691,107 @@ fn runtime_allocation_grows_memory_without_moving_existing_objects() {
 }
 
 #[test]
+fn runtime_arena_reset_reuses_dynamic_allocations_after_mark() {
+    let instance = runtime_helper_instance(
+        r#"
+(data (i32.const 2048) "keepaabb")
+(global $keep (mut i32) (i32.const 0))
+(global $temp1 (mut i32) (i32.const 0))
+(global $temp2 (mut i32) (i32.const 0))
+(func $exercise (export "exercise")
+ (local $mark i32)
+ i32.const 2048
+ i32.const 4
+ call $__string_new
+ global.set $keep
+ call $__arena_mark
+ local.set $mark
+ i32.const 2052
+ i32.const 2
+ call $__string_new
+ global.set $temp1
+ local.get $mark
+ call $__arena_reset
+ i32.const 2054
+ i32.const 2
+ call $__string_new
+ global.set $temp2)
+(func $keep (export "keep") (result i32)
+ global.get $keep)
+(func $temp1 (export "temp1") (result i32)
+ global.get $temp1)
+(func $temp2 (export "temp2") (result i32)
+ global.get $temp2)
+"#,
+    );
+    let (engine, mut store, instance) = instance;
+    let _engine = engine;
+    let exercise = instance
+        .get_typed_func::<(), ()>(&mut store, "exercise")
+        .expect("get exercise export");
+    exercise.call(&mut store, ()).expect("exercise arena reset");
+
+    let keep = instance
+        .get_typed_func::<(), i32>(&mut store, "keep")
+        .expect("get keep export");
+    let temp1 = instance
+        .get_typed_func::<(), i32>(&mut store, "temp1")
+        .expect("get temp1 export");
+    let temp2 = instance
+        .get_typed_func::<(), i32>(&mut store, "temp2")
+        .expect("get temp2 export");
+    let keep = keep.call(&mut store, ()).expect("read keep pointer") as usize;
+    let temp1 = temp1.call(&mut store, ()).expect("read first temp pointer") as usize;
+    let temp2 = temp2.call(&mut store, ()).expect("read second temp pointer") as usize;
+
+    assert_eq!(keep, runtime::RuntimeConfig::DEFAULT.heap_start as usize);
+    assert_eq!(temp1, temp2);
+    assert!(temp1 > keep);
+
+    let memory = instance.get_memory(&mut store, "memory").expect("memory export");
+    let mut static_bytes = [0; 8];
+    memory.read(&store, 2048, &mut static_bytes).expect("read static data");
+    assert_eq!(&static_bytes, b"keepaabb");
+
+    let mut keep_bytes = [0; 16];
+    memory.read(&store, keep, &mut keep_bytes).expect("read keep object");
+    assert_eq!(u32::from_le_bytes(keep_bytes[0..4].try_into().unwrap()), 1);
+    assert_eq!(u32::from_le_bytes(keep_bytes[4..8].try_into().unwrap()), 4);
+    assert_eq!(&keep_bytes[8..12], b"keep");
+
+    let mut temp_bytes = [0; 16];
+    memory.read(&store, temp2, &mut temp_bytes).expect("read reset object");
+    assert_eq!(u32::from_le_bytes(temp_bytes[0..4].try_into().unwrap()), 1);
+    assert_eq!(u32::from_le_bytes(temp_bytes[4..8].try_into().unwrap()), 2);
+    assert_eq!(&temp_bytes[8..10], b"bb");
+}
+
+#[test]
+fn runtime_arena_reset_rejects_invalid_marks() {
+    let instance = runtime_helper_instance(
+        r#"
+(func $before_heap_start (export "before_heap_start")
+ i32.const 2048
+ call $__arena_reset)
+(func $unaligned (export "unaligned")
+ i32.const 4097
+ call $__arena_reset)
+(func $past_heap (export "past_heap")
+ i32.const 8192
+ call $__arena_reset)
+"#,
+    );
+    let (engine, mut store, instance) = instance;
+    let _engine = engine;
+    for name in ["before_heap_start", "unaligned", "past_heap"] {
+        let reset = instance
+            .get_typed_func::<(), ()>(&mut store, name)
+            .unwrap_or_else(|_| panic!("get {name} export"));
+        assert!(reset.call(&mut store, ()).is_err(), "{name} should trap");
+    }
+}
+
+#[test]
 fn runtime_allocation_handles_page_boundaries() {
     let fill_first_page = runtime::WASM_PAGE_SIZE - runtime::RuntimeConfig::DEFAULT.heap_start;
     let wat = format!(

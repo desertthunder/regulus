@@ -4,6 +4,31 @@ pub const ALLOC_HELPER: &str = r#"
   (func $__last_panic (export "__last_panic") (result i32)
     global.get $__last_panic_payload
   )
+  (func $__arena_mark (result i32)
+    global.get $__heap
+  )
+  (func $__arena_reset (param $mark i32)
+    local.get $mark
+    i32.const {heap_start}
+    i32.lt_u
+    if
+      unreachable
+    end
+    local.get $mark
+    global.get $__heap
+    i32.gt_u
+    if
+      unreachable
+    end
+    local.get $mark
+    i32.const {alignment_mask}
+    i32.and
+    if
+      unreachable
+    end
+    local.get $mark
+    global.set $__heap
+  )
   (func $__allocation_fail (param $size i32) (param $heap i32) (result i32)
     i32.const {allocation_failure_offset}
     i32.const 10

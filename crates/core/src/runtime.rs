@@ -87,6 +87,7 @@ impl RuntimeConfig {
         let alloc_helper = fragments::allocation::ALLOC_HELPER
             .replace("{alignment_mask}", &(self.layout.alignment - 1).to_string())
             .replace("{alignment}", &self.layout.alignment.to_string())
+            .replace("{heap_start}", &self.heap_start.to_string())
             .replace("{heap_limit}", &self.memory_limit_bytes().to_string())
             .replace("{allocation_failure_offset}", "64");
         let managed_value_helpers = fragments::managed_values::MANAGED_VALUE_HELPERS

@@ -27,9 +27,39 @@ Managed pointers are guest-memory offsets. Hosts may inspect values through
 documented adapters or exported helpers, but must not mutate runtime object
 memory.
 
+Host-held managed pointers remain valid while all of these are true:
+
+- the WebAssembly instance is alive
+- the pointer came from the same instance
+- the value has not been invalidated by arena reset
+- the host treats the pointer as borrowed and read-only
+
+Current runtime objects are non-moving, so memory growth does not change the
+numeric pointer value. It can still invalidate host-side memory views. Hosts
+that need to keep a value should keep the numeric pointer and reacquire memory
+views before reading.
+
 Hosts must not cache JavaScript typed-array views across calls that may allocate
 or grow memory. Wasmtime hosts must also avoid retaining raw host pointers or
 unsafe slices across growth, because the underlying memory can relocate.
+
+Host-provided managed pointers are borrowed pointers into the same guest
+memory. A host must only pass a managed pointer that was returned by the same
+instance or created through that instance's exported adapter helpers. Hosts must
+not synthesize pointers, pass pointers from another instance, pass pointers
+after instance reset, or pass pointers to memory they mutated directly.
+
+Opaque host handles are runtime objects that contain a type tag and an adapter
+handle-table id. The adapter owns the JavaScript value behind the id. The guest
+runtime only owns the small opaque wrapper object in linear memory; it does not
+own, free, or inspect the JavaScript value. Clearing or replacing the adapter
+handle table invalidates handle ids even if an old opaque wrapper pointer still
+exists.
+
+JavaScript host ABI validation rejects ownership-ambiguous managed imports.
+Imports may receive scalars, strings, or opaque handles. Structured managed
+values are supported as exported return values through reader helpers, but not
+as JS host import parameters until writer and ownership rules are explicit.
 
 ## Host reader failures
 

@@ -38,7 +38,7 @@ adapter-owned opaque handle tables.
 
 Structured JavaScript values passed into Gleam imports or exported function
 parameters are still deferred. Broader dependency source compilation, full
-dynamic decoding, and runtime memory hardening remain the main gaps for larger
+dynamic decoding, and arena reset reclamation remain the main gaps for larger
 examples.
 
 `gleam/dynamic`, `gleam/dynamic/decode`, `gleam/uri`, `gleam/pair`,
