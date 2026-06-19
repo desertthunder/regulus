@@ -111,10 +111,6 @@ struct StructuredEmitter<'a> {
     alloc_local: Option<LocalId>,
     alloc_end_local: Option<LocalId>,
     alloc_pages_local: Option<LocalId>,
-    string_ptr_local: Option<LocalId>,
-    string_left_len_local: Option<LocalId>,
-    string_right_len_local: Option<LocalId>,
-    string_i_local: Option<LocalId>,
     bit_i_local: Option<LocalId>,
     bit_value_local: Option<LocalId>,
     dynamic_data_local: Option<LocalId>,
@@ -150,10 +146,6 @@ impl<'a> StructuredEmitter<'a> {
             alloc_local: None,
             alloc_end_local: None,
             alloc_pages_local: None,
-            string_ptr_local: None,
-            string_left_len_local: None,
-            string_right_len_local: None,
-            string_i_local: None,
             bit_i_local: None,
             bit_value_local: None,
             dynamic_data_local: None,
@@ -805,10 +797,6 @@ impl<'a> StructuredEmitter<'a> {
         self.alloc_local = None;
         self.alloc_end_local = None;
         self.alloc_pages_local = None;
-        self.string_ptr_local = None;
-        self.string_left_len_local = None;
-        self.string_right_len_local = None;
-        self.string_i_local = None;
         self.bit_i_local = None;
         self.bit_value_local = None;
         self.dynamic_data_local = None;
@@ -871,28 +859,6 @@ impl<'a> StructuredEmitter<'a> {
                 .locals
                 .push(Local { name: Some("__alloc_pages".into()), type_: ValueType::I32 });
             self.alloc_pages_local = Some(id);
-        }
-        if needs_string_concat(function) {
-            let id = LocalId((structured.params.len() + structured.locals.len()) as u32);
-            structured
-                .locals
-                .push(Local { name: Some("__string_ptr".into()), type_: ValueType::I32 });
-            self.string_ptr_local = Some(id);
-            let id = LocalId((structured.params.len() + structured.locals.len()) as u32);
-            structured
-                .locals
-                .push(Local { name: Some("__string_left_len".into()), type_: ValueType::I32 });
-            self.string_left_len_local = Some(id);
-            let id = LocalId((structured.params.len() + structured.locals.len()) as u32);
-            structured
-                .locals
-                .push(Local { name: Some("__string_right_len".into()), type_: ValueType::I32 });
-            self.string_right_len_local = Some(id);
-            let id = LocalId((structured.params.len() + structured.locals.len()) as u32);
-            structured
-                .locals
-                .push(Local { name: Some("__string_i".into()), type_: ValueType::I32 });
-            self.string_i_local = Some(id);
         }
         if needs_bit_string_pattern(&function.body) {
             let id = LocalId((structured.params.len() + structured.locals.len()) as u32);
@@ -1475,32 +1441,14 @@ impl<'a> StructuredEmitter<'a> {
     }
 
     fn string_concat(&mut self, call: &ir::DirectCall, out: &mut Vec<Instruction>) -> StructuredResult<()> {
-        let ptr = self.required_local(self.string_ptr_local, "string pointer")?;
-        let left_len = self.required_local(self.string_left_len_local, "string left length")?;
-        let right_len = self.required_local(self.string_right_len_local, "string right length")?;
         self.expression(&call.arguments[0].value, out)?;
-        out.push(Instruction::I32Load(MemoryArg::new(self.ensure_memory(), 4, 2)));
-        out.push(Instruction::LocalSet { local: left_len, type_: ValueType::I32 });
         self.expression(&call.arguments[1].value, out)?;
-        out.push(Instruction::I32Load(MemoryArg::new(self.ensure_memory(), 4, 2)));
-        out.push(Instruction::LocalSet { local: right_len, type_: ValueType::I32 });
-        out.push(Instruction::I32Const(8));
-        out.push(Instruction::LocalGet { local: left_len, type_: ValueType::I32 });
-        out.push(Instruction::LocalGet { local: right_len, type_: ValueType::I32 });
-        out.push(Instruction::I32Add);
-        out.push(Instruction::I32Add);
-        self.allocate_dynamic(out)?;
-        out.push(Instruction::LocalTee { local: ptr, type_: ValueType::I32 });
-        out.push(Instruction::I32Const(u32::from(runtime::ObjectTag::String) as i32));
-        out.push(Instruction::I32Store(MemoryArg::new(self.ensure_memory(), 0, 2)));
-        out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
-        out.push(Instruction::LocalGet { local: left_len, type_: ValueType::I32 });
-        out.push(Instruction::LocalGet { local: right_len, type_: ValueType::I32 });
-        out.push(Instruction::I32Add);
-        out.push(Instruction::I32Store(MemoryArg::new(self.ensure_memory(), 4, 2)));
-        self.copy_string_bytes(&call.arguments[0].value, ptr, left_len, None, out)?;
-        self.copy_string_bytes(&call.arguments[1].value, ptr, right_len, Some(left_len), out)?;
-        out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
+        self.call_runtime_helper(
+            "__string_concat",
+            [ValueType::I32, ValueType::I32],
+            [ValueType::I32],
+            out,
+        );
         Ok(())
     }
 
@@ -1851,48 +1799,6 @@ impl<'a> StructuredEmitter<'a> {
 
     fn decode_error(&mut self, out: &mut Vec<Instruction>) -> StructuredResult<()> {
         self.custom_value(4031082741u32 as i32, 1, [], out)
-    }
-
-    fn copy_string_bytes(
-        &mut self, source: &ir::Expression, dest: LocalId, len: LocalId, dest_extra: Option<LocalId>,
-        out: &mut Vec<Instruction>,
-    ) -> StructuredResult<()> {
-        let i = self.required_local(self.string_i_local, "string index")?;
-        let memory = self.ensure_memory();
-        out.push(Instruction::I32Const(0));
-        out.push(Instruction::LocalSet { local: i, type_: ValueType::I32 });
-        let mut body = vec![
-            Instruction::LocalGet { local: i, type_: ValueType::I32 },
-            Instruction::LocalGet { local: len, type_: ValueType::I32 },
-            Instruction::I32GeS,
-            Instruction::BrIf { depth: 1, results: Vec::new() },
-            Instruction::LocalGet { local: dest, type_: ValueType::I32 },
-            Instruction::I32Const(8),
-            Instruction::I32Add,
-        ];
-        if let Some(extra) = dest_extra {
-            body.push(Instruction::LocalGet { local: extra, type_: ValueType::I32 });
-            body.push(Instruction::I32Add);
-        }
-        body.push(Instruction::LocalGet { local: i, type_: ValueType::I32 });
-        body.push(Instruction::I32Add);
-        self.expression(source, &mut body)?;
-        body.push(Instruction::I32Const(8));
-        body.push(Instruction::I32Add);
-        body.push(Instruction::LocalGet { local: i, type_: ValueType::I32 });
-        body.push(Instruction::I32Add);
-        body.push(Instruction::I32Load8U(MemoryArg::new(memory, 0, 0)));
-        body.push(Instruction::I32Store8(MemoryArg::new(memory, 0, 0)));
-        body.push(Instruction::LocalGet { local: i, type_: ValueType::I32 });
-        body.push(Instruction::I32Const(1));
-        body.push(Instruction::I32Add);
-        body.push(Instruction::LocalSet { local: i, type_: ValueType::I32 });
-        body.push(Instruction::Br { depth: 0, results: Vec::new() });
-        out.push(Instruction::Block {
-            type_: BlockType::empty(),
-            body: vec![Instruction::Loop { type_: BlockType::empty(), body }],
-        });
-        Ok(())
     }
 
     fn constructor_value(
@@ -3524,10 +3430,6 @@ fn needs_allocation(function: &ir::Function) -> bool {
     block_needs_allocation(&function.body)
 }
 
-fn needs_string_concat(function: &ir::Function) -> bool {
-    block_needs_string_concat(&function.body)
-}
-
 fn needs_bit_string_pattern(block: &ir::Block) -> bool {
     block.instructions.iter().any(|instruction| match instruction {
         ir::Instruction::Evaluate { expression, .. } | ir::Instruction::LocalSet { value: expression, .. } => {
@@ -3629,20 +3531,6 @@ fn collect_expression_debug_imports(expression: &ir::Expression, imports: &mut V
         }
         _ => {}
     }
-}
-
-fn block_needs_string_concat(block: &ir::Block) -> bool {
-    block.instructions.iter().any(|instruction| match instruction {
-        ir::Instruction::Evaluate { expression, .. } | ir::Instruction::LocalSet { value: expression, .. } => {
-            expression_needs_string_concat(expression)
-        }
-        ir::Instruction::AssertMatch { value, .. } => expression_needs_string_concat(value),
-    }) || expression_needs_string_concat(&block.result)
-}
-
-fn expression_needs_string_concat(expression: &ir::Expression) -> bool {
-    matches!(&expression.kind, ExpressionKind::DirectCall(call) if matches!(call.function.as_str(), "__op_string_concat" | "__stdlib_gleam_string_append"))
-        || expression.children().any(expression_needs_string_concat)
 }
 
 fn block_needs_allocation(block: &ir::Block) -> bool {

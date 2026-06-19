@@ -2585,7 +2585,10 @@ case option.map(Some(1), fn(x) {
 #[test]
 fn runs_string_concat_and_value_equality_codegen() {
     let wasm = compile_wasm(
-        r#"pub fn join() { "ab" <> "cd" }
+        r#"import gleam/string
+
+pub fn join() { "ab" <> "cd" }
+pub fn nested() { string.append("Regulus", string.append(" ran ", "checks")) }
 pub fn same() { "hi" == "hi" }
 "#,
     );
@@ -2602,6 +2605,15 @@ pub fn same() { "hi" == "hi" }
     memory.read(&store, pointer, &mut bytes).expect("read string");
     assert_eq!(u32::from_le_bytes(bytes[4..8].try_into().unwrap()), 4);
     assert_eq!(&bytes[8..12], b"abcd");
+
+    let nested = instance
+        .get_typed_func::<(), i32>(&mut store, "nested")
+        .expect("get nested export");
+    let pointer = nested.call(&mut store, ()).expect("call nested") as usize;
+    let mut bytes = [0; 27];
+    memory.read(&store, pointer, &mut bytes).expect("read nested string");
+    assert_eq!(u32::from_le_bytes(bytes[4..8].try_into().unwrap()), 18);
+    assert_eq!(&bytes[8..26], b"Regulus ran checks");
 
     let same = instance
         .get_typed_func::<(), i32>(&mut store, "same")
