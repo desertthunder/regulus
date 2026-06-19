@@ -41,12 +41,6 @@ impl Compiler<'_> {
             Err(diagnostics) => return echo::fail_with_diagnostics("compile", self.input.display(), &diagnostics),
         };
 
-        if let Some(dump_dir) = self.dump_dir.clone()
-            && let Err(error) = write_debug_dumps(&dump_dir, &compiled)
-        {
-            return echo::fail("write", "debug dumps", error);
-        }
-
         let artifact_base = self
             .input
             .file_stem()
@@ -60,6 +54,29 @@ impl Compiler<'_> {
             (None, Some(dir)) => dir.join(format!("{artifact_base}.wasm")),
             (None, None) => self.input.with_extension("wasm"),
         };
+        let debug_dir = self.dump_dir.clone().or_else(|| {
+            self.emit.iter().any(|emit| emit.is_debug()).then(|| {
+                output
+                    .parent()
+                    .filter(|parent| !parent.as_os_str().is_empty())
+                    .map(Path::to_path_buf)
+                    .unwrap_or_else(|| PathBuf::from("."))
+            })
+        });
+        let dump_all = self.dump_dir.is_some();
+
+        if let Some(debug_dir) = debug_dir.as_deref()
+            && let Err(error) = write_debug_dumps(
+                debug_dir,
+                artifact_base,
+                &compiled,
+                self.target.into(),
+                &self.emit,
+                dump_all,
+            )
+        {
+            return echo::fail("write", "debug dumps", error);
+        }
 
         if self.emit.contains(&Emit::Wasm) {
             if let Err(error) = super::write_file(&output, &compiled.wasm.bytes) {
@@ -101,12 +118,49 @@ impl Compiler<'_> {
     }
 }
 
-fn write_debug_dumps(dump_dir: &Path, compiled: &super::CompiledModule) -> std::io::Result<()> {
+fn write_debug_dumps(
+    dump_dir: &Path, artifact_base: &str, compiled: &super::CompiledModule,
+    target: compiler_core::target::CompileTarget, emit: &[Emit], dump_all: bool,
+) -> std::io::Result<()> {
     fs::create_dir_all(dump_dir)?;
-    fs::write(dump_dir.join("ast.txt"), format!("{:#?}\n", compiled.ast))?;
-    fs::write(dump_dir.join("resolved.txt"), format!("{:#?}\n", compiled.resolved))?;
-    fs::write(dump_dir.join("typed.txt"), format!("{:#?}\n", compiled.typed))?;
-    fs::write(dump_dir.join("ir.txt"), format!("{:#?}\n", compiled.ir))?;
-    fs::write(dump_dir.join("wat.wat"), &compiled.wasm.wat)?;
+    if dump_all || emit.contains(&Emit::Ast) {
+        fs::write(
+            dump_dir.join(format!("{artifact_base}.ast.txt")),
+            format!("{:#?}\n", compiled.ast),
+        )?;
+    }
+    if dump_all || emit.contains(&Emit::Resolved) {
+        fs::write(
+            dump_dir.join(format!("{artifact_base}.resolved.txt")),
+            format!("{:#?}\n", compiled.resolved),
+        )?;
+    }
+    if dump_all || emit.contains(&Emit::Typed) {
+        fs::write(
+            dump_dir.join(format!("{artifact_base}.typed.txt")),
+            format!("{:#?}\n", compiled.typed),
+        )?;
+    }
+    if dump_all || emit.contains(&Emit::Ir) {
+        fs::write(
+            dump_dir.join(format!("{artifact_base}.ir.txt")),
+            format!("{:#?}\n", compiled.ir),
+        )?;
+    }
+    if dump_all {
+        fs::write(dump_dir.join(format!("{artifact_base}.wat")), &compiled.wasm.wat)?;
+    }
+    if dump_all || emit.contains(&Emit::Runtime) {
+        fs::write(
+            dump_dir.join(format!("{artifact_base}.runtime.txt")),
+            super::runtime_debug_dump(),
+        )?;
+    }
+    if dump_all || emit.contains(&Emit::Abi) {
+        fs::write(
+            dump_dir.join(format!("{artifact_base}.abi.txt")),
+            super::abi_debug_dump(&compiled.ir, target),
+        )?;
+    }
     Ok(())
 }

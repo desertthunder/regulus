@@ -112,6 +112,7 @@ reggie build examples/scalar_project --out-dir build/examples
 ```sh
 reggie build examples/scalar_project --emit wasm,wat
 reggie build examples/scalar_project --emit wat,ast,resolved,typed,ir
+reggie build examples/scalar_project --emit runtime,abi
 ```
 
 Supported project artifact kinds are:
@@ -124,6 +125,8 @@ Supported project artifact kinds are:
 | `resolved` | Per-module resolved AST debug dumps.    |
 | `typed`    | Per-module typed-module debug dumps.    |
 | `ir`       | Linked IR debug dump.                   |
+| `runtime`  | Runtime layout and object tag summary.  |
+| `abi`      | Import/export ABI boundary summary.     |
 
 Use `--dump-dir` to write debug dumps into a separate directory. If
 compilation fails, Regulus does not write the final Wasm artifact. Debug

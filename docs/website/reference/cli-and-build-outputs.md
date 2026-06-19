@@ -13,7 +13,9 @@ The command writes `build/<package>.wasm` by default. `--output` writes the
 final Wasm artifact to an exact path. `--out-dir` writes compiler-named
 artifacts such as `<package>.wasm` and `<package>.wat` into the given
 directory. `--emit` accepts comma-separated artifact kinds: `wasm`, `wat`,
-`ast`, `resolved`, `typed`, and `ir`.
+`ast`, `resolved`, `typed`, `ir`, `runtime`, and `abi`.
+`--wat` is a compatibility alias for emitting WAT, matching `compile`.
+Passing `--wat` without a path uses the `.wat` path matching the output file.
 
 See [Project compilation and dependencies][project-compilation] for dependency
 loading, linked output, and current project limits.
@@ -65,8 +67,11 @@ and checks that host imports are valid for the selected target.
 ## Debug dumps
 
 `--dump-dir <dir>` writes deterministic debug files. Single-file compilation
-writes AST, resolved AST, typed output, IR, and WAT dumps. Project builds write
-per-module AST, resolved AST, typed output, linked IR, and WAT dumps.
+writes AST, resolved AST, typed output, IR, WAT, runtime layout, and ABI dumps.
+Project builds write per-module AST, resolved AST, typed output, linked IR,
+WAT, runtime layout, and ABI dumps. The `runtime` and `abi` emit kinds write
+runtime layout and ABI boundary summaries without requiring a full dump
+directory.
 
 These dumps are for contributor inspection. Normal CLI output stays focused on
 the final artifact path, optional WAT path, and diagnostics.

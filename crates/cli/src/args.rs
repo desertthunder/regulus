@@ -28,6 +28,9 @@ pub enum Command {
         /// Select emitted artifacts.
         #[arg(long, value_enum, value_delimiter = ',', default_value = "wasm")]
         emit: Vec<Emit>,
+        /// Also write the generated WebAssembly text format.
+        #[arg(long)]
+        wat: Option<Option<PathBuf>>,
         /// Write compiler debug dumps to this directory.
         #[arg(long)]
         dump_dir: Option<PathBuf>,
@@ -182,11 +185,16 @@ pub enum Emit {
     Resolved,
     Typed,
     Ir,
+    Runtime,
+    Abi,
 }
 
 impl Emit {
     pub fn is_debug(self) -> bool {
-        matches!(self, Self::Ast | Self::Resolved | Self::Typed | Self::Ir)
+        matches!(
+            self,
+            Self::Ast | Self::Resolved | Self::Typed | Self::Ir | Self::Runtime | Self::Abi
+        )
     }
 
     pub fn is_pre_lower_debug(self) -> bool {
@@ -194,6 +202,7 @@ impl Emit {
     }
 }
 
+#[derive(Clone, Copy)]
 pub struct DebugOptions {
     pub ts: bool,
     pub ast: bool,

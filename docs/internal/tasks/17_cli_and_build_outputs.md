@@ -13,9 +13,9 @@ Make compiler commands predictable and generated artifacts useful.
 - [x] Add target selection for supported runtimes and host profiles: Wasmtime,
       browser, bundler, Node.js, and WASI where implemented.
 - [x] Return useful exit codes for success, diagnostics, and command misuse.
-- [ ] Keep project compilation flags consistent with single-file compilation.
-- [ ] Add CLI `run` or `exec` integration tests for Wasmtime execution.
-- [ ] Add ABI-aware rendering for managed `run` return values such as strings,
+- [x] Keep project compilation flags consistent with single-file compilation.
+- [x] Add CLI `run`/`exec` (aliases for one another) integration tests for Wasmtime execution.
+- [x] Add ABI-aware rendering for managed `run` return values such as strings,
       tuples, lists, records, `Result`, and `Option`.
 
 ### Artifacts
@@ -28,7 +28,7 @@ Make compiler commands predictable and generated artifacts useful.
 - [x] Emit deterministic `.mjs` adapter files when Wasm output is requested for
       browser, bundler, and Node.js targets.
 - [x] Expose JS host import and export metadata needed by checked host calls.
-- [ ] Add optional runtime layout and ABI debug output where helpful.
+- [x] Add optional runtime layout and ABI debug output where helpful.
 - [x] Include import and export metadata in explicit debug output where useful.
 - [x] Emit or package deterministic browser and Node.js host adapter files when
       requested.

@@ -95,6 +95,148 @@ fn run_decodes_managed_string_return_before_arena_reset() {
 }
 
 #[test]
+fn exec_alias_runs_wasmtime_exports() {
+    let temp = unique_temp_dir("regulus_cli_exec_alias");
+    fs::create_dir_all(&temp).expect("create temp dir");
+    let input = temp.join("app.gleam");
+    fs::write(
+        &input,
+        r#"pub fn add(left: Int, right: Int) -> Int { left + right }
+pub fn pair() -> #(Int, String) { #(7, "moons") }
+"#,
+    )
+    .expect("write Gleam input");
+
+    let add = Command::new(env!("CARGO_BIN_EXE_reggie"))
+        .arg("exec")
+        .arg(&input)
+        .arg("--function")
+        .arg("add")
+        .arg("40")
+        .arg("2")
+        .output()
+        .expect("run reggie exec add");
+
+    assert!(
+        add.status.success(),
+        "exec add failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&add.stdout),
+        String::from_utf8_lossy(&add.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&add.stdout), "42\n");
+
+    let pair = Command::new(env!("CARGO_BIN_EXE_reggie"))
+        .arg("exec")
+        .arg(&input)
+        .arg("--function")
+        .arg("pair")
+        .output()
+        .expect("run reggie exec pair");
+
+    assert!(
+        pair.status.success(),
+        "exec pair failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&pair.stdout),
+        String::from_utf8_lossy(&pair.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&pair.stdout), "#(7, \"moons\")\n");
+
+    let _ = fs::remove_dir_all(temp);
+}
+
+#[test]
+fn run_renders_managed_return_shapes() {
+    let temp = unique_temp_dir("regulus_cli_run_managed_shapes");
+    fs::create_dir_all(&temp).expect("create temp dir");
+    let input = temp.join("app.gleam");
+    fs::write(
+        &input,
+        r#"import gleam/option.{Some}
+import gleam/result.{Ok}
+
+pub type User {
+  User(name: String, age: Int)
+}
+
+pub fn tuple() -> #(Int, String) { #(7, "moons") }
+pub fn list() -> List(Int) { [1, 2] }
+pub fn record() -> User { User(name: "Ada", age: 36) }
+pub fn option() -> Option(String) { Some("Ada") }
+pub fn result() -> Result(String, Int) { Ok("Ada") }
+"#,
+    )
+    .expect("write Gleam input");
+
+    let cases = [
+        ("tuple", vec!["#(7, \"moons\")"]),
+        ("list", vec!["[1 | [2 | []]]"]),
+        ("record", vec!["Custom#", "\"Ada\"", "36"]),
+        ("option", vec!["Custom#", "\"Ada\""]),
+        ("result", vec!["Custom#", "\"Ada\""]),
+    ];
+
+    for (function, expected_parts) in cases {
+        let output = Command::new(env!("CARGO_BIN_EXE_reggie"))
+            .arg("run")
+            .arg(&input)
+            .arg("--function")
+            .arg(function)
+            .output()
+            .unwrap_or_else(|error| panic!("run reggie run {function}: {error}"));
+
+        assert!(
+            output.status.success(),
+            "run {function} failed\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        for expected in expected_parts {
+            assert!(
+                stdout.contains(expected),
+                "expected {function} output to contain {expected:?}, got {stdout:?}"
+            );
+        }
+    }
+
+    let _ = fs::remove_dir_all(temp);
+}
+
+#[test]
+fn build_wat_flag_matches_single_file_compile() {
+    let fixture = workspace_root().join("examples/scalar_project");
+    let temp = unique_temp_dir("regulus_cli_build_wat_flag");
+    fs::create_dir_all(&temp).expect("create temp dir");
+    let wat_path = temp.join("scalar_project.custom.wat");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_reggie"))
+        .arg("build")
+        .arg(&fixture)
+        .arg("--out-dir")
+        .arg(temp.join("out"))
+        .arg("--wat")
+        .arg(&wat_path)
+        .output()
+        .expect("run reggie build --wat");
+
+    assert!(
+        output.status.success(),
+        "build failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(temp.join("out/scalar_project.wasm").is_file());
+    assert!(wat_path.is_file(), "expected WAT at {}", wat_path.display());
+    assert!(
+        fs::read_to_string(&wat_path).expect("read WAT").contains("(module"),
+        "expected WAT module text"
+    );
+
+    let _ = fs::remove_dir_all(temp);
+}
+
+#[test]
 fn build_emit_writes_wat_and_debug_artifacts_without_wasm() {
     let fixture = workspace_root().join("fixtures/projects/generated_names/dependency_module_overlap");
     let out_dir = unique_temp_dir("regulus_cli_emit_build");
@@ -106,7 +248,7 @@ fn build_emit_writes_wat_and_debug_artifacts_without_wasm() {
         .arg("--out-dir")
         .arg(&out_dir)
         .arg("--emit")
-        .arg("wat,ast,resolved,typed,ir")
+        .arg("wat,ast,resolved,typed,ir,runtime,abi")
         .output()
         .expect("run reggie build");
 
@@ -119,6 +261,8 @@ fn build_emit_writes_wat_and_debug_artifacts_without_wasm() {
     assert!(!out_dir.join("dependency_module_overlap.wasm").exists());
     assert!(out_dir.join("dependency_module_overlap.wat").is_file());
     assert!(out_dir.join("dependency_module_overlap.ir.txt").is_file());
+    assert!(out_dir.join("dependency_module_overlap.runtime.txt").is_file());
+    assert!(out_dir.join("dependency_module_overlap.abi.txt").is_file());
     assert!(
         out_dir
             .join("dependency_module_overlap.dependency__module__overlap.main.ast.txt")
@@ -135,7 +279,54 @@ fn build_emit_writes_wat_and_debug_artifacts_without_wasm() {
             .is_file()
     );
 
+    let runtime =
+        fs::read_to_string(out_dir.join("dependency_module_overlap.runtime.txt")).expect("read runtime debug artifact");
+    assert!(runtime.contains("runtime layout:"), "{runtime}");
+    assert!(runtime.contains("object tags:"), "{runtime}");
+
+    let abi = fs::read_to_string(out_dir.join("dependency_module_overlap.abi.txt")).expect("read ABI debug artifact");
+    assert!(abi.contains("target: Wasmtime"), "{abi}");
+    assert!(abi.contains("exports:"), "{abi}");
+
     let _ = fs::remove_dir_all(out_dir);
+}
+
+#[test]
+fn compile_emit_writes_runtime_and_abi_debug_artifacts() {
+    let temp = unique_temp_dir("regulus_cli_compile_runtime_abi");
+    let out_dir = temp.join("out");
+    fs::create_dir_all(&out_dir).expect("create output dir");
+    let input = temp.join("app.gleam");
+    fs::write(&input, "pub fn answer() -> Int { 42 }\n").expect("write Gleam input");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_reggie"))
+        .arg("compile")
+        .arg(&input)
+        .arg("--out-dir")
+        .arg(&out_dir)
+        .arg("--emit")
+        .arg("runtime,abi")
+        .output()
+        .expect("run reggie compile");
+
+    assert!(
+        output.status.success(),
+        "compile failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!out_dir.join("app.wasm").exists());
+    assert!(out_dir.join("app.runtime.txt").is_file());
+    assert!(out_dir.join("app.abi.txt").is_file());
+
+    let runtime = fs::read_to_string(out_dir.join("app.runtime.txt")).expect("read runtime artifact");
+    assert!(runtime.contains("memory_limit_bytes:"), "{runtime}");
+
+    let abi = fs::read_to_string(out_dir.join("app.abi.txt")).expect("read ABI artifact");
+    assert!(abi.contains("answer -> answer"), "{abi}");
+    assert!(abi.contains("result: Int as Scalar(I64)"), "{abi}");
+
+    let _ = fs::remove_dir_all(temp);
 }
 
 #[test]

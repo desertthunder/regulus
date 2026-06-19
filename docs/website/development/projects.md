@@ -40,8 +40,8 @@ Build and compile share flags where their meanings match:
 - `--out-dir <DIR>` writes compiler-named artifacts into a directory.
 - `--target <TARGET>` selects `wasmtime`, `browser`, `bundler`, `nodejs`, or
   `wasi`.
-- `--emit <KIND[,KIND]>` selects `wasm`, `wat`, `ast`, `resolved`, `typed`, or
-  `ir`.
+- `--emit <KIND[,KIND]>` selects `wasm`, `wat`, `ast`, `resolved`, `typed`,
+  `ir`, `runtime`, or `abi`.
 - `--dump-dir <DIR>` writes debug dumps to a separate directory.
 - `-v, --verbose` prints module and dependency details.
 - `--json` is reserved for future machine-readable output.

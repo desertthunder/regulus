@@ -15,6 +15,7 @@ pub struct Builder<'a> {
     pub out_dir: Option<PathBuf>,
     pub target: Option<Target>,
     pub emit: Vec<Emit>,
+    pub wat: Option<Option<PathBuf>>,
     pub dump_dir: Option<PathBuf>,
     pub verbose: bool,
     pub json: bool,
@@ -24,6 +25,9 @@ impl Builder<'_> {
     pub fn build(&mut self) -> ExitCode {
         if self.json {
             return echo::fail("build", "--json", "machine-readable output is not implemented yet");
+        }
+        if self.wat.is_some() && !self.emit.contains(&Emit::Wat) {
+            self.emit.push(Emit::Wat);
         }
         let input = self.input.unwrap_or_else(|| Path::new("."));
         let verbose = self.verbose;
@@ -79,6 +83,7 @@ impl Builder<'_> {
                 &artifact_base,
                 &self.emit,
                 dump_all,
+                target,
             )
         {
             return echo::fail("write", "debug dumps", error);
@@ -97,6 +102,7 @@ impl Builder<'_> {
                 &artifact_base,
                 &self.emit,
                 dump_all,
+                target,
             )
         {
             return echo::fail("write", "debug dumps", error);
@@ -106,6 +112,18 @@ impl Builder<'_> {
             Ok(wasm) => wasm,
             Err(diagnostics) => return echo::fail_with_diagnostics("emit wasm", project.root.display(), &diagnostics),
         };
+        if let Some(debug_dir) = debug_dir.as_deref()
+            && (dump_all || self.emit.contains(&Emit::Runtime) || self.emit.contains(&Emit::Abi))
+            && let Err(error) = ProjectDebugArtifacts::with(&typed, &ir, &wasm).write_project_debug_dumps(
+                debug_dir,
+                &artifact_base,
+                &self.emit,
+                dump_all,
+                target,
+            )
+        {
+            return echo::fail("write", "debug dumps", error);
+        }
 
         if self.emit.contains(&Emit::Wasm) {
             if let Err(error) = super::write_file(&output, &wasm.bytes) {
@@ -133,7 +151,11 @@ impl Builder<'_> {
             }
         }
         if self.emit.contains(&Emit::Wat) {
-            let wat_path = super::artifact_path(self.out_dir.as_deref(), &output, &artifact_base, "wat");
+            let wat_path = self
+                .wat
+                .clone()
+                .flatten()
+                .unwrap_or_else(|| super::artifact_path(self.out_dir.as_deref(), &output, &artifact_base, "wat"));
             if let Err(error) = super::write_file(&wat_path, wasm.wat.as_bytes()) {
                 return echo::fail("write", wat_path.display(), error);
             }
@@ -145,6 +167,7 @@ impl Builder<'_> {
                 &artifact_base,
                 &self.emit,
                 true,
+                target,
             )
         {
             return echo::fail("write", "debug dumps", error);
@@ -182,6 +205,7 @@ impl<'a> ProjectDebugArtifacts<'a> {
 impl ProjectDebugArtifacts<'_> {
     fn write_project_debug_dumps(
         self, dump_dir: &Path, artifact_base: &str, emit: &[args::Emit], dump_all: bool,
+        target: compiler_core::target::CompileTarget,
     ) -> std::io::Result<()> {
         fs::create_dir_all(dump_dir)?;
 
@@ -213,6 +237,20 @@ impl ProjectDebugArtifacts<'_> {
             && dump_all
         {
             fs::write(dump_dir.join(format!("{artifact_base}.wat")), &wasm.wat)?;
+        }
+        if dump_all || emit.contains(&args::Emit::Runtime) {
+            fs::write(
+                dump_dir.join(format!("{artifact_base}.runtime.txt")),
+                super::runtime_debug_dump(),
+            )?;
+        }
+        if let Some(ir) = self.ir
+            && (dump_all || emit.contains(&args::Emit::Abi))
+        {
+            fs::write(
+                dump_dir.join(format!("{artifact_base}.abi.txt")),
+                super::abi_debug_dump(ir, target),
+            )?;
         }
         Ok(())
     }

@@ -28,16 +28,25 @@ Remaining responsibilities:
 ## Commands
 
 Single-file compilation remains useful for fixtures and small examples. Project
-compilation should reuse the same flags where possible.
+compilation reuses the same output, target, WAT, emit, dump, verbose, and JSON
+reservation flags where possible.
 
-Important command concerns:
+Current command surface:
 
-- output path selection
-- optional WAT output
-- optional debug dump directory
-- target selection for Wasmtime, browser, and WASI
-- JS host profile selection for browser, bundler, and Node.js
-- clear exit codes for success, diagnostics, and command misuse
+- `build [project]` compiles a Gleam project.
+- `compile <input>` compiles one source file.
+- `run <input>` compiles one source file and executes an export with Wasmtime.
+- `exec` is an alias for `run`.
+- `debug`/`dbg` inspect compiler-internal views.
+- `list [project]` prints discovered project modules.
+
+`build` and `compile` both support output path selection, optional WAT output,
+optional debug dump directories, target selection, and explicit artifact
+selection. `run` and `exec` support Wasmtime execution for scalar arguments and
+ABI-aware rendering of scalar and managed return values.
+
+Commands should continue to return clear exit codes for success, diagnostics,
+and command misuse.
 
 ## Artifacts
 

@@ -3,6 +3,7 @@ mod compiler;
 mod debug;
 mod runner;
 
+use std::fmt::Write as _;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -47,9 +48,9 @@ impl CompiledModule {
 
 pub fn run(command: Command) -> ExitCode {
     match command {
-        Command::Build { project, output, out_dir, target, emit, dump_dir, verbose, json } => {
+        Command::Build { project, output, out_dir, target, emit, wat, dump_dir, verbose, json } => {
             let mut builder =
-                Builder { input: project.as_deref(), output, out_dir, target, emit, dump_dir, verbose, json };
+                Builder { input: project.as_deref(), output, out_dir, target, emit, wat, dump_dir, verbose, json };
 
             builder.build()
         }
@@ -339,6 +340,159 @@ fn artifact_path(out_dir: Option<&Path>, wasm_path: &Path, artifact_base: &str, 
     out_dir
         .map(|dir| dir.join(format!("{artifact_base}.{ext}")))
         .unwrap_or_else(|| wasm_path.with_extension(ext))
+}
+
+fn runtime_debug_dump() -> String {
+    use compiler_core::runtime::{ObjectTag, RuntimeConfig, WASM_PAGE_SIZE};
+
+    let config = RuntimeConfig::DEFAULT;
+    let layout = config.layout;
+    let mut out = String::new();
+    writeln!(&mut out, "runtime layout:").expect("write runtime debug dump");
+    writeln!(&mut out, "  word_size: {}", layout.word_size).expect("write runtime debug dump");
+    writeln!(&mut out, "  alignment: {}", layout.alignment).expect("write runtime debug dump");
+    writeln!(&mut out, "  header_size: {}", layout.header_size).expect("write runtime debug dump");
+    writeln!(&mut out).expect("write runtime debug dump");
+    writeln!(&mut out, "memory:").expect("write runtime debug dump");
+    writeln!(&mut out, "  wasm_page_size: {WASM_PAGE_SIZE}").expect("write runtime debug dump");
+    writeln!(&mut out, "  static_data_start: {}", config.static_data_start).expect("write runtime debug dump");
+    writeln!(&mut out, "  heap_start: {}", config.heap_start).expect("write runtime debug dump");
+    writeln!(&mut out, "  memory_max_pages: {}", config.memory_max_pages).expect("write runtime debug dump");
+    writeln!(&mut out, "  memory_limit_bytes: {}", config.memory_limit_bytes()).expect("write runtime debug dump");
+    writeln!(&mut out).expect("write runtime debug dump");
+    writeln!(&mut out, "object tags:").expect("write runtime debug dump");
+    for tag in [
+        ObjectTag::String,
+        ObjectTag::ListCons,
+        ObjectTag::Tuple,
+        ObjectTag::Record,
+        ObjectTag::Custom,
+        ObjectTag::Closure,
+        ObjectTag::BitArray,
+        ObjectTag::Opaque,
+        ObjectTag::Error,
+        ObjectTag::Panic,
+    ] {
+        writeln!(&mut out, "  {:?}: {}", tag, u32::from(tag)).expect("write runtime debug dump");
+    }
+    writeln!(&mut out).expect("write runtime debug dump");
+    writeln!(&mut out, "sample object sizes:").expect("write runtime debug dump");
+    writeln!(&mut out, "  string(5): {}", layout.string_size(5)).expect("write runtime debug dump");
+    writeln!(&mut out, "  bit_array(13): {}", layout.bit_array_size(13)).expect("write runtime debug dump");
+    writeln!(&mut out, "  list_cons: {}", layout.list_cons_size(8)).expect("write runtime debug dump");
+    writeln!(&mut out, "  tuple(2): {}", layout.tuple_size(2, 8)).expect("write runtime debug dump");
+    writeln!(&mut out, "  record(2): {}", layout.record_size(2, 8)).expect("write runtime debug dump");
+    writeln!(&mut out, "  custom(2): {}", layout.custom_size(2, 8)).expect("write runtime debug dump");
+    writeln!(&mut out, "  closure(2): {}", layout.closure_size(2)).expect("write runtime debug dump");
+    writeln!(&mut out, "  opaque: {}", layout.opaque_size()).expect("write runtime debug dump");
+    out
+}
+
+fn abi_debug_dump(module: &compiler_core::ir::Module, target: CompileTarget) -> String {
+    use compiler_core::ir::{CallBoundary, ExportKind};
+
+    let mut out = String::new();
+    writeln!(&mut out, "target: {target:?}").expect("write ABI debug dump");
+    writeln!(&mut out).expect("write ABI debug dump");
+
+    let mut imports = module
+        .functions
+        .iter()
+        .filter(|function| {
+            matches!(
+                function.abi.boundary,
+                CallBoundary::HostImport { .. } | CallBoundary::ModuleImport { .. }
+            )
+        })
+        .collect::<Vec<_>>();
+    imports.sort_by_key(|function| function.name.as_str());
+    writeln!(&mut out, "imports:").expect("write ABI debug dump");
+    if imports.is_empty() {
+        writeln!(&mut out, "  none").expect("write ABI debug dump");
+    }
+    for function in imports {
+        writeln!(
+            &mut out,
+            "  {} {}",
+            function.name,
+            function_abi_signature(&function.params, &function.return_type)
+        )
+        .expect("write ABI debug dump");
+        writeln!(&mut out, "    boundary: {}", call_boundary(&function.abi.boundary)).expect("write ABI debug dump");
+        write_call_abi(&mut out, &function.abi);
+    }
+
+    let mut exports = module
+        .exports
+        .iter()
+        .filter(|export| export.kind == ExportKind::Function)
+        .collect::<Vec<_>>();
+    exports.sort_by_key(|export| export.name.as_str());
+    writeln!(&mut out).expect("write ABI debug dump");
+    writeln!(&mut out, "exports:").expect("write ABI debug dump");
+    if exports.is_empty() {
+        writeln!(&mut out, "  none").expect("write ABI debug dump");
+    }
+    for export in exports {
+        let Some(function) = module
+            .functions
+            .iter()
+            .find(|function| function.name == export.backend_name())
+        else {
+            writeln!(
+                &mut out,
+                "  {} -> {} (missing function)",
+                export.name,
+                export.backend_name()
+            )
+            .expect("write ABI debug dump");
+            continue;
+        };
+        writeln!(
+            &mut out,
+            "  {} -> {} {}",
+            export.name,
+            export.backend_name(),
+            function_abi_signature(&function.params, &function.return_type)
+        )
+        .expect("write ABI debug dump");
+        write_call_abi(&mut out, &function.abi);
+    }
+
+    out
+}
+
+fn function_abi_signature(params: &[compiler_core::ir::Local], return_type: &Type) -> String {
+    let params = params
+        .iter()
+        .map(|param| format!("{}: {:?}", param.name, param.type_))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("({params}) -> {return_type:?}")
+}
+
+fn write_call_abi(out: &mut String, abi: &compiler_core::ir::CallAbi) {
+    writeln!(out, "    params:").expect("write ABI debug dump");
+    if abi.params.is_empty() {
+        writeln!(out, "      none").expect("write ABI debug dump");
+    }
+    for (index, param) in abi.params.iter().enumerate() {
+        writeln!(out, "      {index}: {:?} as {:?}", param.type_, param.representation).expect("write ABI debug dump");
+    }
+    match &abi.return_ {
+        Some(return_) => writeln!(out, "    result: {:?} as {:?}", return_.type_, return_.representation)
+            .expect("write ABI debug dump"),
+        None => writeln!(out, "    result: none").expect("write ABI debug dump"),
+    }
+}
+
+fn call_boundary(boundary: &compiler_core::ir::CallBoundary) -> String {
+    match boundary {
+        compiler_core::ir::CallBoundary::Internal => "internal".into(),
+        compiler_core::ir::CallBoundary::ModuleExport => "module export".into(),
+        compiler_core::ir::CallBoundary::ModuleImport { module, name } => format!("module import {module}.{name}"),
+        compiler_core::ir::CallBoundary::HostImport { module, name } => format!("host import {module}.{name}"),
+    }
 }
 
 fn write_file(path: &Path, contents: &[u8]) -> std::io::Result<()> {

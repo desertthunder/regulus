@@ -98,6 +98,7 @@ host glue and profile-specific APIs are still in progress.
 ```sh
 reggie build examples/scalar_project --emit wasm,wat
 reggie build examples/scalar_project --emit wat,ast,resolved,typed,ir
+reggie build examples/scalar_project --emit runtime,abi
 ```
 
 Supported emit values are:
@@ -110,6 +111,8 @@ Supported emit values are:
 | `resolved` | Per-module resolved AST debug dumps.    |
 | `typed`    | Per-module typed-module debug dumps.    |
 | `ir`       | Linked IR debug dump.                   |
+| `runtime`  | Runtime layout and object tag summary.  |
+| `abi`      | Import/export ABI boundary summary.     |
 
 `wasm` is the default. `wat` writes next to the Wasm output, or into
 `--out-dir` when that option is used. Debug emit values write deterministic
@@ -121,8 +124,9 @@ Use `--dump-dir` to write all compiler debug dumps into a separate directory:
 reggie build examples/multi_module_project --dump-dir build/dumps
 ```
 
-Single-file dumps include AST, resolved AST, typed output, IR, and WAT. Project
-dumps include per-module AST, resolved AST, typed output, linked IR, and WAT.
+Single-file dumps include AST, resolved AST, typed output, IR, WAT, runtime
+layout, and ABI output. Project dumps include per-module AST, resolved AST,
+typed output, linked IR, WAT, runtime layout, and ABI output.
 
 If compilation fails, Regulus does not write the final Wasm artifact. Debug
 artifacts are only written when the requested compiler phase completes.
