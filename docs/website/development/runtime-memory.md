@@ -123,9 +123,15 @@ Reset invalidates every dynamic object allocated after the mark. Static data and
 dynamic objects allocated before the mark remain valid. Later allocations may
 reuse reset-owned memory.
 
-Automatic call/request reset boundaries are not yet generated. Host adapters
-and compiler-generated code must not return or retain pointers allocated after
-a mark that will be reset.
+Generated JavaScript adapters wrap exported Gleam calls in an arena scope. The
+adapter marks before encoding JS arguments, calls the Wasm export, decodes the
+return into JS-owned data, and resets in a `finally` block. Raw Wasm and
+Wasmtime exports are not automatically reset because those callers may inspect
+borrowed managed pointers after the call.
+
+Compiler-generated code must not return or retain pointers allocated after a
+mark that will be reset. General internal reset scopes still require escape
+analysis or region tracking.
 
 Reference counting is not the selected strategy for this milestone. It would
 require generated retain/release operations for every managed assignment, field

@@ -874,6 +874,8 @@ pub fn main(input: String) -> String { request_text(input) }"#,
     );
     for name in [
         "__regulus_alloc",
+        "__regulus_arena_mark",
+        "__regulus_arena_reset",
         "__regulus_string_new",
         "__regulus_string_len",
         "__regulus_string_data",

@@ -54,7 +54,7 @@ if (fetched.url !== "https://example.test/") {
 }
 
 const request = { url: "https://example.test/" };
-await init(new URL("./app.wasm", import.meta.url), {
+const exports = await init(new URL("./app.wasm", import.meta.url), {
   "regulus/js": {
     request_text(input) {
       return `${input} from JS`;
@@ -71,14 +71,29 @@ await init(new URL("./app.wasm", import.meta.url), {
   },
 });
 
+const initialMark = exports.__regulus_arena_mark();
 const result = callString("main", "hello");
 if (result !== "hello from JS") {
   throw new Error(`unexpected result: ${result}`);
+}
+if (exports.__regulus_arena_mark() !== initialMark) {
+  throw new Error("adapter callString did not reset the arena");
+}
+
+const secondResult = callString("main", "again");
+if (secondResult !== "again from JS") {
+  throw new Error(`unexpected second result: ${secondResult}`);
+}
+if (exports.__regulus_arena_mark() !== initialMark) {
+  throw new Error("repeated adapter callString did not reuse arena memory");
 }
 
 const described = call("describe_from_js", 7n, 2.5, true, "shape");
 if (described !== "shape:7:2.5:true") {
   throw new Error(`unexpected described result: ${described}`);
+}
+if (exports.__regulus_arena_mark() !== initialMark) {
+  throw new Error("adapter call did not reset scalar/string argument allocations");
 }
 
 const kept = call("keep_bool", true);
@@ -89,6 +104,9 @@ if (kept !== true) {
 const response = call("response");
 if (response.tag !== "Response" || response.fields.status !== 200n || response.fields.body !== "ok") {
   throw new Error(`unexpected response: ${response.tag}`);
+}
+if (exports.__regulus_arena_mark() !== initialMark) {
+  throw new Error("adapter call did not reset structured return allocations");
 }
 
 const names = call("names");

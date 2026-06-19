@@ -371,6 +371,8 @@ impl<'a> StructuredEmitter<'a> {
     fn emit_js_host_abi_helpers(&mut self) {
         self.ensure_memory();
         self.runtime_helper_roots.insert("__alloc".into());
+        self.runtime_helper_roots.insert("__arena_mark".into());
+        self.runtime_helper_roots.insert("__arena_reset".into());
         self.runtime_helper_roots.insert("__string_new".into());
         self.runtime_helper_roots.insert("__string_len".into());
         self.runtime_helper_roots.insert("__string_data".into());
@@ -382,6 +384,15 @@ impl<'a> StructuredEmitter<'a> {
     call $__alloc
   )
   (export "__regulus_alloc" (func $__regulus_alloc))
+  (func $__regulus_arena_mark (result i32)
+    call $__arena_mark
+  )
+  (export "__regulus_arena_mark" (func $__regulus_arena_mark))
+  (func $__regulus_arena_reset (param $mark i32)
+    local.get $mark
+    call $__arena_reset
+  )
+  (export "__regulus_arena_reset" (func $__regulus_arena_reset))
   (func $__regulus_string_new (param $data i32) (param $len i32) (result i32)
     local.get $data
     local.get $len

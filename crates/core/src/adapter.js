@@ -213,8 +213,13 @@ export function callExport(name, paramTypes = [], returnType = "Nil", ...args) {
       `Regulus export "${name}" expects ${paramTypes.length} argument(s), got ${args.length}`,
     );
   }
-  const wasmArgs = args.map((arg, index) => toWasmValue(paramTypes[index], arg));
-  return fromWasmValue(returnType, fn(...wasmArgs));
+  const mark = instance.exports.__regulus_arena_mark();
+  try {
+    const wasmArgs = args.map((arg, index) => toWasmValue(paramTypes[index], arg));
+    return fromWasmValue(returnType, fn(...wasmArgs));
+  } finally {
+    instance.exports.__regulus_arena_reset(mark);
+  }
 }
 
 /**
