@@ -25,10 +25,10 @@ enough that Regulus does not reimplement standard-library behavior.
 
 ### Package Source Migration
 
-- [ ] Add fixtures that load the published `gleam_stdlib` package source as a
+- [x] Add fixtures that load the published `gleam_stdlib` package source as a
       dependency.
-- [ ] Snapshot the first compile blocker for every upstream stdlib module.
-- [ ] Group blockers by source language feature, target filtering, dependency
+- [x] Snapshot the first compile blocker for every upstream stdlib module.
+- [x] Group blockers by source language feature, target filtering, dependency
       metadata, package asset, runtime primitive, and host ABI.
 - [ ] Compile `gleam/pair` from upstream source as the first registry deletion
       proof.
@@ -39,6 +39,24 @@ enough that Regulus does not reimplement standard-library behavior.
       real compiler, runtime, target, package asset, or ABI gap.
 - [ ] Delete the registry once all remaining behavior is represented by package
       source, package metadata, validated assets, or runtime primitives.
+
+Current blocker groups are snapshotted in
+`loader::dependency::tests::snapshots_first_compile_blocker_for_each_upstream_stdlib_module`.
+
+- Source language feature: `gleam/bool`, `gleam/function`, and `gleam/pair`
+  reach lowering with generic functions that require monomorphization.
+- Target filtering: `gleam/bit_array` and `gleam/set` keep duplicate
+  standalone `@target` declarations selected at the same time.
+- Dependency metadata: `gleam/bytes_tree`, `gleam/dict`,
+  `gleam/dynamic/decode`, `gleam/float`, `gleam/int`, `gleam/list`,
+  `gleam/option`, `gleam/order`, `gleam/result`, `gleam/string`, and
+  `gleam/uri` are blocked by transitional registry/interface collisions or
+  missing upstream dependency members.
+- Package asset: `gleam/dynamic` and `gleam/string_tree` first fail around
+  upstream bodyless externals backed by package-relative JS assets.
+- Runtime primitive: no module currently reaches a first blocker in this group.
+- Host ABI: no module currently reaches a first blocker in this group.
+- No current blocker through lowering: `gleam/io`.
 
 ### Registry Exit Plan
 

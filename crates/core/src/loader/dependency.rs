@@ -263,9 +263,10 @@ fn collect_gleam_files(dir: &Path, paths: &mut Vec<PathBuf>) -> Result<(), Diagn
 mod tests {
     use std::collections::{BTreeMap, HashMap};
     use std::fs;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     use crate::project::{GleamToml, PackageGraph, PackageNode, Project};
+    use crate::source::SourceFile;
     use crate::{ir, types};
 
     use super::*;
@@ -373,6 +374,145 @@ mod tests {
             vec!["dep/bar", "dep/foo"],
         );
         assert_eq!(sources[0].sources.len(), 2);
+    }
+
+    #[test]
+    fn published_stdlib_source_fixture_loads_as_dependency_package() {
+        let root = published_stdlib_fixture_root();
+        let package = DependencyPackage {
+            name: "gleam_stdlib".to_string(),
+            version: Some("1.0.3".to_string()),
+            root: root.clone(),
+            source: DependencySource::Hex,
+        };
+
+        let package_sources = load_package_sources(&package, 0).expect("load stdlib source package");
+
+        assert_eq!(package_sources.package.name, "gleam_stdlib");
+        assert_eq!(package_sources.package.root, root);
+        assert_eq!(
+            package_sources
+                .modules
+                .iter()
+                .map(|module| module.name.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "gleam/bit_array",
+                "gleam/bool",
+                "gleam/bytes_tree",
+                "gleam/dict",
+                "gleam/dynamic/decode",
+                "gleam/dynamic",
+                "gleam/float",
+                "gleam/function",
+                "gleam/int",
+                "gleam/io",
+                "gleam/list",
+                "gleam/option",
+                "gleam/order",
+                "gleam/pair",
+                "gleam/result",
+                "gleam/set",
+                "gleam/string",
+                "gleam/string_tree",
+                "gleam/uri",
+            ],
+        );
+        assert_eq!(package_sources.sources.len(), 19);
+    }
+
+    #[test]
+    fn snapshots_first_compile_blocker_for_each_upstream_stdlib_module() {
+        let report = upstream_stdlib_blocker_report();
+
+        insta::assert_snapshot!(report, @r#"
+## dependency metadata
+- `gleam/bytes_tree`: ResolveError: module `gleam/string_tree` has no member `StringTree`
+    --> file 2000002 bytes 1222..1232
+        unknown module member
+- `gleam/dict`: ResolveError: duplicate name `Option`
+    --> file 2000003 bytes 26..32
+        defined again here
+    --> file 4294967295 bytes 0..0
+        previously defined here
+- `gleam/dynamic/decode`: ResolveError: duplicate name `Option`
+    --> file 2000004 bytes 9268..9274
+        defined again here
+    --> file 4294967295 bytes 0..0
+        previously defined here
+- `gleam/float`: ResolveError: duplicate name `Order`
+    --> file 2000006 bytes 1386..1391
+        defined again here
+    --> file 4294967295 bytes 0..0
+        previously defined here
+- `gleam/int`: ResolveError: duplicate name `Order`
+    --> file 2000008 bytes 522..527
+        defined again here
+    --> file 4294967295 bytes 0..0
+        previously defined here
+- `gleam/list`: ResolveError: duplicate name `Order`
+    --> file 2000010 bytes 812..817
+        defined again here
+    --> file 4294967295 bytes 0..0
+        previously defined here
+- `gleam/option`: ResolveError: duplicate name `Option`
+    --> file 2000011 bytes 893..899
+        defined again here
+    --> file 4294967295 bytes 0..0
+        previously defined here
+- `gleam/order`: ResolveError: duplicate name `Order`
+    --> file 2000012 bytes 115..120
+        defined again here
+    --> file 4294967295 bytes 0..0
+        previously defined here
+- `gleam/result`: ResolveError: unknown constructor `Error`
+    --> file 2000014 bytes 405..410
+        constructor not found
+- `gleam/string`: ResolveError: duplicate name `Option`
+    --> file 2000016 bytes 166..172
+        defined again here
+    --> file 4294967295 bytes 0..0
+        previously defined here
+- `gleam/uri`: ResolveError: duplicate name `Option`
+    --> file 2000018 bytes 485..491
+        defined again here
+    --> file 4294967295 bytes 0..0
+        previously defined here
+
+## none
+- `gleam/io`: compiles through lowering
+
+## package asset
+- `gleam/dynamic`: ResolveError: unknown name `cast`
+    --> file 2000005 bytes 2861..2865
+        not found in scope
+- `gleam/string_tree`: ResolveError: unknown name `from_strings`
+    --> file 2000017 bytes 1100..1112
+        not found in scope
+
+## source language feature
+- `gleam/bool`: LoweringError: function `guard` has generic type `Function { params: [Bool, Generic("a"), Function { params: [], return_type: Generic("a") }], return_type: Generic("a") }` that cannot be lowered without monomorphization
+    --> file 2000001 bytes 4663..4668
+        generic function type here
+- `gleam/function`: LoweringError: function `identity` has generic type `Function { params: [Generic("a")], return_type: Generic("a") }` that cannot be lowered without monomorphization
+    --> file 2000007 bytes 75..83
+        generic function type here
+- `gleam/pair`: LoweringError: function `first` has generic type `Function { params: [Tuple([Generic("a"), Generic("b")])], return_type: Generic("a") }` that cannot be lowered without monomorphization
+    --> file 2000013 bytes 128..133
+        generic function type here
+
+## target filtering
+- `gleam/bit_array`: ResolveError: duplicate name `is_utf8_loop`
+    --> file 2000000 bytes 2125..2137
+        defined again here
+    --> file 2000000 bytes 1961..1973
+        previously defined here
+- `gleam/set`: ResolveError: duplicate name `Token`
+    --> file 2000015 bytes 284..289
+        defined again here
+    --> file 2000015 bytes 204..209
+        previously defined here
+"#);
     }
 
     #[test]
@@ -488,5 +628,121 @@ mod tests {
     fn write(path: &Path, contents: &str) {
         fs::create_dir_all(path.parent().expect("parent directory")).expect("create parent directory");
         fs::write(path, contents).expect("write file");
+    }
+
+    fn published_stdlib_fixture_root() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/projects/scalar_app/build/packages/gleam_stdlib")
+    }
+
+    fn upstream_stdlib_blocker_report() -> String {
+        let package = DependencyPackage {
+            name: "gleam_stdlib".to_string(),
+            version: Some("1.0.3".to_string()),
+            root: published_stdlib_fixture_root(),
+            source: DependencySource::Hex,
+        };
+        let package_sources = load_package_sources(&package, 0).expect("load stdlib source package");
+
+        let mut grouped: BTreeMap<&'static str, Vec<String>> = BTreeMap::new();
+        for (module, source) in package_sources
+            .modules
+            .iter()
+            .cloned()
+            .zip(package_sources.sources.into_iter())
+        {
+            let blocker = first_compile_blocker(&package_sources.package, module.clone(), source);
+            grouped.entry(blocker.category).or_default().push(format!(
+                "- `{}`: {}",
+                module.name,
+                blocker.message.replace('\n', "\n  ")
+            ));
+        }
+
+        grouped
+            .into_iter()
+            .map(|(category, blockers)| format!("## {category}\n{}", blockers.join("\n")))
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    }
+
+    struct CompileBlocker {
+        category: &'static str,
+        message: String,
+    }
+
+    fn first_compile_blocker(package: &DependencyPackage, module: ModuleInfo, source: SourceFile) -> CompileBlocker {
+        let module_name = module.name.clone();
+        let project = Project {
+            root: package.root.clone(),
+            config: GleamToml {
+                name: package.name.clone(),
+                version: package.version.clone().unwrap_or_else(|| "1.0.3".to_string()),
+                description: None,
+                licences: Vec::new(),
+                repository: None,
+                links: Vec::new(),
+                gleam: None,
+                target: None,
+                dependencies: BTreeMap::new(),
+                dev_dependencies: BTreeMap::new(),
+            },
+            compile_target: target::CompileTarget::Wasmtime,
+            graph: PackageGraph {
+                root_package: PackageNode {
+                    name: package.name.clone(),
+                    version: package.version.clone().unwrap_or_else(|| "1.0.3".to_string()),
+                    root: package.root.clone(),
+                },
+                dependencies: Vec::new(),
+                dependency_interfaces: HashMap::new(),
+                dependency_sources: Vec::new(),
+                modules: vec![module],
+            },
+            sources: vec![source],
+        };
+
+        match types::check_project(&project).and_then(ir::lower_project) {
+            Ok(_) => CompileBlocker { category: "none", message: "compiles through lowering".to_string() },
+            Err(diagnostics) => {
+                let diagnostic = diagnostics
+                    .first()
+                    .expect("compile blocker diagnostics should not be empty");
+                CompileBlocker {
+                    category: blocker_category(&module_name, &diagnostic.render_plain()),
+                    message: diagnostic.render_plain(),
+                }
+            }
+        }
+    }
+
+    fn blocker_category(module: &str, diagnostic: &str) -> &'static str {
+        if matches!(module, "gleam/bit_array" | "gleam/set")
+            || diagnostic.contains("unsupported target")
+            || diagnostic.contains("target group")
+            || diagnostic.contains("target `")
+        {
+            "target filtering"
+        } else if matches!(module, "gleam/dynamic" | "gleam/string_tree")
+            || diagnostic.contains("external")
+            || diagnostic.contains(".mjs")
+        {
+            "package asset"
+        } else if diagnostic.contains("host call") || diagnostic.contains("ABI") {
+            "host ABI"
+        } else if diagnostic.contains("wasm") || diagnostic.contains("runtime") || diagnostic.contains("stdlib member")
+        {
+            "runtime primitive"
+        } else if diagnostic.contains("unknown module")
+            || diagnostic.contains("unknown constructor")
+            || diagnostic.contains("duplicate name `Option`")
+            || diagnostic.contains("duplicate name `Order`")
+            || diagnostic.contains("file 4294967295")
+            || diagnostic.contains("dependency")
+            || diagnostic.contains("package")
+        {
+            "dependency metadata"
+        } else {
+            "source language feature"
+        }
     }
 }
