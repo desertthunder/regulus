@@ -141,7 +141,7 @@ fn emits_wat_for_public_scalar_function() {
 fn emits_wat_with_runtime_for_string_function() {
     let wasm = compile_wasm("pub fn greeting() { \"hello\" }");
 
-    assert!(wasm.wat.contains("(memory 1)"));
+    assert!(wasm.wat.contains("(memory 1 256)"));
     assert!(!wasm.wat.contains("(func $__alloc"));
     assert!(!wasm.wat.contains("(export \"__regulus_string_len\")"));
     assert!(!wasm.wat.contains("(export \"__regulus_value_tag\")"));
@@ -185,7 +185,8 @@ fn omits_unreachable_runtime_fragment_domains() {
     let wasm = compile_wasm("pub fn join() { \"a\" <> \"b\" }");
 
     assert!(!wasm.wat.contains("(func $__string_concat"), "{}", wasm.wat);
-    assert!(!wasm.wat.contains("(func $__alloc"), "{}", wasm.wat);
+    assert!(!wasm.wat.contains("(func $__alloc "), "{}", wasm.wat);
+    assert!(wasm.wat.contains("(func $__allocation_fail"), "{}", wasm.wat);
     assert!(!wasm.wat.contains("(func $__dict_new"), "{}", wasm.wat);
     assert!(!wasm.wat.contains("(func $__list_cons"), "{}", wasm.wat);
     assert!(!wasm.wat.contains("(func $__bit_array_new"), "{}", wasm.wat);
@@ -209,7 +210,7 @@ fn renders_deterministic_structured_wat_for_managed_values() {
     insta::assert_snapshot!(wasm.wat, @r#"
 (module
   (type (func (result i32)))
-  (memory 1)
+  (memory 1 256)
   (func $pair (type 0) (result i32)
     i32.const 1024
   )
@@ -435,7 +436,7 @@ case list.map([1], fn(x) { x + 1 }) {
 "#,
     );
 
-    assert!(wasm.wat.contains("(global (mut i32)"), "{}", wasm.wat);
+    assert!(wasm.wat.contains("(global $__heap (mut i32)"), "{}", wasm.wat);
     assert!(!wasm.wat.contains("$__list_cons"), "{}", wasm.wat);
     assert!(!wasm.wat.contains("$__closure_new"), "{}", wasm.wat);
 
@@ -2618,6 +2619,94 @@ fn runtime_allocation_grows_memory_without_moving_existing_objects() {
 }
 
 #[test]
+fn runtime_allocation_handles_page_boundaries() {
+    let fill_first_page = runtime::WASM_PAGE_SIZE - runtime::RuntimeConfig::DEFAULT.heap_start;
+    let wat = format!(
+        r#"
+(func $fill_first_page (export "fill_first_page") (result i32)
+ i32.const {fill_first_page}
+ call $__alloc)
+(func $cross_into_next_page (export "cross_into_next_page") (result i32)
+ i32.const 1
+ call $__alloc)
+(func $pages (export "pages") (result i32)
+ memory.size)
+"#,
+    );
+    let instance = runtime_helper_instance(&wat);
+    let (engine, mut store, instance) = instance;
+    let _engine = engine;
+    let pages = instance
+        .get_typed_func::<(), i32>(&mut store, "pages")
+        .expect("get pages export");
+    assert_eq!(pages.call(&mut store, ()).expect("initial pages"), 1);
+
+    let fill_first_page = instance
+        .get_typed_func::<(), i32>(&mut store, "fill_first_page")
+        .expect("get fill_first_page export");
+    assert_eq!(
+        fill_first_page.call(&mut store, ()).expect("fill first page"),
+        runtime::RuntimeConfig::DEFAULT.heap_start as i32
+    );
+    assert_eq!(pages.call(&mut store, ()).expect("pages after fill"), 1);
+
+    let cross_into_next_page = instance
+        .get_typed_func::<(), i32>(&mut store, "cross_into_next_page")
+        .expect("get cross_into_next_page export");
+    assert_eq!(
+        cross_into_next_page.call(&mut store, ()).expect("cross page"),
+        runtime::WASM_PAGE_SIZE as i32
+    );
+    assert_eq!(pages.call(&mut store, ()).expect("pages after cross"), 2);
+}
+
+#[test]
+fn runtime_allocation_allows_exact_heap_limit_boundary() {
+    let fill_heap_limit =
+        runtime::RuntimeConfig::DEFAULT.memory_limit_bytes() - runtime::RuntimeConfig::DEFAULT.heap_start;
+    let wat = format!(
+        r#"
+(func $fill_heap_limit (export "fill_heap_limit") (result i32)
+ i32.const {fill_heap_limit}
+ call $__alloc)
+(func $past_heap_limit (export "past_heap_limit") (result i32)
+ i32.const 1
+ call $__alloc)
+(func $pages (export "pages") (result i32)
+ memory.size)
+"#,
+    );
+    let instance = runtime_helper_instance(&wat);
+    let (engine, mut store, instance) = instance;
+    let _engine = engine;
+    let fill_heap_limit = instance
+        .get_typed_func::<(), i32>(&mut store, "fill_heap_limit")
+        .expect("get fill_heap_limit export");
+    assert_eq!(
+        fill_heap_limit.call(&mut store, ()).expect("fill heap limit"),
+        runtime::RuntimeConfig::DEFAULT.heap_start as i32
+    );
+    let pages = instance
+        .get_typed_func::<(), i32>(&mut store, "pages")
+        .expect("get pages export");
+    assert_eq!(
+        pages.call(&mut store, ()).expect("pages after fill"),
+        runtime::RuntimeConfig::DEFAULT.memory_max_pages as i32
+    );
+
+    let past_heap_limit = instance
+        .get_typed_func::<(), i32>(&mut store, "past_heap_limit")
+        .expect("get past_heap_limit export");
+    assert!(past_heap_limit.call(&mut store, ()).is_err());
+    assert_allocation_panic_payload(
+        &instance,
+        &mut store,
+        1,
+        runtime::RuntimeConfig::DEFAULT.memory_limit_bytes() as u64,
+    );
+}
+
+#[test]
 fn runtime_allocation_failure_writes_structured_panic_payload() {
     let instance = runtime_helper_instance_with_memory(
         r#"
@@ -2650,6 +2739,53 @@ fn runtime_allocation_failure_writes_structured_panic_payload() {
     assert_eq!(u32::from_le_bytes(bytes[8..12].try_into().unwrap()), 1);
     assert_eq!(u64::from_le_bytes(bytes[12..20].try_into().unwrap()), 70008);
     assert_eq!(u64::from_le_bytes(bytes[20..28].try_into().unwrap()), 4096);
+}
+
+#[test]
+fn runtime_allocation_fails_before_configured_heap_limit() {
+    let instance = runtime_helper_instance(
+        r#"
+(func $past_limit (export "past_limit") (result i32)
+ i32.const 16773121
+ call $__alloc)
+"#,
+    );
+    let (engine, mut store, instance) = instance;
+    let _engine = engine;
+    let past_limit = instance
+        .get_typed_func::<(), i32>(&mut store, "past_limit")
+        .expect("get past_limit export");
+    assert!(past_limit.call(&mut store, ()).is_err());
+
+    assert_allocation_panic_payload(&instance, &mut store, 16_773_121, 4096);
+}
+
+#[test]
+fn structured_codegen_allocation_failure_writes_structured_panic_payload() {
+    let span = Span::new(SourceFileId(0), 1, 10);
+    let allocate = exported_function_with_body(
+        "allocate_too_much",
+        &Type::String,
+        ir::Expression {
+            type_: Type::String,
+            span,
+            kind: ExpressionKind::Memory(ir::MemoryOperation::Allocate { bytes: Box::new(int_expr("16773121", span)) }),
+        },
+        span,
+    );
+    let wasm = ir_module(vec![allocate], span)
+        .emit_wasm()
+        .expect("emit allocation failure wasm");
+    let engine = Engine::default();
+    let module = Module::new(&engine, &wasm.bytes).expect("compile wasm module");
+    let mut store = Store::new(&engine, ());
+    let instance = Instance::new(&mut store, &module, &[]).expect("instantiate module");
+    let allocate_too_much = instance
+        .get_typed_func::<(), i32>(&mut store, "allocate_too_much")
+        .expect("get allocate_too_much export");
+    assert!(allocate_too_much.call(&mut store, ()).is_err());
+
+    assert_allocation_panic_payload(&instance, &mut store, 16_773_121, 4096);
 }
 
 #[test]

@@ -3079,7 +3079,7 @@ mod tests {
         let module = lower_source("type Box { Box }\nfn main() { Box }");
         let wat = module.emit_wat().expect("emit managed constructor");
 
-        assert!(wat.contains("(memory 1)"));
+        assert!(wat.contains("(memory 1 256)"));
         assert!(wat.contains("(data (memory 0)"));
     }
 

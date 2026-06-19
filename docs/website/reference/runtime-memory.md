@@ -15,10 +15,11 @@ relocate and growth can fail because of maximum limits, resource limiters, or
 OOM.[^wasmtime-grow]
 
 Regulus allows dynamic memory growth by default during the current bump
-allocator phase. This keeps examples and longer-running tests usable before
-freeing, arena reset, reference counting, or garbage collection exist. Future
-targets may choose a fixed-memory policy, but dynamic growth remains the
-default capacity strategy for the general runtime.
+allocator phase, bounded by an explicit maximum page count. This keeps examples
+and longer-running tests usable before freeing, arena reset, reference counting,
+or garbage collection exist. Future targets may choose a fixed-memory policy,
+but dynamic growth remains the default capacity strategy for the general
+runtime.
 
 ## Host pointers
 

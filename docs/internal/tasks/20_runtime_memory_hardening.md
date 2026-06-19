@@ -10,23 +10,16 @@ longer-running tests.
 ### Allocation behavior
 
 - [x] Add overflow checks for allocation size and alignment arithmetic.
-- [ ] Define whether dynamic memory may grow at runtime.
-- [ ] Add heap-limit checks before bump allocation succeeds.
-- [ ] Add deterministic failure behavior for allocation failure.
-- [ ] Test allocation at page boundaries and near overflow limits.
+- [x] Define whether dynamic memory may grow at runtime.
+- [x] Add heap-limit checks before bump allocation succeeds.
+- [x] Add deterministic failure behavior for allocation failure.
+- [x] Test allocation at page boundaries and near overflow limits.
 
-allow dynamic memory growth by default for the current bump
+We should allow dynamic memory growth by default for the current bump
 allocator phase. Growth keeps non-trivial examples usable before reclamation
-exists, but it must become bounded by an explicit maximum and fail
-deterministically. A fixed-memory policy can still be added later as a target
-or host profile for constrained environments.
-
-Website reference note: `memory.grow` is standard Wasm behavior. It returns the
-old page count or `-1` on failure, and Wasm pages are currently 64KiB. Browser
-`WebAssembly.Memory.grow()` is widely available, but growing detaches existing
-JavaScript `ArrayBuffer` views, so host adapters must reacquire memory views
-after calls. Wasmtime also supports growth, but host memory can relocate and
-growth can fail because of maximum limits, resource limiters, or OOM.
+exists, but it is bounded by an explicit maximum and fails deterministically.
+A fixed-memory policy can still be added later as a target or host profile for
+constrained environments.
 
 ### Runtime object validation
 

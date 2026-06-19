@@ -69,6 +69,15 @@ pub const ALLOC_HELPER: &str = r#"
     i32.and
     local.set $end
     local.get $end
+    i32.const {heap_limit}
+    i32.gt_u
+    if
+      local.get $size
+      local.get $ptr
+      call $__allocation_fail
+      return
+    end
+    local.get $end
     memory.size
     i32.const 65536
     i32.mul

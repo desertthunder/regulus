@@ -1,6 +1,9 @@
 use crate::ClosureConstants;
 use crate::wasm::{RuntimeHelperFragment, fragments, runtime_helper_fragments_from_block};
 
+pub const WASM_PAGE_SIZE: u32 = 65_536;
+pub const DEFAULT_MEMORY_MAX_PAGES: u32 = 256;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Layout {
     pub word_size: u32,
@@ -63,15 +66,28 @@ pub struct RuntimeConfig {
     pub layout: Layout,
     pub static_data_start: u32,
     pub heap_start: u32,
+    pub memory_max_pages: u32,
 }
 
 impl RuntimeConfig {
-    pub const DEFAULT: Self = Self { layout: Layout::DEFAULT, static_data_start: 1024, heap_start: 4096 };
+    pub const DEFAULT: Self = Self {
+        layout: Layout::DEFAULT,
+        static_data_start: 1024,
+        heap_start: 4096,
+        memory_max_pages: DEFAULT_MEMORY_MAX_PAGES,
+    };
+
+    pub fn memory_limit_bytes(self) -> u32 {
+        self.memory_max_pages
+            .checked_mul(WASM_PAGE_SIZE)
+            .expect("runtime memory limit must fit in wasm32 address space")
+    }
 
     pub fn runtime_helper_fragments(self) -> Vec<RuntimeHelperFragment> {
         let alloc_helper = fragments::allocation::ALLOC_HELPER
             .replace("{alignment_mask}", &(self.layout.alignment - 1).to_string())
             .replace("{alignment}", &self.layout.alignment.to_string())
+            .replace("{heap_limit}", &self.memory_limit_bytes().to_string())
             .replace("{allocation_failure_offset}", "64");
         let managed_value_helpers = fragments::managed_values::MANAGED_VALUE_HELPERS
             .replace(

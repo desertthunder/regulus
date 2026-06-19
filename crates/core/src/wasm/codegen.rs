@@ -586,6 +586,7 @@ impl<'a> StructuredEmitter<'a> {
             }
         }
         if needs_allocation(function) {
+            self.runtime_helper_roots.insert("__allocation_fail".into());
             let id = LocalId((structured.params.len() + structured.locals.len()) as u32);
             structured
                 .locals
@@ -1038,7 +1039,7 @@ impl<'a> StructuredEmitter<'a> {
         out.push(Instruction::I32GtU);
         out.push(Instruction::If {
             type_: BlockType::empty(),
-            then_body: vec![Instruction::Unreachable],
+            then_body: self.allocation_failure_body(vec![Instruction::I32Const(bytes as i32)]),
             else_body: Vec::new(),
         });
         out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
@@ -1050,7 +1051,7 @@ impl<'a> StructuredEmitter<'a> {
         out.push(Instruction::I32GtU);
         out.push(Instruction::If {
             type_: BlockType::empty(),
-            then_body: vec![Instruction::Unreachable],
+            then_body: self.allocation_failure_body(vec![Instruction::I32Const(bytes as i32)]),
             else_body: Vec::new(),
         });
         out.push(Instruction::LocalGet { local: end, type_: ValueType::I32 });
@@ -1059,6 +1060,8 @@ impl<'a> StructuredEmitter<'a> {
         out.push(Instruction::I32Const(-(self.config.layout.alignment as i32)));
         out.push(Instruction::I32And);
         out.push(Instruction::LocalSet { local: end, type_: ValueType::I32 });
+
+        self.check_heap_limit(end, vec![Instruction::I32Const(bytes as i32)], out);
 
         out.push(Instruction::LocalGet { local: end, type_: ValueType::I32 });
         out.push(Instruction::MemorySize(memory));
@@ -1083,7 +1086,7 @@ impl<'a> StructuredEmitter<'a> {
                 Instruction::I32Eq,
                 Instruction::If {
                     type_: BlockType::empty(),
-                    then_body: vec![Instruction::Unreachable],
+                    then_body: self.allocation_failure_body(vec![Instruction::I32Const(bytes as i32)]),
                     else_body: Vec::new(),
                 },
             ],
@@ -1094,6 +1097,33 @@ impl<'a> StructuredEmitter<'a> {
         out.push(Instruction::GlobalSet { global: heap, type_: ValueType::I32 });
         out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
         Ok(())
+    }
+
+    fn check_heap_limit(&self, end: LocalId, size: Vec<Instruction>, out: &mut Vec<Instruction>) {
+        out.push(Instruction::LocalGet { local: end, type_: ValueType::I32 });
+        out.push(Instruction::I32Const(self.config.memory_limit_bytes() as i32));
+        out.push(Instruction::I32GtU);
+        out.push(Instruction::If {
+            type_: BlockType::empty(),
+            then_body: self.allocation_failure_body(size),
+            else_body: Vec::new(),
+        });
+    }
+
+    fn allocation_failure_body(&self, size: Vec<Instruction>) -> Vec<Instruction> {
+        let mut body = size;
+        body.extend([
+            Instruction::LocalGet {
+                local: self.alloc_local.expect("allocation pointer local must be present"),
+                type_: ValueType::I32,
+            },
+            Instruction::CallName {
+                name: "__allocation_fail".into(),
+                type_: FunctionType::new([ValueType::I32, ValueType::I32], [ValueType::I32]),
+            },
+            Instruction::Drop(ValueType::I32),
+        ]);
+        body
     }
 
     fn allocate_dynamic(&mut self, out: &mut Vec<Instruction>) -> StructuredResult<()> {
@@ -1112,7 +1142,8 @@ impl<'a> StructuredEmitter<'a> {
         out.push(Instruction::I32GtU);
         out.push(Instruction::If {
             type_: BlockType::empty(),
-            then_body: vec![Instruction::Unreachable],
+            then_body: self
+                .allocation_failure_body(vec![Instruction::LocalGet { local: pages, type_: ValueType::I32 }]),
             else_body: Vec::new(),
         });
         out.push(Instruction::LocalGet { local: ptr, type_: ValueType::I32 });
@@ -1124,7 +1155,8 @@ impl<'a> StructuredEmitter<'a> {
         out.push(Instruction::I32GtU);
         out.push(Instruction::If {
             type_: BlockType::empty(),
-            then_body: vec![Instruction::Unreachable],
+            then_body: self
+                .allocation_failure_body(vec![Instruction::LocalGet { local: pages, type_: ValueType::I32 }]),
             else_body: Vec::new(),
         });
         out.push(Instruction::LocalGet { local: end, type_: ValueType::I32 });
@@ -1133,6 +1165,11 @@ impl<'a> StructuredEmitter<'a> {
         out.push(Instruction::I32Const(-(self.config.layout.alignment as i32)));
         out.push(Instruction::I32And);
         out.push(Instruction::LocalSet { local: end, type_: ValueType::I32 });
+        self.check_heap_limit(
+            end,
+            vec![Instruction::LocalGet { local: pages, type_: ValueType::I32 }],
+            out,
+        );
         out.push(Instruction::LocalGet { local: end, type_: ValueType::I32 });
         out.push(Instruction::MemorySize(memory));
         out.push(Instruction::I32Const(65536));
@@ -1150,13 +1187,13 @@ impl<'a> StructuredEmitter<'a> {
                 Instruction::I32Add,
                 Instruction::I32Const(16),
                 Instruction::I32ShrU,
-                Instruction::LocalTee { local: pages, type_: ValueType::I32 },
                 Instruction::MemoryGrow(memory),
                 Instruction::I32Const(-1),
                 Instruction::I32Eq,
                 Instruction::If {
                     type_: BlockType::empty(),
-                    then_body: vec![Instruction::Unreachable],
+                    then_body: self
+                        .allocation_failure_body(vec![Instruction::LocalGet { local: pages, type_: ValueType::I32 }]),
                     else_body: Vec::new(),
                 },
             ],
@@ -2813,7 +2850,7 @@ impl<'a> StructuredEmitter<'a> {
         }
         let memory = self
             .module
-            .push_memory(Memory { minimum_pages: 1, maximum_pages: None });
+            .push_memory(Memory { minimum_pages: 1, maximum_pages: Some(self.config.memory_max_pages) });
         self.memory = Some(memory);
         memory
     }
