@@ -929,11 +929,13 @@ impl Resolver {
         let key = (namespace, name.text.clone());
         if let Some(previous) = self.scopes[scope_id.0 as usize].symbols.get(&key).copied() {
             let previous_span = self.symbols[previous.0 as usize].span;
-            self.diagnostics.push(
-                Diagnostic::new(DiagnosticCode::ResolveError, format!("duplicate name `{}`", name.text))
-                    .with_label(Label::primary(name.span, "defined again here"))
-                    .with_label(Label::primary(previous_span, "previously defined here")),
-            );
+            self.diagnostics.push(Diagnostic::duplicate(
+                DiagnosticCode::ResolveError,
+                format!("duplicate name `{}`", name.text),
+                name.span,
+                "defined again here",
+                previous_span,
+            ));
             return None;
         }
 

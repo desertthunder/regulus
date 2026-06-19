@@ -22,9 +22,6 @@ Remaining responsibilities:
 - write deterministic artifacts
 - avoid partial final artifacts after failed compilation
 - expose enough metadata for host adapters and tests
-- improve selected type-inference diagnostics
-- finish direct structured byte emission or checked precompiled fragments for
-  helper-backed modules
 
 ## Commands
 
@@ -84,8 +81,8 @@ The backend now builds a compiler-owned Wasm module and can emit bytes directly.
 CLI output should treat WAT as a rendered debug artifact, not as the source of
 truth for byte emission.
 
-Any remaining helper-backed modules should eventually use direct structured
-byte emission or checked precompiled fragments.
+Helper-backed modules should continue to assemble through checked helper
+fragments before they are included in final output.
 
 ## Active tasks
 

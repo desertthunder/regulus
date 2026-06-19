@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use crate::diagnostic::{Diagnostic, DiagnosticCode, Diagnostics, Label};
+use crate::diagnostic::{Diagnostic, DiagnosticCode, Diagnostics};
 use crate::shared::unquote;
 use crate::types::{ExternalFunctionInfo, Type};
 use crate::{ast, source::Span};
@@ -114,7 +114,7 @@ fn validate_value(func: &ast::ExternalFunction, diagnostics: &mut Diagnostics, p
     }
 
     diagnostics.push(
-        Diagnostic::new(
+        Diagnostic::spanned(
             DiagnosticCode::LoweringError,
             format!(
                 "external function `{}` {} uses unsupported ABI shape `{:?}`",
@@ -122,8 +122,9 @@ fn validate_value(func: &ast::ExternalFunction, diagnostics: &mut Diagnostics, p
                 params.pos.description(),
                 params.type_
             ),
+            params.span,
+            "unsupported external ABI shape here",
         )
-        .with_label(Label::primary(params.span, "unsupported external ABI shape here"))
         .with_note(format!(
             "host import `{}.{}` must use concrete scalar values, managed values, or Nil returns",
             unquote(&func.body.module.source),
@@ -138,7 +139,7 @@ fn validate_named_value(named_func: NamedFunction, diagnostics: &mut Diagnostics
     }
 
     diagnostics.push(
-        Diagnostic::new(
+        Diagnostic::spanned(
             DiagnosticCode::LoweringError,
             format!(
                 "external function `{}` {} uses unsupported ABI shape `{:?}`",
@@ -146,8 +147,9 @@ fn validate_named_value(named_func: NamedFunction, diagnostics: &mut Diagnostics
                 params.pos.description(),
                 params.type_
             ),
+            params.span,
+            "unsupported external ABI shape here",
         )
-        .with_label(Label::primary(params.span, "unsupported external ABI shape here"))
         .with_note(format!(
             "host import `{}.{}` must use concrete scalar values, managed values, or Nil returns",
             named_func.module, named_func.function

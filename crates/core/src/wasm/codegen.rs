@@ -266,13 +266,14 @@ impl<'a> StructuredEmitter<'a> {
         }
 
         if !self.runtime_helper_roots.is_empty() {
+            let helper_bundle = super::runtime_helper_bundle(self.config, &self.runtime_helper_roots)
+                .map_err(StructuredError::Invariant)?;
+            debug_assert!(!helper_bundle.bytes.is_empty());
             self.ensure_memory();
             self.ensure_heap_global();
             self.name_heap_global();
             self.ensure_last_panic_global();
-            self.module
-                .raw_wat_items
-                .push(super::runtime_helper_wat(self.config, &self.runtime_helper_roots));
+            self.module.raw_wat_items.push(helper_bundle.wat);
         }
 
         if let Some(memory) = self.memory {
@@ -339,25 +340,27 @@ impl<'a> StructuredEmitter<'a> {
                     Diagnostic::new(
                         DiagnosticCode::WasmError,
                         format!(
-                            "function `{}` imports host function `{module}.{name}`, but target {:?} does not allow that import name",
+                            "function `{}` imports host function `{module}.{name}`, but target `{}` does not allow that import name",
                             function.name,
-                            self.options.target
+                            self.options.target.name()
                         ),
                     )
-                    .with_label(Label::primary(function.span, "unsupported target import here")),
+                    .with_label(Label::primary(function.span, "unsupported target import here"))
+                    .with_note("choose an import name supported by this target profile or select a different target"),
                 ]))
             }
             ir::CallBoundary::HostImport { module, .. } => Err(StructuredError::Diagnostics(vec![
                 Diagnostic::new(
                     DiagnosticCode::WasmError,
                     format!(
-                        "function `{}` imports host module `{module}`, but target {:?} expects `{}`",
+                        "function `{}` imports host module `{module}`, but target `{}` expects `{}`",
                         function.name,
-                        self.options.target,
+                        self.options.target.name(),
                         self.options.target.host_module()
                     ),
                 )
-                .with_label(Label::primary(function.span, "unsupported target import here")),
+                .with_label(Label::primary(function.span, "unsupported target import here"))
+                .with_note("change the external module or compile for the target that provides it"),
             ])),
             ir::CallBoundary::ModuleImport { module, name } => Ok(Some((module.clone(), name.clone()))),
             ir::CallBoundary::Internal | ir::CallBoundary::ModuleExport => Ok(None),
@@ -3339,9 +3342,16 @@ fn is_heap_managed_type(type_: &Type) -> bool {
 fn value_type(type_: &Type, span: Span) -> StructuredResult<ValueType> {
     maybe_value_type(type_).ok_or_else(|| {
         StructuredError::Diagnostics(vec![
-            Diagnostic::new(DiagnosticCode::WasmError, "unsupported host ABI")
-                .with_label(Label::primary(span, "unsupported ABI value here"))
-                .with_note("Wasm boundaries require concrete scalar or managed runtime types"),
+            Diagnostic::spanned(
+                DiagnosticCode::WasmError,
+                "unsupported host ABI",
+                span,
+                "unsupported ABI value here",
+            )
+            .with_notes([
+                "Wasm boundaries require concrete scalar or managed runtime types",
+                "generic return values and unsupported public exports need an explicit supported ABI shape",
+            ]),
         ])
     })
 }

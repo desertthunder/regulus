@@ -65,9 +65,35 @@ fn snapshots_diagnostic_example() {
     insta::assert_snapshot!(strip_ansi(&String::from_utf8_lossy(&output.stderr)), @r#"
 error could not load project examples/diagnostics/duplicate_modules
 diagnostic ProjectError: duplicate module `app` in examples/diagnostics/duplicate_modules/src/app.gleam and examples/diagnostics/duplicate_modules/test/app.gleam
+  note: each module name must be unique across src and test
 "#);
 
     let _ = fs::remove_dir_all(out_dir);
+}
+
+#[test]
+fn build_reports_missing_project_manifest_with_recovery_note() {
+    let temp = unique_temp_dir("regulus_cli_missing_project");
+    fs::create_dir_all(&temp).expect("create temp dir");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_reggie"))
+        .arg("build")
+        .arg(&temp)
+        .output()
+        .expect("run reggie build");
+
+    assert!(!output.status.success(), "missing project should fail");
+    let stderr = strip_ansi(&String::from_utf8_lossy(&output.stderr));
+    assert!(
+        stderr.contains("project manifest not found at"),
+        "unexpected stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("pass a project directory or a path to gleam.toml"),
+        "missing recovery note:\n{stderr}"
+    );
+
+    let _ = fs::remove_dir_all(temp);
 }
 
 #[test]

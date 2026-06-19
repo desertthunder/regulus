@@ -276,6 +276,16 @@ fn includes_transitive_runtime_fragment_dependencies() {
 }
 
 #[test]
+fn runtime_helper_fragments_are_checked_before_module_assembly() {
+    let roots = ["__string_concat".to_string()].into_iter().collect();
+    let bundle = runtime_helper_bundle(runtime::RuntimeConfig::DEFAULT, &roots).expect("checked helper bundle");
+
+    assert!(!bundle.bytes.is_empty());
+    assert!(bundle.wat.contains("$__string_concat"), "{}", bundle.wat);
+    assert!(bundle.wat.contains("$__alloc"), "{}", bundle.wat);
+}
+
+#[test]
 fn renders_deterministic_structured_wat_for_managed_values() {
     let wasm = compile_wasm("pub fn pair() { #(1, 2) }");
 
@@ -759,7 +769,7 @@ fn backend_validation_reports_source_spanned_target_adapter_diagnostics() {
     assert!(
         errors
             .iter()
-            .any(|diagnostic| diagnostic.message.contains("target Browser expects `browser`"))
+            .any(|diagnostic| diagnostic.message.contains("target `browser` expects `browser`"))
     );
     assert!(errors.iter().any(|diagnostic| {
         diagnostic
@@ -961,7 +971,7 @@ pub fn main() -> String { load("weather") }"#,
     assert!(diagnostics.iter().any(|diagnostic| {
         diagnostic
             .message
-            .contains("imports host module `browser`, but target Wasmtime expects `env`")
+            .contains("imports host module `browser`, but target `wasmtime` expects `env`")
     }));
 }
 
@@ -1122,7 +1132,7 @@ pub fn main() -> String { selected("key") }"#,
     assert!(diagnostics.iter().any(|diagnostic| {
         diagnostic
             .message
-            .contains("imports host function `browser.selected`, but target Browser does not allow that import name")
+            .contains("imports host function `browser.selected`, but target `browser` does not allow that import name")
     }));
 }
 
@@ -1206,7 +1216,7 @@ pub fn main(path: String) -> String { read(path) }"#,
     assert!(diagnostics.iter().any(|diagnostic| {
         diagnostic
             .message
-            .contains("imports host function `nodejs.fs.read`, but target Nodejs does not allow that import name")
+            .contains("imports host function `nodejs.fs.read`, but target `nodejs` does not allow that import name")
     }));
 }
 
@@ -1239,7 +1249,7 @@ fn rejects_host_imports_for_the_wrong_target_before_assembly() {
     assert!(
         diagnostics
             .iter()
-            .any(|diagnostic| { diagnostic.message.contains("target Browser expects `browser`") })
+            .any(|diagnostic| { diagnostic.message.contains("target `browser` expects `browser`") })
     );
 }
 

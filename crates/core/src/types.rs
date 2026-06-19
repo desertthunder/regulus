@@ -74,6 +74,20 @@ impl Type {
             _ => false,
         }
     }
+
+    fn has_inference_variable(&self) -> bool {
+        match self {
+            Self::Generic(name) if TypeChecker::is_inference_variable_name(name) => true,
+            Self::Tuple(items) => items.iter().any(Self::has_inference_variable),
+            Self::List(item) => item.has_inference_variable(),
+            Self::Record { fields, .. } => fields.iter().any(|field| field.type_.has_inference_variable()),
+            Self::Custom { args, .. } | Self::Opaque { args, .. } => args.iter().any(Self::has_inference_variable),
+            Self::Function { params, return_type } => {
+                params.iter().any(Self::has_inference_variable) || return_type.has_inference_variable()
+            }
+            _ => false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -553,6 +567,22 @@ fn project_module_order(project: &Project, resolved: &resolve::ResolvedProject) 
     order
 }
 
+fn type_mismatch_diagnostic(expected: &Type, actual: &Type, span: Span, label: impl Into<String>) -> Diagnostic {
+    let mut diagnostic = Diagnostic::expected_found(
+        DiagnosticCode::TypeError,
+        expected.display(),
+        actual.display(),
+        span,
+        label,
+    );
+    if expected.has_inference_variable() || actual.has_inference_variable() {
+        diagnostic = diagnostic.with_note(
+            "this type still contains an inferred local type; add an annotation if the intended type is ambiguous",
+        );
+    }
+    diagnostic
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ScopedType {
     type_: Type,
@@ -842,7 +872,7 @@ impl TypeChecker {
         let substitutions = match generation.constraints.solve() {
             Ok(substitutions) => substitutions,
             Err(error) => {
-                self.push_unification_error(error);
+                self.push_unification_error(error.error, error.label, error.note);
                 return;
             }
         };
@@ -987,18 +1017,21 @@ impl TypeChecker {
         }
     }
 
-    fn push_unification_error(&mut self, error: UnificationError) {
+    fn push_unification_error(
+        &mut self, error: crate::inference::UnificationError, label: Option<String>, note: Option<String>,
+    ) {
         match error {
             UnificationError::Mismatch { expected, actual, span } => {
                 let expected = type_term_to_type(&expected).unwrap_or(Type::Nil);
                 let actual = type_term_to_type(&actual).unwrap_or(Type::Nil);
-                self.diagnostics.push(
-                    Diagnostic::new(
-                        DiagnosticCode::TypeError,
-                        format!("expected `{}` but found `{}`", expected.display(), actual.display()),
-                    )
-                    .with_label(Label::primary(span.unwrap_or(self.module.ast.span), "type mismatch")),
-                );
+                let diagnostic = type_mismatch_diagnostic(
+                    &expected,
+                    &actual,
+                    span.unwrap_or(self.module.ast.span),
+                    label.unwrap_or_else(|| "type mismatch".into()),
+                )
+                .with_optional_note(note);
+                self.diagnostics.push(diagnostic);
             }
             UnificationError::ArityMismatch { expected, actual, span } => self.diagnostics.push(
                 Diagnostic::new(
@@ -1008,12 +1041,23 @@ impl TypeChecker {
                 .with_label(Label::primary(span.unwrap_or(self.module.ast.span), "arity mismatch")),
             ),
             UnificationError::FieldMismatch { field, span } => self.diagnostics.push(
-                Diagnostic::new(DiagnosticCode::TypeError, format!("unknown field `{field}`"))
-                    .with_label(Label::primary(span.unwrap_or(self.module.ast.span), "unknown field")),
+                Diagnostic::new(
+                    DiagnosticCode::TypeError,
+                    format!("record value does not have field `{field}`"),
+                )
+                .with_label(Label::primary(
+                    span.unwrap_or(self.module.ast.span),
+                    "missing field here",
+                ))
+                .with_note("constructor fields are checked by name, not by position"),
             ),
             UnificationError::OccursCheck { span, .. } => self.diagnostics.push(
                 Diagnostic::new(DiagnosticCode::TypeError, "recursive type inferred")
-                    .with_label(Label::primary(span.unwrap_or(self.module.ast.span), "recursive type")),
+                    .with_label(Label::primary(
+                        span.unwrap_or(self.module.ast.span),
+                        "recursive type here",
+                    ))
+                    .with_note("add an annotation or change the value so it does not contain itself"),
             ),
         }
     }
@@ -1211,7 +1255,13 @@ impl TypeChecker {
             self.pop_scope();
 
             match &result_type {
-                Some(expected) => self.expect_same(expected, &clause_type, clause.value.span()),
+                Some(expected) => self.expect_same_with_context(
+                    expected,
+                    &clause_type,
+                    clause.value.span(),
+                    "branch returns a different type",
+                    Some("all case branches must return the same type"),
+                ),
                 None => result_type = Some(clause_type),
             }
         }
@@ -1324,7 +1374,11 @@ impl TypeChecker {
                             DiagnosticCode::TypeError,
                             format!("unknown field `{}`", field_access.field.text),
                         )
-                        .with_label(Label::primary(field_access.field.span, "unknown field")),
+                        .with_label(Label::primary(
+                            field_access.field.span,
+                            "record has no field with this name",
+                        ))
+                        .with_note("check the constructor fields for this record type"),
                     );
                     None
                 }),
@@ -1403,14 +1457,33 @@ impl TypeChecker {
                 None => fields.get(index),
             };
             let Some(field) = field else {
+                let field_name = argument
+                    .label
+                    .as_ref()
+                    .map(|label| format!(" `{}`", label.text))
+                    .unwrap_or_default();
                 self.diagnostics.push(
-                    Diagnostic::new(DiagnosticCode::TypeError, "unknown constructor field")
-                        .with_label(Label::primary(argument.span, "unknown field here")),
+                    Diagnostic::new(
+                        DiagnosticCode::TypeError,
+                        format!("unknown constructor field{field_name}"),
+                    )
+                    .with_label(Label::primary(argument.span, "constructor has no field here"))
+                    .with_note("constructor fields must match the declared constructor arguments"),
                 );
                 continue;
             };
             if let Some(actual) = self.check_expression(&argument.value) {
-                self.expect_same(&field.type_, &actual, argument.span);
+                self.expect_same_with_context(
+                    &field.type_,
+                    &actual,
+                    argument.span,
+                    "field value has the wrong type",
+                    Some(format!(
+                        "constructor field `{}` expects `{}`",
+                        field.name,
+                        field.type_.display()
+                    )),
+                );
             }
         }
     }
@@ -1765,9 +1838,18 @@ impl TypeChecker {
                 None => fields.get(index),
             };
             let Some(field) = field else {
+                let field_name = argument
+                    .label
+                    .as_ref()
+                    .map(|label| format!(" `{}`", label.text))
+                    .unwrap_or_default();
                 self.diagnostics.push(
-                    Diagnostic::new(DiagnosticCode::TypeError, "unknown constructor field")
-                        .with_label(Label::primary(argument.span, "unknown field here")),
+                    Diagnostic::new(
+                        DiagnosticCode::TypeError,
+                        format!("unknown constructor field{field_name}"),
+                    )
+                    .with_label(Label::primary(argument.span, "constructor has no field here"))
+                    .with_note("constructor pattern fields must match the declared constructor arguments"),
                 );
                 continue;
             };
@@ -2012,16 +2094,18 @@ impl TypeChecker {
     }
 
     fn expect_same(&mut self, expected: &Type, actual: &Type, span: Span) {
+        self.expect_same_with_context(expected, actual, span, "type mismatch", None::<String>);
+    }
+
+    fn expect_same_with_context(
+        &mut self, expected: &Type, actual: &Type, span: Span, label: impl Into<String>,
+        note: Option<impl Into<String>>,
+    ) {
         let expected = self.resolve_inference_type(expected);
         let actual = self.resolve_inference_type(actual);
         if self.unify_types(&expected, &actual, span).is_err() {
-            self.diagnostics.push(
-                Diagnostic::new(
-                    DiagnosticCode::TypeError,
-                    format!("expected `{}` but found `{}`", expected.display(), actual.display()),
-                )
-                .with_label(Label::primary(span, "type mismatch")),
-            );
+            let diagnostic = type_mismatch_diagnostic(&expected, &actual, span, label).with_optional_note(note);
+            self.diagnostics.push(diagnostic);
         }
     }
 
@@ -2286,7 +2370,9 @@ impl TypeChecker {
                         ambiguous[0], function.name.text
                     ),
                 )
-                .with_label(Label::primary(function.name.span, "ambiguous inferred type")),
+                .with_label(Label::primary(function.name.span, "ambiguous inferred type"))
+                .with_note("add an explicit return annotation or make the returned value determine the type")
+                .with_note("locally generalized functions may still need an annotation at public boundaries"),
             );
         }
     }
@@ -2841,10 +2927,21 @@ fn main(x: Int) -> Int {
         let diagnostics =
             check_source("fn main(x: Int) { case x { 0 -> 1 _ -> \"two\" } }").expect_err("type check should fail");
 
+        let diagnostic = diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.message.contains("expected `Int`"))
+            .expect("branch mismatch diagnostic");
         assert!(
-            diagnostics
+            diagnostic
+                .labels
                 .iter()
-                .any(|diagnostic| diagnostic.message.contains("expected `Int`"))
+                .any(|label| label.message.as_deref() == Some("branch returns a different type"))
+        );
+        assert!(
+            diagnostic
+                .notes
+                .iter()
+                .any(|note| note == "all case branches must return the same type")
         );
     }
 
@@ -2898,11 +2995,26 @@ fn main() { #(id(1), id("one"), singleton(True)) }
     fn reports_ambiguous_return_types() {
         let diagnostics = check_source("fn main() { [] }").expect_err("ambiguous type should fail");
 
-        assert!(diagnostics.iter().any(|diagnostic| {
+        let diagnostic = diagnostics
+            .iter()
+            .find(|diagnostic| {
+                diagnostic
+                    .message
+                    .contains("ambiguous inferred type `a` in return type of `main`")
+            })
+            .expect("ambiguous return diagnostic");
+        assert!(
             diagnostic
-                .message
-                .contains("ambiguous inferred type `a` in return type of `main`")
-        }));
+                .notes
+                .iter()
+                .any(|note| note.contains("explicit return annotation"))
+        );
+        assert!(
+            diagnostic
+                .notes
+                .iter()
+                .any(|note| note.contains("locally generalized functions"))
+        );
     }
 
     #[test]
@@ -3315,6 +3427,41 @@ fn main(person: Person) { case person { Person(name: 1, age: _) -> 0 } }
                 .collect::<Vec<_>>()
                 .join("\n\n")
         );
+    }
+
+    #[test]
+    fn reports_constructor_field_diagnostics_with_field_names() {
+        let diagnostics = check_source(
+            r#"pub type User {
+  User(name: String, age: Int)
+}
+
+fn main() { User(name: "Ada", age: "old") }
+"#,
+        )
+        .expect_err("constructor fields should fail");
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.message.contains("expected `Int` but found `String`")
+                && diagnostic
+                    .labels
+                    .iter()
+                    .any(|label| label.message.as_deref() == Some("field value has the wrong type"))
+                && diagnostic.notes.iter().any(|note| note.contains("field `age`"))
+        }));
+    }
+
+    #[test]
+    fn reports_recursive_type_diagnostics_with_recovery_note() {
+        let diagnostics = check_source("fn main(x) { x(x) }").expect_err("recursive type should fail");
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.message == "recursive type inferred"
+                && diagnostic
+                    .notes
+                    .iter()
+                    .any(|note| note.contains("does not contain itself"))
+        }));
     }
 
     #[test]

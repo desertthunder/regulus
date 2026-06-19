@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
@@ -258,15 +259,20 @@ fn project_root(path: &Path) -> PathBuf {
 fn read_config(root: &Path) -> Result<GleamToml, Diagnostics> {
     let path = root.join("gleam.toml");
     let text = fs::read_to_string(&path).map_err(|error| {
-        vec![Diagnostic::new(
-            DiagnosticCode::ProjectError,
-            format!("could not read {}: {error}", path.display()),
-        )]
+        let message = if error.kind() == io::ErrorKind::NotFound {
+            format!("project manifest not found at {}", path.display())
+        } else {
+            format!("could not read project manifest {}: {error}", path.display())
+        };
+        vec![
+            Diagnostic::new(DiagnosticCode::ProjectError, message)
+                .with_note("pass a project directory or a path to gleam.toml"),
+        ]
     })?;
     toml::from_str(&text).map_err(|error| {
         vec![Diagnostic::new(
             DiagnosticCode::ProjectError,
-            format!("could not parse {}: {error}", path.display()),
+            format!("could not parse project manifest {}: {error}", path.display()),
         )]
     })
 }
@@ -327,15 +333,18 @@ fn discover_modules(root: &Path) -> Result<(Vec<SourceFile>, Vec<ModuleInfo>), D
             continue;
         }
         if let Some(previous) = seen.insert(module_name.clone(), path.clone()) {
-            diagnostics.push(Diagnostic::new(
-                DiagnosticCode::ProjectError,
-                format!(
-                    "duplicate module `{}` in {} and {}",
-                    module_name,
-                    previous.display(),
-                    path.display()
-                ),
-            ));
+            diagnostics.push(
+                Diagnostic::new(
+                    DiagnosticCode::ProjectError,
+                    format!(
+                        "duplicate module `{}` in {} and {}",
+                        module_name,
+                        previous.display(),
+                        path.display()
+                    ),
+                )
+                .with_note("each module name must be unique across src and test"),
+            );
             continue;
         }
 

@@ -14,11 +14,19 @@ pub struct Constraint {
     pub expected: TypeTerm,
     pub actual: TypeTerm,
     pub span: Span,
+    pub label: Option<String>,
+    pub note: Option<String>,
 }
 
 impl Constraint {
     pub fn new(expected: TypeTerm, actual: TypeTerm, span: Span) -> Self {
-        Self { expected, actual, span }
+        Self { expected, actual, span, label: None, note: None }
+    }
+
+    pub fn with_context(
+        expected: TypeTerm, actual: TypeTerm, span: Span, label: impl Into<String>, note: impl Into<String>,
+    ) -> Self {
+        Self { expected, actual, span, label: Some(label.into()), note: Some(note.into()) }
     }
 }
 
@@ -33,7 +41,14 @@ impl ConstraintSet {
     }
 
     pub fn push(&mut self, expected: TypeTerm, actual: TypeTerm, span: Span) {
-        self.constraints.push(Constraint { expected, actual, span });
+        self.constraints.push(Constraint::new(expected, actual, span));
+    }
+
+    pub fn push_with_context(
+        &mut self, expected: TypeTerm, actual: TypeTerm, span: Span, label: impl Into<String>, note: impl Into<String>,
+    ) {
+        self.constraints
+            .push(Constraint::with_context(expected, actual, span, label, note));
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &Constraint> {
@@ -44,13 +59,26 @@ impl ConstraintSet {
         self.constraints.is_empty()
     }
 
-    pub fn solve(&self) -> std::result::Result<Substitutions, UnificationError> {
+    pub fn solve(&self) -> std::result::Result<Substitutions, ConstraintSolveError> {
         let mut unifier = Unifier::new();
         for constraint in &self.constraints {
-            unifier.unify(&constraint.expected, &constraint.actual, Some(constraint.span))?;
+            unifier
+                .unify(&constraint.expected, &constraint.actual, Some(constraint.span))
+                .map_err(|error| ConstraintSolveError {
+                    error,
+                    label: constraint.label.clone(),
+                    note: constraint.note.clone(),
+                })?;
         }
         Ok(unifier.into_substitutions())
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConstraintSolveError {
+    pub error: UnificationError,
+    pub label: Option<String>,
+    pub note: Option<String>,
 }
 
 impl IntoIterator for ConstraintSet {
@@ -374,8 +402,13 @@ impl ConstraintGenerator {
                     .push(TypeTerm::Bool, guard_type, expression_span(guard));
             }
             let branch = self.infer_expression(&clause.value)?;
-            self.constraints
-                .push(result.clone(), branch, expression_span(&clause.value));
+            self.constraints.push_with_context(
+                result.clone(),
+                branch,
+                expression_span(&clause.value),
+                "branch returns a different type",
+                "all case branches must return the same type",
+            );
             self.pop_scope();
         }
         Ok(result)
@@ -605,14 +638,11 @@ impl ConstraintGenerator {
     fn infer_record(&mut self, record: &ast::Record) -> Result<TypeTerm> {
         let name = constructor_name_text(&record.constructor);
         let constructor = self.constructor_function(&name, record.span)?;
-        let result = self.supply.fresh_type();
-        let args = self.infer_constructor_arguments(&name, &record.arguments)?;
-        self.constraints.push(
-            TypeTerm::Function { params: args, return_type: Box::new(result.clone()) },
-            constructor,
-            record.span,
-        );
-        Ok(result)
+        let TypeTerm::Function { params, return_type } = constructor else {
+            return Ok(self.supply.fresh_type());
+        };
+        self.push_constructor_argument_constraints(&name, &record.arguments, &params)?;
+        Ok(*return_type)
     }
 
     fn infer_record_update(&mut self, update: &ast::RecordUpdate) -> Result<TypeTerm> {
@@ -630,30 +660,46 @@ impl ConstraintGenerator {
                 let Some(label) = &argument.label else { continue };
                 let Some(index) = info.fields.iter().position(|field| field.name == label.text) else { continue };
                 let Some(expected) = params.get(index).cloned() else { continue };
+                let field = &info.fields[index];
                 let actual = self.infer_expression(&argument.value)?;
-                self.constraints.push(expected, actual, argument.span);
+                self.constraints.push_with_context(
+                    expected,
+                    actual,
+                    argument.span,
+                    "field value has the wrong type",
+                    format!("constructor field `{}` expects a specific type", field.name),
+                );
             }
         }
         Ok(spread)
     }
 
-    fn infer_constructor_arguments(&mut self, constructor: &str, arguments: &[ast::Argument]) -> Result<Vec<TypeTerm>> {
+    fn push_constructor_argument_constraints(
+        &mut self, constructor: &str, arguments: &[ast::Argument], params: &[TypeTerm],
+    ) -> Result<()> {
         let Some(info) = self.constructors.get(constructor).cloned() else {
-            return arguments
-                .iter()
-                .map(|argument| self.infer_expression(&argument.value))
-                .collect();
+            for argument in arguments {
+                self.infer_expression(&argument.value)?;
+            }
+            return Ok(());
         };
-        let mut ordered = Vec::new();
         for (index, field) in info.fields.iter().enumerate() {
             let argument = arguments
                 .iter()
                 .find(|argument| argument.label.as_ref().is_some_and(|label| label.text == field.name))
                 .or_else(|| arguments.get(index));
             let Some(argument) = argument else { continue };
-            ordered.push(self.infer_expression(&argument.value)?);
+            let Some(expected) = params.get(index).cloned() else { continue };
+            let actual = self.infer_expression(&argument.value)?;
+            self.constraints.push_with_context(
+                expected,
+                actual,
+                argument.span,
+                "field value has the wrong type",
+                format!("constructor field `{}` expects a specific type", field.name),
+            );
         }
-        Ok(ordered)
+        Ok(())
     }
 
     fn infer_tuple_access(&mut self, access: &ast::TupleAccess) -> Result<TypeTerm> {

@@ -257,10 +257,33 @@ fn runtime_helper_roots(wat: &str) -> HashSet<String> {
         .collect()
 }
 
-fn runtime_helper_wat(config: runtime::RuntimeConfig, helper_roots: &HashSet<String>) -> String {
+struct RuntimeHelperBundle {
+    wat: String,
+    bytes: Vec<u8>,
+}
+
+fn runtime_helper_bundle(
+    config: runtime::RuntimeConfig, helper_roots: &HashSet<String>,
+) -> Result<RuntimeHelperBundle, String> {
     let mut prelude = RuntimePrelude { wat: String::new(), fragments: config.runtime_helper_fragments() };
     prelude.helpers(helper_roots);
-    prelude.wat
+    let bytes = checked_runtime_helper_module_bytes(config, &prelude.wat)?;
+    Ok(RuntimeHelperBundle { wat: prelude.wat, bytes })
+}
+
+#[cfg(test)]
+fn runtime_helper_wat(config: runtime::RuntimeConfig, helper_roots: &HashSet<String>) -> String {
+    runtime_helper_bundle(config, helper_roots)
+        .expect("runtime helper fragments should be checked")
+        .wat
+}
+
+fn checked_runtime_helper_module_bytes(config: runtime::RuntimeConfig, helper_wat: &str) -> Result<Vec<u8>, String> {
+    let wat = format!(
+        "(module\n  (memory 1 {})\n  (global $__heap (mut i32) (i32.const {}))\n  (global $__last_panic_payload (mut i32) (i32.const 0))\n{helper_wat})\n",
+        config.memory_max_pages, config.heap_start
+    );
+    wat::parse_str(&wat).map_err(|error| format!("runtime helper fragments did not assemble: {error}"))
 }
 
 pub fn runtime_helper_fragments_from_block(block: &str) -> Vec<RuntimeHelperFragment> {

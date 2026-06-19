@@ -38,19 +38,19 @@ Make compiler commands predictable and generated artifacts useful.
 - [x] Disable silent fallback from structured codegen to the old WAT emitter.
 - [x] Keep unsupported IR as source-spanned `WasmError` diagnostics.
 - [x] Delete the old `Emitter` implementation and fallback-only tests.
-- [ ] Give helper-backed modules direct structured byte emission or checked
+- [x] Give helper-backed modules direct structured byte emission or checked
       precompiled fragments.
 
 ### Diagnostics and user output
 
 - [x] Render diagnostics with source snippets, labels, notes, and file paths.
 - [x] Group diagnostics across project modules in a stable order.
-- [ ] Improve type-inference diagnostics for local generalization, ambiguous
+- [x] Improve type-inference diagnostics for local generalization, ambiguous
       types, recursive types, constructor fields, and branch mismatches.
 - [x] Show unsupported-feature diagnostics from AST, resolver, type, lowering,
       backend, stdlib, and ABI stages without losing source spans.
 - [x] Keep normal compile output concise; make debug output opt-in.
-- [ ] Add human-readable messages for missing project files, duplicate modules,
+- [x] Add human-readable messages for missing project files, duplicate modules,
       unsupported exports, and backend target mismatches.
 
 ### Integration tests
