@@ -47,9 +47,9 @@ impl Diagnostic {
     }
 
     pub fn expected_found(
-        code: DiagnosticCode, got: impl Display, want: impl Display, span: Span, label: impl Into<String>,
+        code: DiagnosticCode, expected: impl Display, actual: impl Display, span: Span, label: impl Into<String>,
     ) -> Self {
-        Self::spanned(code, format!("expected `{got}` but found `{want}`"), span, label)
+        Self::spanned(code, format!("expected `{expected}` but found `{actual}`"), span, label)
     }
 
     pub fn duplicate(

@@ -47,6 +47,97 @@ fn builds_working_examples() {
 }
 
 #[test]
+fn global_no_color_disables_status_ansi_output() {
+    let out_dir = unique_temp_dir("regulus_cli_no_color_build");
+    fs::create_dir_all(&out_dir).expect("create output dir");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_reggie"))
+        .current_dir(workspace_root())
+        .arg("--no-color")
+        .arg("build")
+        .arg("examples/scalar_project")
+        .arg("--out-dir")
+        .arg(&out_dir)
+        .output()
+        .expect("run reggie build");
+
+    assert!(
+        output.status.success(),
+        "build failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("wasm "), "missing status output:\n{stderr}");
+    assert!(
+        !stderr.contains("\u{1b}["),
+        "--no-color should disable status ANSI codes: {stderr:?}"
+    );
+
+    let _ = fs::remove_dir_all(out_dir);
+}
+
+#[test]
+fn global_no_color_is_accepted_after_subcommand() {
+    let output = Command::new(env!("CARGO_BIN_EXE_reggie"))
+        .current_dir(workspace_root())
+        .arg("list")
+        .arg("examples/multi_module_project")
+        .arg("--no-color")
+        .output()
+        .expect("run reggie list");
+
+    assert!(
+        output.status.success(),
+        "list failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("project multi_module_project"),
+        "missing project output:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("\u{1b}["),
+        "--no-color should disable list ANSI codes: {stderr:?}"
+    );
+}
+
+#[test]
+fn no_color_environment_disables_diagnostic_ansi_output() {
+    let out_dir = unique_temp_dir("regulus_cli_no_color_env");
+    fs::create_dir_all(&out_dir).expect("create output dir");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_reggie"))
+        .current_dir(workspace_root())
+        .env("NO_COLOR", "1")
+        .arg("build")
+        .arg("examples/diagnostics/duplicate_modules")
+        .arg("--out-dir")
+        .arg(&out_dir)
+        .output()
+        .expect("run reggie build");
+
+    assert!(!output.status.success(), "diagnostic example should fail");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("error could not load project"),
+        "missing error output:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("diagnostic ProjectError"),
+        "missing diagnostic output:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("\u{1b}["),
+        "NO_COLOR should disable diagnostic ANSI codes: {stderr:?}"
+    );
+
+    let _ = fs::remove_dir_all(out_dir);
+}
+
+#[test]
 fn snapshots_diagnostic_example() {
     let out_dir = unique_temp_dir("regulus_cli_example_diagnostic");
     fs::create_dir_all(&out_dir).expect("create output dir");

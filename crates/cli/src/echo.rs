@@ -1,11 +1,40 @@
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::{fmt::Display, process::ExitCode};
 
 use compiler_core::diagnostic::{Diagnostic, Diagnostics};
 use compiler_core::source::{SourceFile, Span};
 use owo_colors::OwoColorize;
 
+static COLOR_ENABLED: AtomicBool = AtomicBool::new(true);
+
+pub fn set_color_enabled(enabled: bool) {
+    COLOR_ENABLED.store(enabled, Ordering::Relaxed);
+}
+
+fn color_enabled() -> bool {
+    COLOR_ENABLED.load(Ordering::Relaxed)
+}
+
+fn styled_label(label: &str, style: LabelStyle) -> String {
+    if !color_enabled() {
+        return label.to_string();
+    }
+    match style {
+        LabelStyle::Status => label.bright_magenta().bold().to_string(),
+        LabelStyle::Error => label.bright_red().bold().to_string(),
+        LabelStyle::Diagnostic => label.bright_yellow().bold().to_string(),
+    }
+}
+
+#[derive(Clone, Copy)]
+enum LabelStyle {
+    Status,
+    Error,
+    Diagnostic,
+}
+
 pub fn status(label: &str, message: impl AsRef<str>) {
-    eprintln!("{} {}", label.bright_magenta().bold(), message.as_ref());
+    eprintln!("{} {}", styled_label(label, LabelStyle::Status), message.as_ref());
 }
 
 pub fn progress(message: impl AsRef<str>) {
@@ -13,7 +42,7 @@ pub fn progress(message: impl AsRef<str>) {
 }
 
 pub fn error(message: impl AsRef<str>) {
-    eprintln!("{} {}", "error".bright_red().bold(), message.as_ref());
+    eprintln!("{} {}", styled_label("error", LabelStyle::Error), message.as_ref());
 }
 
 pub fn fail(action: &str, subject: impl Display, cause: impl Display) -> ExitCode {
@@ -36,7 +65,11 @@ pub fn fail_with_source_diagnostics(
 }
 
 pub fn diagnostic(message: impl AsRef<str>) {
-    eprintln!("{} {}", "diagnostic".bright_yellow().bold(), message.as_ref());
+    eprintln!(
+        "{} {}",
+        styled_label("diagnostic", LabelStyle::Diagnostic),
+        message.as_ref()
+    );
 }
 
 pub fn diagnostics(diagnostics: &Diagnostics) {

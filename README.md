@@ -37,7 +37,8 @@ that each layer can be tested and explained.
 | Standard library                | Selected modules and intrinsics |
 | Whole-project linked output     | Supported subset                |
 | Dependency source loading       | Selected Hex and path packages  |
-| Browser, Node.js, and WASI ABIs | Incomplete                      |
+| Browser, bundler, and Node.js   | Supported adapter subset        |
+| WASI ABI                        | Incomplete                      |
 
 ### Working today
 
@@ -50,12 +51,17 @@ that each layer can be tested and explained.
 - [x] Lower the supported subset to core IR
 - [x] Emit deterministic `.wasm`
 - [x] Render optional WAT
-- [x] Run scalar and managed-value exports in Wasmtime tests
+- [x] Run scalar and managed-value exports with Wasmtime
 - [x] Load `gleam.toml` and discover project modules
 - [x] Compile supported projects into linked Wasm output
 - [x] Load selected Hex and path dependency sources
 - [x] Lower supported externals to Wasm imports
 - [x] Validate target-aware host imports
+- [x] Emit deterministic browser, bundler, and Node.js `.mjs` adapters
+- [x] Emit optional AST, resolved, typed, IR, runtime, and ABI debug artifacts
+- [x] Render source diagnostics with snippets, labels, notes, and stable
+      project ordering
+- [x] Keep normal CLI output concise, with `--no-color` and `NO_COLOR` support
 
 ### Supported Gleam surface
 
@@ -80,15 +86,18 @@ that each layer can be tested and explained.
       values
 - [x] Branches, comparisons, equality, pattern checks, and failure paths
 - [x] Selected runtime helpers and stdlib intrinsics
+- [x] Checked runtime helper fragments before final module output
 
 ### Not yet implemented
 
 - [ ] Compile every valid Gleam project shape
 - [ ] Compile broad dependency source modules without subset limits
-- [ ] Compile the full Gleam standard library from source
-- [ ] Provide complete browser, bundler, and Node.js host ABIs
+- [ ] Compile the full published `gleam_stdlib` package without registry shims
+- [ ] Provide complete browser, bundler, and Node.js host APIs beyond the
+      current adapter subset
 - [ ] Provide complete WASI adapters
-- [ ] Add garbage collection, reference counting, or heap growth checks
+- [ ] Add garbage collection or reference counting for long-lived managed
+      values
 
 For more detail, see the case-study book in
 [docs/book](./docs/book/src/introduction.md) and the user/development docs in

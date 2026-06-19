@@ -46,7 +46,7 @@ impl CompiledModule {
     }
 }
 
-pub fn run(command: Command) -> ExitCode {
+pub fn run(command: Command, no_color: bool) -> ExitCode {
     match command {
         Command::Build { project, output, out_dir, target, emit, wat, dump_dir, verbose, json } => {
             let mut builder =
@@ -61,30 +61,31 @@ pub fn run(command: Command) -> ExitCode {
         Command::Run { input, function, args, target, verbose, json } => {
             Runner::new(&input, &function, &args, target, verbose, json).run()
         }
-        Command::Debug { view, input, tree_sitter, ast, spans, json, no_color } => run_debug(
+        Command::Debug { view, input, tree_sitter, ast, spans, json, no_color: debug_no_color } => run_debug(
             view,
             input.as_deref(),
-            DebugOptions::new(tree_sitter, ast, spans, json, no_color),
+            DebugOptions::new(tree_sitter, ast, spans, json, no_color || debug_no_color),
+            no_color,
         ),
         Command::List { project } => list(project.as_deref().unwrap_or_else(|| Path::new("."))),
     }
 }
 
-fn run_debug(view: Option<DebugCommand>, input: Option<&Path>, opts: DebugOptions) -> ExitCode {
+fn run_debug(view: Option<DebugCommand>, input: Option<&Path>, opts: DebugOptions, no_color: bool) -> ExitCode {
     match view {
         Some(DebugCommand::Ts(args)) => Debugger::new(
             &args.input,
-            DebugOptions::new(true, false, false, args.json, args.no_color),
+            DebugOptions::new(true, false, false, args.json, no_color || args.no_color),
         )
         .run(),
         Some(DebugCommand::Spans(args)) => Debugger::new(
             &args.input,
-            DebugOptions::new(true, false, true, args.json, args.no_color),
+            DebugOptions::new(true, false, true, args.json, no_color || args.no_color),
         )
         .run(),
         Some(DebugCommand::Ast(args)) => Debugger::new(
             &args.input,
-            DebugOptions::new(false, true, false, args.json, args.no_color),
+            DebugOptions::new(false, true, false, args.json, no_color || args.no_color),
         )
         .run(),
         Some(DebugCommand::Json(args)) => Debugger::new(

@@ -6,6 +6,11 @@ use compiler_core::target::CompileTarget;
 #[derive(Debug, Parser)]
 #[command(about = "Compile Gleam source to WebAssembly")]
 pub struct Args {
+    /// Disable ANSI colors in human-readable output.
+    ///
+    /// This is also enabled when the NO_COLOR environment variable is set.
+    #[arg(long, global = true)]
+    pub no_color: bool,
     #[command(subcommand)]
     pub command: Command,
 }

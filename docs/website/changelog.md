@@ -6,13 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### 2026-06-19
 
+#### Added
+
+- CLI project and single-file compilation now share output path, target, WAT,
+  emit, dump, verbose, and JSON reservation flags.
+- `run` and `exec` now compile one source file, execute a Wasmtime export, and
+  render scalar and supported managed return values.
+- Build output now includes deterministic Wasm, optional WAT, AST, resolved,
+  typed, IR, runtime layout, ABI, and import/export metadata artifacts.
+- Browser, bundler, and Node.js targets now emit deterministic `.mjs` host
+  adapter files when Wasm output is requested.
+- CLI diagnostics now include stable multi-module ordering, source snippets,
+  labels, notes, clearer project errors, clearer target and ABI mismatch
+  messages, and improved type-inference context.
+
 #### Changed
 
-- Promoted the JavaScript host ABI contract to the website development docs.
-
-#### Removed
-
-- Removed the completed internal JavaScript host ABI spec and task tracker.
+- The CLI now supports a global `--no-color` flag and honors the
+  [`NO_COLOR`](https://no-color.org/) environment variable for plain
+  human-readable output.
+- WAT is now treated as a rendered debug artifact; structured Wasm byte
+  emission is the source of truth for final `.wasm` output.
 
 ### 2026-06-05
 
