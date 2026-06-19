@@ -38,9 +38,11 @@ The `examples/` directory follows this command behavior:
 
 - `examples/scalar_project` builds the smallest project Wasm artifact.
 - `examples/multi_module_project` builds linked same-project modules.
-- `examples/browser_scalar` builds a browser-target artifact with handwritten
-  JS instantiation glue.
 - `examples/diagnostics/duplicate_modules` documents a failing project shape.
+
+Use `examples/scalar_project --target browser`, `--target bundler`, or
+`--target nodejs` to check JS adapter emission without duplicating the scalar
+project example.
 
 See `docs/website/guide/usage/cli.md` for a usage guide/manual.
 
@@ -51,11 +53,11 @@ See `docs/website/guide/usage/cli.md` for a usage guide/manual.
 default for `compile`. When `build` omits `--target`, it uses the project
 target from `gleam.toml`.
 
-The `bundler` target writes a `.mjs` adapter next to the `.wasm` artifact when
-Wasm output is requested. The adapter is the current checked JavaScript host
-path. It loads the Wasm module, exposes ABI metadata, checks imports, converts
-scalar and string calls, reads supported structured export results, and keeps
-opaque JavaScript handles in an adapter-owned table.
+The `browser`, `bundler`, and `nodejs` targets write a `.mjs` adapter next to
+the `.wasm` artifact when Wasm output is requested. The adapter is the current
+checked JavaScript host path. It loads the Wasm module, exposes ABI metadata,
+checks imports, converts scalar and string calls, reads supported structured
+export results, and keeps opaque JavaScript handles in an adapter-owned table.
 
 Target selection filters target-group declarations before later compiler phases
 and checks that host imports are valid for the selected target.

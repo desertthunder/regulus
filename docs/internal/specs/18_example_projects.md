@@ -27,16 +27,19 @@ The compiler can load selected Hex and path dependency source modules, but it
 does not compile arbitrary dependency code without subset limits.
 
 General external functions lower to Wasm imports when the selected target and
-ABI shape are supported. Bodyless `@external` declarations from sources are
-still missing.
+ABI shape are supported. Bodyless `@external` declarations from project and
+dependency source use the same selected target ABI when metadata is available.
 
 The low-level host ABI supports scalar values and borrowed managed pointers.
-The bundler JavaScript adapter is the current checked host path for strings,
-supported structured export results, import/export metadata, and adapter-owned
-opaque handle tables.
+The generated JavaScript adapter is the checked host path for browser, bundler,
+and Node.js targets. It supports strings, selected structured export results,
+import/export metadata, standard browser and Node.js import helpers, and
+adapter-owned opaque handle tables.
 
-Browser-specific host APIs, Node.js loading, structured imports, and
-opaque-handle externals are still incomplete.
+Structured JavaScript values passed into Gleam imports or exported function
+parameters are still deferred. Broader dependency source compilation, full
+dynamic decoding, and runtime memory hardening remain the main gaps for larger
+examples.
 
 `gleam/dynamic`, `gleam/dynamic/decode`, `gleam/uri`, `gleam/pair`,
 `gleam/set`, `gleam/string_tree`, and `gleam/bytes_tree` are still unsupported

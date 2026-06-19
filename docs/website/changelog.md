@@ -4,6 +4,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-06-19
+
+#### Changed
+
+- Promoted the JavaScript host ABI contract to the website development docs.
+
+#### Removed
+
+- Removed the completed internal JavaScript host ABI spec and task tracker.
+
 ### 2026-06-05
 
 #### Added

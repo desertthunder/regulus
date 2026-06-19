@@ -13,15 +13,13 @@ Wasm artifact.
 
 Current work is focused on making that Gleam-project-to-Wasm path more usable:
 
-1. Finish the JavaScript host ABI pieces needed by Wasm projects.
-2. Harden runtime memory and host pointer behavior.
-3. Improve CLI artifacts, diagnostics, and host metadata.
-4. Fill stdlib and dependency gaps that block realistic projects.
-5. Add larger examples as acceptance fixtures after the core gaps are planned.
+1. Harden runtime memory and host pointer behavior.
+2. Improve CLI artifacts, diagnostics, and host metadata.
+3. Fill stdlib and dependency gaps that block realistic projects.
+4. Add larger examples as acceptance fixtures after the core gaps are planned.
 
 ## Specs
 
-- [JS host ABI](specs/15_js_host_abi.md)
 - [Stdlib and host interop](specs/16_stdlib_and_host_interop.md)
 - [CLI and build outputs](specs/17_cli_and_build_outputs.md)
 - [Example projects](specs/18_example_projects.md)
@@ -30,7 +28,6 @@ Current work is focused on making that Gleam-project-to-Wasm path more usable:
 
 ## Task Trackers
 
-- [JS host ABI](tasks/15_js_host_abi.md)
 - [Stdlib and host interop](tasks/16_stdlib_and_host_interop.md)
 - [CLI and build outputs](tasks/17_cli_and_build_outputs.md)
 - [Runtime memory hardening](tasks/20_runtime_memory_hardening.md)

@@ -64,9 +64,11 @@ The checked examples cover usable project shapes:
 
 - `examples/scalar_project` is the smallest working project build.
 - `examples/multi_module_project` exercises same-project imports.
-- `examples/browser_scalar` exercises browser-target scalar Wasm and a small
-  handwritten host.
 - `examples/diagnostics/duplicate_modules` shows a project-shape diagnostic.
+
+JS target adapter emission is covered by building `examples/scalar_project`
+with a JS target such as `--target browser`, avoiding a duplicate scalar
+project.
 
 A larger long-term fixture should exercise real Gleam project structure,
 dependencies, UI code, records, custom types, and browser-facing Wasm.

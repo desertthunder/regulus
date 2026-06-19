@@ -8,7 +8,7 @@ compiler's current surface area.
 ```sh
 reggie build examples/scalar_project
 reggie build examples/multi_module_project
-reggie build examples/browser_scalar --target browser
+reggie build examples/scalar_project --target browser
 ```
 
 ## Example projects
@@ -17,10 +17,12 @@ reggie build examples/browser_scalar --target browser
 | --- | --- |
 | `examples/scalar_project` | Smallest normal project build. |
 | `examples/multi_module_project` | Same-project imports and linked output. |
-| `examples/browser_scalar` | Browser-target Wasm with host glue. |
 | `examples/diagnostics/duplicate_modules` | Intentional project diagnostic. |
 
 Diagnostic examples are expected to fail before Wasm emission.
+Use `--target browser`, `--target bundler`, or `--target nodejs` with
+`examples/scalar_project` to check JS adapter emission without keeping
+duplicate scalar examples.
 
 ## Roadmap examples
 

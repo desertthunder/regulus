@@ -25,12 +25,12 @@ Make compiler commands predictable and generated artifacts useful.
 - [x] Add optional AST, resolved AST, typed output, and IR debug dumps.
 - [x] Emit Wasm bytes from a structured module without going through WAT.
 - [x] Add deterministic WAT snapshots generated from structured Wasm.
-- [x] Emit deterministic bundler `.mjs` adapter files when Wasm output is
-      requested for the `bundler` target.
-- [x] Expose bundler import and export metadata needed by checked host calls.
+- [x] Emit deterministic `.mjs` adapter files when Wasm output is requested for
+      browser, bundler, and Node.js targets.
+- [x] Expose JS host import and export metadata needed by checked host calls.
 - [ ] Add optional runtime layout and ABI debug output where helpful.
-- [ ] Include import and export metadata in explicit debug output where useful.
-- [ ] Emit or package deterministic browser and Node.js host adapter files when
+- [x] Include import and export metadata in explicit debug output where useful.
+- [x] Emit or package deterministic browser and Node.js host adapter files when
       requested.
 
 ### Backend cleanup
@@ -59,7 +59,7 @@ Make compiler commands predictable and generated artifacts useful.
 - [x] Add CLI integration tests for diagnostics across multiple files.
 - [x] Add tests for output path handling and optional WAT/debug artifacts.
 - [ ] Add tests for target selection and unsupported target combinations.
-- [ ] Add tests for browser and Node.js JS host profile output.
+- [x] Add tests for browser and Node.js JS host profile output.
 - [x] Add tests for bundler host adapter artifact paths.
 
 ## Done when

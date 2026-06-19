@@ -8,6 +8,18 @@ This page defines the first JS host ABI. Browser, bundler, and Node.js profiles
 share these value rules. Profiles only change loading behavior, available host
 APIs, and accepted import module names.
 
+## Scope
+
+The ABI covers values and calls crossing between compiled Gleam Wasm and a
+JavaScript host. It does not define application logic, browser networking
+policy, routing, response construction, or library behavior that can compile
+from Gleam source.
+
+The milestone path is intentionally small: compile a Gleam project to Wasm plus
+JS glue, call a selected JavaScript external, pass a JS string into Gleam,
+return a Gleam string to JS, and run the path through browser, bundler, and
+Node.js profiles without handwritten pointer arithmetic in application code.
+
 ## Ownership model
 
 Scalar values cross the boundary as raw Wasm values. Managed Gleam values cross
@@ -123,6 +135,28 @@ Scalar `Int` fields are the signed `i64` value. `Bool` fields use `0n` and
 slot. Managed fields store a borrowed pointer in the low 32 bits. Glue should
 convert those pointer fields before recursively reading them.
 
+## Generated adapters
+
+For browser, bundler, and Node.js targets, `compile` and `build` write a
+deterministic sibling `.mjs` adapter whenever Wasm output is requested. The
+adapter embeds compiler-generated ABI metadata for supported imports and
+exports, exposes it as `abi`, and uses the same metadata to wrap host imports
+and checked exported calls.
+
+The adapter is shared across JS profiles. Profile helpers only provide loading
+defaults and standard imports:
+
+- `init(wasm, imports)` for the shared checked instantiation path
+- `initBrowserPage(wasm, imports, options)` and `createBrowserImports(options)`
+- `initNode(wasm, imports, options)` and `createNodeImports(options)`
+- `call(name, ...args)` for metadata-driven export calls
+- `callExport(name, params, result, ...args)` for explicit checked calls
+- `exportFunction(name, params, result)` for reusable checked wrappers
+
+Hosts may pass a URL, bytes, an `ArrayBufferView`, or a precompiled
+`WebAssembly.Module`. Node.js hosts may also pass a relative or absolute
+filesystem path or `file:` URL.
+
 ## Structured readers
 
 Generated or packaged JS glue exposes reader helpers over borrowed managed
@@ -195,10 +229,10 @@ readValue(ptr, { kind: "List", item: "String" });
 readValue(ptr, { kind: "Result", ok: "String", error: "Int" });
 ```
 
-Bundler adapters embed export ABI metadata for supported structured returns.
-The metadata uses the same shape objects consumed by `readValue`, so `call` and
-`exportFunction` can decode structured return pointers without handwritten
-shape arrays.
+Browser, bundler, and Node.js adapters embed ABI metadata for supported
+imports and exports. The metadata uses the same shape objects consumed by
+`readValue`, so `call` and `exportFunction` can decode structured return
+pointers without handwritten shape arrays.
 
 ## Import modules
 
@@ -255,6 +289,26 @@ conversion as the browser and bundler profiles.
 Non-JS targets use different modules and are outside this contract. Wasmtime
 uses `env`, and WASI uses `wasi_snapshot_preview1`.
 
+## Bodyless externals
+
+Source declarations of the form
+`@external(javascript, "module", "name") pub fn f(...) -> ...` are represented
+as external functions with target, module, and function metadata. Project and
+dependency module interfaces preserve that metadata so lowering can select the
+external that matches the compile target.
+
+Selected JavaScript externals lower through the same host-import ABI as
+handwritten `external fn ... = "module" "name"` declarations. Imported
+bodyless externals from project modules or dependency interfaces become
+synthetic host-import functions in IR, using generated backend names for linked
+modules while preserving the declared JavaScript module and function names.
+
+If dependency source cannot be compiled and a referenced dependency member is
+not represented by selected external metadata, lowering reports a
+source-spanned missing-member diagnostic instead of emitting unresolved calls.
+Unsupported parameter or return ABI shapes are validated before Wasm emission
+for both local external declarations and imported bodyless metadata.
+
 ## Imported functions
 
 A JavaScript host import is a Gleam `external fn` whose module is accepted by
@@ -279,9 +333,8 @@ Supported imported return shapes are:
 
 Structured managed values may lower as borrowed pointers internally. Stable JS
 conversion for imported structured parameters and returns is deferred until
-structured writers and generated import metadata are complete. Generic values
-and function values are unsupported across JS host imports until their ABI
-contracts are defined.
+structured writers are complete. Generic values and function values are
+unsupported across JS host imports until their ABI contracts are defined.
 
 ## Exported functions
 
@@ -311,7 +364,7 @@ Supported exported return shapes for checked call wrappers are:
 - `Result(a, e)` when `a` and `e` are supported reader shapes
 - `Option(a)` when `a` is a supported reader shape
 
-Generated bundler metadata maps public export names to parameter and return
+Generated JS adapter metadata maps public export names to parameter and return
 shapes. `call("name", ...args)` uses that metadata to convert scalar
 parameters, invoke the Wasm export, and decode the return value.
 
@@ -341,7 +394,6 @@ This contract intentionally does not define:
 
 - writing structured JavaScript values into Gleam
 - structured import parameters or returns
-- generated binding metadata
 
-Those pieces build on the scalar, string, module-name, and validation contract
-above.
+Those pieces build on the scalar, string, module-name, metadata, and validation
+contract above.

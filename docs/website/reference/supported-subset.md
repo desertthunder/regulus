@@ -17,7 +17,7 @@ Gleam source -> parse -> AST -> resolve -> type check -> IR -> Wasm
 | Type checking               | Broad subset                    |
 | Managed runtime values      | Partial                         |
 | Standard library            | Selected modules and intrinsics |
-| Browser and JS ABI          | Partial                         |
+| JavaScript host ABI         | Browser, bundler, and Node.js   |
 | WASI ABI                    | Incomplete                      |
 | Memory management           | Bump allocation only            |
 
@@ -31,6 +31,8 @@ Gleam source -> parse -> AST -> resolve -> type check -> IR -> Wasm
 - Filter target-group declarations for Wasmtime, browser, bundler, Node.js, and
   WASI targets.
 - Emit optional debug dumps: AST, resolved AST, typed AST, IR, and WAT.
+- Emit generated `.mjs` JS host adapters for browser, bundler, and Node.js
+  targets when Wasm output is requested.
 
 ### Language surface
 
@@ -125,6 +127,7 @@ The backend emits deterministic Wasm and optional WAT for:
 - selected runtime helpers
 - target-aware host imports
 - selected stdlib intrinsics
+- JS host ABI helpers for strings, structured readers, and opaque handles
 
 ABI mapping:
 
@@ -140,6 +143,9 @@ String exports with no parameters also receive:
 
 - `<name>__data`
 - `<name>__len`
+
+JS host builds export stable runtime helpers for writing strings, reading
+strings and structured managed values, and wrapping opaque host handles.
 
 ## Partially supported
 
@@ -173,15 +179,20 @@ The stdlib registry models selected interfaces and lowering strategies for:
 - `gleam/order`
 - `gleam/bool`
 - `gleam/dict`
+- `gleam/dynamic`
+- `gleam/dynamic/decode`
 - `gleam/float`
 - `gleam/function`
 - `gleam/bit_array`
 
-This is not full stdlib source compilation.
+Some remaining modules are interface-only or unsupported beyond dependency
+metadata. This is not full stdlib source compilation.
 
 ### Externals and targets
 
 General non-stdlib externals lower to Wasm imports when their ABI is supported.
+Bodyless `@external` declarations from project and dependency source lower
+through the selected target ABI when metadata is available.
 
 The compiler:
 
@@ -189,12 +200,15 @@ The compiler:
 - filters target-specific declarations
 - validates selected target modules
 - rejects unsupported ABI shapes before byte emission
-- emits bundler-oriented JavaScript adapter glue for the `bundler` target when
-  Wasm output is requested
+- emits generated JavaScript adapter glue for browser, bundler, and Node.js
+  targets when Wasm output is requested
+- embeds import and export metadata for checked JS host calls
+- exposes standard browser and Node.js import helpers
 
-The bundler adapter is the most complete JavaScript host path today. Browser
-and Node.js targets are accepted and validated, but complete profile-specific
-host glue and API adapters are still in progress.
+The JavaScript adapter supports scalar and string imports, scalar and string
+export parameters, supported structured export returns, and opaque host-handle
+conversion. Structured JavaScript values passed into Gleam imports or exported
+function parameters are still deferred.
 
 ## Not yet supported
 
@@ -202,15 +216,14 @@ host glue and API adapters are still in progress.
 
 - Compiling every valid Gleam project shape.
 - Broad dependency source compilation without subset limits.
-- Bodyless `@external` declarations from project and dependency source.
 - Full stdlib source compilation.
 
 ### Host interop
 
-- Full browser, bundler, and Node.js JS ABI.
 - Complete WASI adapters.
-- Rich managed-value wrappers for arbitrary imports and exports.
-- Opaque JS handle validation and conversion for external imports and exports.
+- Writing arbitrary structured JavaScript values into Gleam.
+- Structured JS import parameters and returns.
+- Arbitrary managed-value wrappers for every import and export shape.
 
 ### Runtime and memory management
 

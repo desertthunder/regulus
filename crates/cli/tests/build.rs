@@ -8,7 +8,7 @@ fn builds_working_examples() {
     for (example, target) in [
         ("examples/scalar_project", None),
         ("examples/multi_module_project", None),
-        ("examples/browser_scalar", Some("browser")),
+        ("examples/scalar_project", Some("browser")),
     ] {
         let out_dir = unique_temp_dir("regulus_cli_example_build");
         fs::create_dir_all(&out_dir).expect("create output dir");

@@ -76,7 +76,7 @@ into guest memory at the Wasm boundary. Programs can still print strings through
 Both `build` and `compile` accept `--target`:
 
 ```sh
-reggie build examples/browser_scalar --target browser
+reggie build examples/scalar_project --target browser
 reggie build examples/scalar_project --target bundler
 reggie compile path/to/module.gleam --target wasmtime
 ```

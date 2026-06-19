@@ -2,16 +2,17 @@
 
 ## Goal
 
-Support useful standard library modules and host calls without making broad
-stdlib completion block the JS host ABI milestone.
+Compile upstream `gleam_stdlib` from source and remove the stdlib registry.
 
 ## Direction
 
 - [ ] Keep explicit stdlib intrinsics limited to compiler/runtime primitives.
-- [ ] Prefer compiled Gleam source or bodyless externals for library behavior.
+- [ ] Prefer compiled upstream Gleam source for library behavior.
+- [ ] Use bodyless externals and validated stdlib shims for native behavior.
 - [ ] Use the JS host ABI for JavaScript-backed stdlib and dependency calls.
-- [ ] Treat remaining stdlib modules as follow-on work driven by examples and
-      dependency gaps, not as a prerequisite for usable JS output.
+- [ ] Replace registry behavior module by module as source fixtures compile.
+- [ ] Finish by deleting the stdlib registry instead of preserving it as an
+      interface cache or compatibility table.
 
 ## Tasks
 
@@ -31,6 +32,72 @@ stdlib completion block the JS host ABI milestone.
       module interface schemes.
 - [x] Add diagnostics for unsupported stdlib modules, functions, types, or
       target combinations.
+- [ ] Mark each registry entry as compiled source, temporary interface,
+      intrinsic, stdlib shim, or target host adapter.
+- [ ] Record the intended replacement path for each temporary registry member.
+- [ ] Move compiler-owned primitives out of the stdlib registry and into the
+      normal runtime or external primitive tables.
+- [ ] Delete registry entries once their interfaces come from package metadata
+      or compiled source.
+
+### Upstream stdlib audit and migration
+
+- [ ] Add a fixture that compiles the published upstream `gleam_stdlib` source
+      as a dependency package.
+- [ ] Snapshot the first compile blocker for each upstream stdlib module.
+- [ ] Group blocker reports by source language feature, target selection,
+      dependency package asset, runtime primitive, and ABI shape.
+- [ ] Compile `gleam/pair` from upstream source as the first registry-removal
+      proof.
+- [ ] Compile pure portions of `gleam/order`, `gleam/result`, `gleam/option`,
+      `gleam/list`, `gleam/int`, and `gleam/float` from upstream source where
+      the current runtime is sufficient.
+- [ ] Keep registry-backed behavior only where the blocker report shows a real
+      native, runtime, target, or ABI dependency.
+- [ ] Remove the table-driven stdlib registry once every remaining member is
+      represented by package source, package metadata, validated shims, or
+      runtime primitives.
+
+### Target attributes
+
+- [x] Filter target-group declarations before typing and lowering so
+      target-specific externals can reuse local names safely.
+- [ ] Preserve standalone `@target(erlang)` and `@target(javascript)`
+      attributes on parsed declarations.
+- [ ] Apply target filtering to upstream functions, constants, types, and
+      externals, not only grouped externals.
+- [ ] Treat upstream `javascript` declarations as available to browser,
+      bundler, and Node.js profiles.
+- [ ] Add duplicate-name fixtures where target selection prevents conflicts,
+      including the upstream `gleam/set` token shape.
+- [ ] Add diagnostics for declarations eliminated by target filtering when they
+      are referenced from selected code.
+
+### Bodyless types and `anything`
+
+- [x] Preserve bodyless runtime types as external type interfaces.
+- [ ] Define the internal type representation for `anything`.
+- [ ] Allow `anything` in stdlib-native externals such as dynamic casts,
+      dynamic indexes, and `string.inspect`.
+- [ ] Reject unsupported user exports, imports, and general ABI positions that
+      use `anything`.
+- [ ] Add diagnostics that distinguish `anything` from ordinary generic type
+      variables when lowering cannot support it.
+- [ ] Add fixtures for upstream `dynamic.cast`, `dynamic/decode.bare_index`,
+      and `string.inspect`.
+
+### Stdlib native shims
+
+- [ ] Decide whether JS stdlib shims are packaged as source assets, mapped to
+      runtime helpers, or replaced by compiler intrinsics.
+- [ ] Validate stdlib-relative JS external modules such as
+      `../gleam_stdlib.mjs` and `../dict.mjs` for the stdlib package only.
+- [ ] Preserve upstream external module and function names in diagnostics and
+      JS metadata even when a Regulus helper is used internally.
+- [ ] Reject arbitrary user relative JS imports unless a separate package asset
+      policy defines them.
+- [ ] Add fixtures for selected upstream JS externals that exercise stdlib
+      package asset resolution.
 
 ### Group 1: initial useful stdlib
 
@@ -46,6 +113,8 @@ stdlib completion block the JS host ABI milestone.
       lowering.
 - [x] Support `gleam/order.Order`, `Lt`, `Eq`, and `Gt` in interfaces and
       lowering.
+- [ ] Replace eligible group-1 registry behavior with compiled upstream source
+      after the source fixture and native blockers are in place.
 
 ### Host ABI
 
@@ -57,7 +126,9 @@ stdlib completion block the JS host ABI milestone.
 - [x] Define how host code reads compiler memory and how compiler code receives
       host-provided managed values.
 - [x] Add rich managed-value wrappers or adapter functions for ABI shapes that
-      do not map directly to raw WASM parameters and results.
+      do not map directly to raw Wasm parameters and results.
+- [ ] Define how dynamic values and opaque native stdlib values cross the JS
+      host ABI.
 
 ### Intrinsics and host calls
 
@@ -74,13 +145,13 @@ stdlib completion block the JS host ABI milestone.
 - [x] Lower non-stdlib external functions to Wasm imports.
 - [x] Preserve external module and function names in import metadata.
 - [x] Validate external import modules against the selected target.
-- [x] Filter target-group declarations before typing and lowering so
-      target-specific externals can reuse local names safely.
 - [x] Add a centralized external ABI validator with source-spanned diagnostics
       for unsupported parameter and return shapes.
 - [x] Reject unsupported external function ABI shapes before byte emission.
 - [x] Add table-driven tests for selected target groups, unsupported ABI
       shapes, supported managed shapes, and JS host imports.
+- [ ] Split ordinary user JS import validation from validated dependency
+      package asset imports.
 
 ### Higher-order intrinsics and runtime callbacks
 
@@ -98,22 +169,39 @@ stdlib completion block the JS host ABI milestone.
 - [x] Add tests for closures passed to intrinsics, captured closures, nested
       callbacks, generic callbacks, and callback failures.
 
+### Dict and collection runtime
+
+- [x] Support the current registry-backed `gleam/dict` surface.
+- [ ] Define whether upstream dict uses `dict.mjs`, a Regulus runtime helper,
+      or compiler intrinsics.
+- [ ] Implement or shim the native `Dict` and `TransientDict`
+      representations used by upstream source.
+- [ ] Define equality and hashing semantics for dict keys.
+- [ ] Support callback ABI shapes needed by dict fold, map, filter, and merge
+      operations.
+- [ ] Define how dict values cross the JS host ABI and structured output
+      helpers.
+- [ ] Add an upstream `gleam/dict` compile fixture and blocker report.
+- [ ] Add behavior fixtures for insert, delete, get, fold, merge, equality,
+      and transient update paths.
+
 ### Dynamic values and structured data
 
 - [ ] Define the JSON bridge from host JSON or JSON text to `Dynamic`.
 - [ ] Map JSON null, bool, number, string, array, and object values to
       documented dynamic runtime shapes.
 - [ ] Support full `gleam/dynamic` value construction and classification.
+- [ ] Support `anything` in dynamic cast and dynamic index boundaries.
 - [ ] Implement primitive dynamic runtime operations for classification,
-      property lookup, list traversal, object traversal, and value construction.
-- [ ] Add a compile fixture for the upstream `gleam/dynamic/decode` module.
-- [ ] Add a blocker report for that fixture that lists each unsupported syntax,
-      dependency interface, runtime primitive, and ABI shape encountered.
+      property lookup, index lookup, null checks, list traversal, object
+      traversal, and value construction.
+- [ ] Add compile fixtures for upstream `gleam/dynamic` and
+      `gleam/dynamic/decode`.
 - [ ] Reuse normal closure dispatch for decoder continuations used by `field`,
       `map`, `then`, `recursive`, and generated record decoders.
-- [ ] Implement any missing dynamic primitives required by compiled decoder
-      source for field lookup, path traversal, collection traversal, error
-      aggregation, recursion, and primitive custom decoders.
+- [ ] Implement missing primitives required by compiled decoder source for path
+      traversal, collection traversal, error aggregation, recursion, and custom
+      primitive decoders.
 - [ ] Construct real `DecodeError(expected, found, path)` values through
       compiled stdlib code or a documented primitive constructor.
 - [ ] Add diagnostics for unsupported dynamic operations, dependency modules,
@@ -122,14 +210,38 @@ stdlib completion block the JS host ABI milestone.
 - [ ] Add fixtures for nested objects, optional/null fields, lists, dicts,
       records, enum variants, `one_of`, and decode error paths.
 
+### Text, binary, and URI primitives
+
+- [x] Support the current registry-backed `gleam/bit_array` surface.
+- [ ] Define native helper strategy for upstream `gleam/string`.
+- [ ] Implement or shim Unicode codepoint, grapheme, slicing, replace, split,
+      casing, trimming, inspect, and parse helpers required by upstream string
+      source.
+- [ ] Implement or shim `gleam/string_tree` and its iodata-style conversion
+      helpers.
+- [ ] Implement or shim `gleam/bytes_tree` and byte-tree flattening helpers.
+- [ ] Implement or shim base16, base64, byte slicing, and byte classification
+      helpers used by upstream stdlib.
+- [ ] Implement or shim URI parsing, percent encode/decode, query handling, and
+      reconstruction helpers needed by `gleam/uri`.
+- [ ] Expand bit-string construction and deconstruction to sized segments used
+      by upstream `gleam/bit_array`.
+- [ ] Add diagnostics for unsupported segment options, byte alignment, and
+      binary pattern forms.
+- [ ] Add upstream compile fixtures for `gleam/string`,
+      `gleam/string_tree`, `gleam/bytes_tree`, `gleam/bit_array`, and
+      `gleam/uri`.
+
 ### Runtime scope
 
 - [ ] Add a runtime helper inventory grouped by allocation, managed values,
-      closures, equality, debug, dynamic values, and host adapters.
+      closures, equality, debug, dynamic values, native shims, opaque handles,
+      and host adapters.
 - [ ] Add tests that prove dynamic decoder combinators call normal compiled
       closures rather than runtime-specific callback paths.
 - [ ] Replace any runtime helper that implements library-level decoder,
-      routing, or response behavior with a compile fixture for the library code.
+      routing, URI, or response behavior with a compile fixture for the library
+      code.
 - [ ] Add unsupported-feature diagnostics for any runtime primitive requested by
       compiled library code but not implemented.
 
@@ -140,13 +252,14 @@ stdlib completion block the JS host ABI milestone.
 - [x] Support `gleam/float`.
 - [x] Support `gleam/function`.
 - [x] Support `gleam/bit_array`.
-- [ ] Support `gleam/bytes_tree`.
-- [ ] Support `gleam/string_tree`.
-- [ ] Support full `gleam/dynamic`.
-- [ ] Support full `gleam/dynamic/decode`.
-- [ ] Support `gleam/pair`.
-- [ ] Support `gleam/set`.
-- [ ] Support `gleam/uri`.
+- [ ] Compile or support `gleam/pair`.
+- [ ] Compile or support `gleam/set` after target attributes and dict runtime
+      support are in place.
+- [ ] Compile or support `gleam/bytes_tree`.
+- [ ] Compile or support `gleam/string_tree`.
+- [ ] Compile or support full `gleam/dynamic`.
+- [ ] Compile or support full `gleam/dynamic/decode`.
+- [ ] Compile or support `gleam/uri`.
 - [ ] Prefer compiling stdlib Gleam source or using bodyless externals for
       Group 2 where possible.
 - [ ] Add target-specific intrinsics or host adapters only when source
@@ -155,5 +268,8 @@ stdlib completion block the JS host ABI milestone.
 ## Done when
 
 Small programs using selected Gleam stdlib functionality compile and execute
-against a documented host interface, and unsupported stdlib usage fails with a
-specific source-spanned diagnostic.
+against a documented host interface, unsupported stdlib usage fails with a
+specific source-spanned diagnostic, and the stdlib registry has been removed.
+The compiler may still have runtime primitive tables, external import
+validation, and dependency package metadata, but none of those tables should be
+a bespoke stdlib interface registry.

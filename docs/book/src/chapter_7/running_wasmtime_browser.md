@@ -62,23 +62,19 @@ A browser host usually fetches bytes and instantiates them with an import
 object:
 
 ```js
-import { createRegulusBrowserImports } from "./host.js";
+import { initBrowserPage } from "./module.mjs";
 
-let instance;
-const imports = createRegulusBrowserImports(() => instance);
+const exports = await initBrowserPage(fetch("module.wasm"));
 
-({ instance } = await WebAssembly.instantiateStreaming(fetch("module.wasm"), imports));
-
-console.log(instance.exports.id(42n));
+console.log(exports.id(42n));
 ```
 
 `instantiateStreaming` is a browser Web API convenience for compiling and
 instantiating from a `Response`. Hosts that cannot stream can fetch an
 `ArrayBuffer` and call `WebAssembly.instantiate` instead.
 
-The browser import module is named `browser`. The example glue in
-`examples/browser/host.js` provides `print`, `println`, `debug_i64`,
-`debug_f64`, `debug_bool`, and `debug_value`. The debug imports print and
+The browser import module is named `browser`. Generated JS adapters provide the
+checked instantiation path for browser-target modules. Browser imports print and
 return control to compiled code; the compiler preserves the debugged value on
 its own stack.
 
