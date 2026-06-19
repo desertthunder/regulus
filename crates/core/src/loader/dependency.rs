@@ -267,7 +267,7 @@ mod tests {
 
     use crate::project::{GleamToml, PackageGraph, PackageNode, Project};
     use crate::source::SourceFile;
-    use crate::{ir, types};
+    use crate::{ir, stdlib::StdlibRegistry, types};
 
     use super::*;
 
@@ -481,6 +481,7 @@ mod tests {
 
 ## none
 - `gleam/io`: compiles through lowering
+- `gleam/pair`: compiles through lowering
 
 ## package asset
 - `gleam/dynamic`: ResolveError: unknown name `cast`
@@ -496,9 +497,6 @@ mod tests {
         generic function type here
 - `gleam/function`: LoweringError: function `identity` has generic type `Function { params: [Generic("a")], return_type: Generic("a") }` that cannot be lowered without monomorphization
     --> file 2000007 bytes 75..83
-        generic function type here
-- `gleam/pair`: LoweringError: function `first` has generic type `Function { params: [Tuple([Generic("a"), Generic("b")])], return_type: Generic("a") }` that cannot be lowered without monomorphization
-    --> file 2000013 bytes 128..133
         generic function type here
 
 ## target filtering
@@ -585,6 +583,73 @@ mod tests {
     }
 
     #[test]
+    fn compiles_upstream_gleam_pair_source_without_registry_entry() {
+        let package_sources = upstream_pair_source_package();
+        let project = project_from_dependency_source_package(package_sources);
+
+        let typed = types::check_project(&project).expect("type check upstream pair");
+        let lowered = ir::lower_project(typed).expect("lower upstream pair");
+
+        assert_eq!(lowered.functions.len(), 6);
+        assert!(lowered.linked_debug_dump().contains("gleam_stdlib:gleam/pair.first"));
+        assert!(StdlibRegistry::new().module("gleam/pair").is_none());
+    }
+
+    #[test]
+    fn root_project_imports_gleam_pair_from_compiled_dependency_source() {
+        let package_sources = upstream_pair_source_package();
+        let pair_interface = interface_from_source(package_sources.sources[0].clone());
+        let mut dependency_interfaces = HashMap::new();
+        dependency_interfaces.insert(
+            "gleam/pair".to_string(),
+            InterfaceEntry::new("gleam_stdlib", "gleam/pair", pair_interface),
+        );
+        let root = package_sources.package.root.join("__regulus_pair_proof");
+        let source = SourceFile::with_path(
+            SourceFileId(0),
+            root.join("src/app.gleam"),
+            "import gleam/pair\n\npub fn main() -> Int {\n  pair.first(#(1, \"one\"))\n}\n",
+        );
+        let project = Project {
+            root: root.clone(),
+            config: GleamToml {
+                name: "pair_proof".to_string(),
+                version: "1.0.0".to_string(),
+                description: None,
+                licences: Vec::new(),
+                repository: None,
+                links: Vec::new(),
+                gleam: None,
+                target: None,
+                dependencies: BTreeMap::new(),
+                dev_dependencies: BTreeMap::new(),
+            },
+            compile_target: target::CompileTarget::Wasmtime,
+            graph: PackageGraph {
+                root_package: PackageNode { name: "pair_proof".to_string(), version: "1.0.0".to_string(), root },
+                dependencies: Vec::new(),
+                dependency_interfaces,
+                dependency_sources: vec![package_sources],
+                modules: vec![ModuleInfo {
+                    name: "app".to_string(),
+                    path: PathBuf::from("src/app.gleam"),
+                    source_id: SourceFileId(0),
+                    source_root: SourceRoot::Src,
+                }],
+            },
+            sources: vec![source],
+        };
+
+        let typed = types::check_project(&project).expect("type check project using upstream pair");
+        let lowered = ir::lower_project(typed).expect("lower project using upstream pair");
+        let dump = lowered.linked_debug_dump();
+
+        assert!(dump.contains("gleam_stdlib:gleam/pair.first"));
+        assert!(dump.contains("pair_proof:app.main"));
+        assert!(!dump.contains("__stdlib_gleam_pair_first"));
+    }
+
+    #[test]
     fn absolute_path_dependency_source_is_loaded_directly() {
         let temp = tempfile::tempdir().expect("temp dir");
         let root = temp.path().join("app");
@@ -634,6 +699,75 @@ mod tests {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/projects/scalar_app/build/packages/gleam_stdlib")
     }
 
+    fn upstream_pair_source_package() -> DependencySourcePackage {
+        let package = DependencyPackage {
+            name: "gleam_stdlib".to_string(),
+            version: Some("1.0.3".to_string()),
+            root: published_stdlib_fixture_root(),
+            source: DependencySource::Hex,
+        };
+        let package_sources = load_package_sources(&package, 0).expect("load stdlib source package");
+        let Some((index, module)) = package_sources
+            .modules
+            .iter()
+            .enumerate()
+            .find(|(_, module)| module.name == "gleam/pair")
+        else {
+            panic!("published stdlib fixture should contain gleam/pair");
+        };
+
+        DependencySourcePackage {
+            package,
+            modules: vec![module.clone()],
+            sources: vec![package_sources.sources[index].clone()],
+        }
+    }
+
+    fn project_from_dependency_source_package(package_sources: DependencySourcePackage) -> Project {
+        Project {
+            root: package_sources.package.root.clone(),
+            config: GleamToml {
+                name: package_sources.package.name.clone(),
+                version: package_sources
+                    .package
+                    .version
+                    .clone()
+                    .unwrap_or_else(|| "1.0.3".to_string()),
+                description: None,
+                licences: Vec::new(),
+                repository: None,
+                links: Vec::new(),
+                gleam: None,
+                target: None,
+                dependencies: BTreeMap::new(),
+                dev_dependencies: BTreeMap::new(),
+            },
+            compile_target: target::CompileTarget::Wasmtime,
+            graph: PackageGraph {
+                root_package: PackageNode {
+                    name: package_sources.package.name.clone(),
+                    version: package_sources
+                        .package
+                        .version
+                        .clone()
+                        .unwrap_or_else(|| "1.0.3".to_string()),
+                    root: package_sources.package.root.clone(),
+                },
+                dependencies: Vec::new(),
+                dependency_interfaces: HashMap::new(),
+                dependency_sources: Vec::new(),
+                modules: package_sources.modules,
+            },
+            sources: package_sources.sources,
+        }
+    }
+
+    fn interface_from_source(source: SourceFile) -> ModuleInterface {
+        let cst = parse::parse(source).expect("parse dependency source interface");
+        let module = ast::build(&cst).expect("build dependency source interface");
+        ModuleInterface::from(&module)
+    }
+
     fn upstream_stdlib_blocker_report() -> String {
         let package = DependencyPackage {
             name: "gleam_stdlib".to_string(),
@@ -644,12 +778,7 @@ mod tests {
         let package_sources = load_package_sources(&package, 0).expect("load stdlib source package");
 
         let mut grouped: BTreeMap<&'static str, Vec<String>> = BTreeMap::new();
-        for (module, source) in package_sources
-            .modules
-            .iter()
-            .cloned()
-            .zip(package_sources.sources.into_iter())
-        {
+        for (module, source) in package_sources.modules.iter().cloned().zip(package_sources.sources) {
             let blocker = first_compile_blocker(&package_sources.package, module.clone(), source);
             grouped.entry(blocker.category).or_default().push(format!(
                 "- `{}`: {}",

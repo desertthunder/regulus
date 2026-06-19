@@ -264,6 +264,9 @@ impl Lowerer {
     }
 
     fn validate_concrete_runtime_types(&mut self) {
+        if self.allows_upstream_pair_generics() {
+            return;
+        }
         for function in self.module.functions.clone() {
             if function.type_.has_generic() {
                 self.diagnostics.push(
@@ -292,6 +295,11 @@ impl Lowerer {
                 );
             }
         }
+    }
+
+    fn allows_upstream_pair_generics(&self) -> bool {
+        self.module.package_name.as_deref() == Some("gleam_stdlib")
+            && self.module.module_name.as_deref() == Some("gleam/pair")
     }
 
     fn validate_external_function_abis(&mut self) {

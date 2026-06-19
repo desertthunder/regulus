@@ -95,7 +95,6 @@ fn stdlib_modules() -> Vec<StdlibModule> {
         StdlibModule::gleam_dynamic_decode(),
         StdlibModule::gleam_float(),
         StdlibModule::gleam_function(),
-        StdlibModule::remaining("gleam/pair"),
         StdlibModule::remaining("gleam/set"),
         StdlibModule::remaining("gleam/string_tree"),
         StdlibModule::remaining("gleam/uri"),
