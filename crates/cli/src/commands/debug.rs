@@ -46,9 +46,11 @@ impl Debugger<'_> {
             Err(error) => return echo::fail("read", self.input.display(), error),
         };
         let source = SourceFile::with_path(SourceFileId(0), self.input, text);
-        let cst = match compiler_core::parse::parse(source) {
+        let cst = match compiler_core::parse::parse(source.clone()) {
             Ok(cst) => cst,
-            Err(diagnostics) => return echo::fail_with_diagnostics("parse", self.input.display(), &diagnostics),
+            Err(diagnostics) => {
+                return echo::fail_with_source_diagnostics("parse", self.input.display(), &diagnostics, &[source]);
+            }
         };
 
         if self.json {
@@ -68,7 +70,12 @@ impl Debugger<'_> {
             let ast = match compiler_core::ast::build(&cst) {
                 Ok(ast) => ast,
                 Err(diagnostics) => {
-                    return echo::fail_with_diagnostics("build AST", self.input.display(), &diagnostics);
+                    return echo::fail_with_source_diagnostics(
+                        "build AST",
+                        self.input.display(),
+                        &diagnostics,
+                        std::slice::from_ref(&cst.source),
+                    );
                 }
             };
             println!("{}", self.heading("ast"));
@@ -95,7 +102,12 @@ impl Debugger<'_> {
             let ast = match compiler_core::ast::build(cst) {
                 Ok(ast) => ast,
                 Err(diagnostics) => {
-                    return echo::fail_with_diagnostics("build AST", self.input.display(), &diagnostics);
+                    return echo::fail_with_source_diagnostics(
+                        "build AST",
+                        self.input.display(),
+                        &diagnostics,
+                        std::slice::from_ref(&cst.source),
+                    );
                 }
             };
             output.insert("ast".to_string(), json!(format!("{ast:#?}")));

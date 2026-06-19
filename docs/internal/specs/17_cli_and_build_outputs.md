@@ -17,13 +17,14 @@ and compiler contributors.
 
 Remaining responsibilities:
 
-- render diagnostics with source snippets
-- choose target and host profiles explicitly
 - keep normal output concise
 - make debug output opt-in
 - write deterministic artifacts
 - avoid partial final artifacts after failed compilation
 - expose enough metadata for host adapters and tests
+- improve selected type-inference diagnostics
+- finish direct structured byte emission or checked precompiled fragments for
+  helper-backed modules
 
 ## Commands
 
@@ -64,8 +65,8 @@ tests.
 
 ## Diagnostics
 
-Diagnostics should be rendered for humans by default and remain structured
-enough for tests.
+Diagnostics are rendered for humans by default and remain structured enough for
+tests.
 
 The CLI should support:
 

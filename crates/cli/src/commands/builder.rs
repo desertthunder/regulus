@@ -32,9 +32,10 @@ impl Builder<'_> {
         let input = self.input.unwrap_or_else(|| Path::new("."));
         let verbose = self.verbose;
         let mut progress = move |event| print_project_load_progress(event, verbose);
+        let target_override = self.target.map(Into::into);
         let project = match compiler_core::project::load_project_with_options(
             input,
-            ProjectLoadOptions { progress: Some(&mut progress) },
+            ProjectLoadOptions { progress: Some(&mut progress), compile_target: target_override },
         ) {
             Ok(project) => project,
             Err(diagnostics) => return echo::fail_with_diagnostics("load project", input.display(), &diagnostics),
@@ -45,10 +46,7 @@ impl Builder<'_> {
             }
         }
 
-        let target = self
-            .target
-            .map(Into::into)
-            .unwrap_or_else(|| compiler_core::target::project_compile_target(project.config.target.as_ref()));
+        let target = project.compile_target;
         let artifact_base = project.config.name.replace('-', "_");
         let output = match super::final_wasm_path(
             self.output.clone(),
@@ -73,7 +71,12 @@ impl Builder<'_> {
         let typed = match compiler_core::types::check_project(&project) {
             Ok(typed) => typed,
             Err(diagnostics) => {
-                return echo::fail_with_diagnostics("compile project", project.root.display(), &diagnostics);
+                return echo::fail_with_source_diagnostics(
+                    "compile project",
+                    project.root.display(),
+                    &diagnostics,
+                    &project.sources,
+                );
             }
         };
         if let Some(debug_dir) = debug_dir.as_deref()
@@ -92,7 +95,12 @@ impl Builder<'_> {
         let ir = match compiler_core::ir::lower_project(typed.clone()) {
             Ok(ir) => ir,
             Err(diagnostics) => {
-                return echo::fail_with_diagnostics("compile project", project.root.display(), &diagnostics);
+                return echo::fail_with_source_diagnostics(
+                    "compile project",
+                    project.root.display(),
+                    &diagnostics,
+                    &project.sources,
+                );
             }
         };
         if let Some(debug_dir) = debug_dir.as_deref()
@@ -110,7 +118,14 @@ impl Builder<'_> {
 
         let wasm = match ir.emit_wasm_with_options(target.into()) {
             Ok(wasm) => wasm,
-            Err(diagnostics) => return echo::fail_with_diagnostics("emit wasm", project.root.display(), &diagnostics),
+            Err(diagnostics) => {
+                return echo::fail_with_source_diagnostics(
+                    "emit wasm",
+                    project.root.display(),
+                    &diagnostics,
+                    &project.sources,
+                );
+            }
         };
         if let Some(debug_dir) = debug_dir.as_deref()
             && (dump_all || self.emit.contains(&Emit::Runtime) || self.emit.contains(&Emit::Abi))

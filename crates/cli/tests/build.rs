@@ -71,6 +71,94 @@ diagnostic ProjectError: duplicate module `app` in examples/diagnostics/duplicat
 }
 
 #[test]
+fn compile_diagnostics_include_source_snippets() {
+    let temp = unique_temp_dir("regulus_cli_source_diagnostic");
+    fs::create_dir_all(&temp).expect("create temp dir");
+    let input = temp.join("app.gleam");
+    fs::write(&input, "pub fn main() -> Int { \"not an int\" }\n").expect("write Gleam input");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_reggie"))
+        .arg("compile")
+        .arg(&input)
+        .output()
+        .expect("run reggie compile");
+
+    assert!(!output.status.success(), "compile should fail");
+    let stderr = strip_ansi(&String::from_utf8_lossy(&output.stderr));
+    assert!(
+        stderr.contains(&format!("{}:1:", input.display())),
+        "missing source path and line in stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("pub fn main() -> Int"),
+        "missing source line in stderr:\n{stderr}"
+    );
+    assert!(stderr.contains("^"), "missing caret label in stderr:\n{stderr}");
+
+    let _ = fs::remove_dir_all(temp);
+}
+
+#[test]
+fn build_target_override_selects_project_modules_before_type_checking() {
+    let temp = unique_temp_dir("regulus_cli_build_target_override");
+    let project = temp.join("project");
+    fs::create_dir_all(project.join("src")).expect("create project src");
+    fs::write(
+        project.join("gleam.toml"),
+        "name = \"target_override\"\nversion = \"1.0.0\"\ntarget = \"javascript\"\n",
+    )
+    .expect("write gleam.toml");
+    fs::write(
+        project.join("src/app.gleam"),
+        r#"if javascript {
+  pub fn broken() -> Unknown { missing }
+}
+
+pub fn main() -> Int { 1 }
+"#,
+    )
+    .expect("write Gleam source");
+
+    let default_output = Command::new(env!("CARGO_BIN_EXE_reggie"))
+        .arg("build")
+        .arg(&project)
+        .arg("--out-dir")
+        .arg(temp.join("default-out"))
+        .output()
+        .expect("run reggie build with config target");
+    assert!(
+        !default_output.status.success(),
+        "javascript target should type-check selected broken group"
+    );
+    let default_stderr = strip_ansi(&String::from_utf8_lossy(&default_output.stderr));
+    assert!(
+        default_stderr.contains("src/app.gleam:2:22"),
+        "missing selected target source diagnostic:\n{default_stderr}"
+    );
+
+    let out_dir = temp.join("wasmtime-out");
+    let wasmtime_output = Command::new(env!("CARGO_BIN_EXE_reggie"))
+        .arg("build")
+        .arg(&project)
+        .arg("--target")
+        .arg("wasmtime")
+        .arg("--out-dir")
+        .arg(&out_dir)
+        .output()
+        .expect("run reggie build with CLI target override");
+
+    assert!(
+        wasmtime_output.status.success(),
+        "wasmtime override should exclude javascript-only broken group\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&wasmtime_output.stdout),
+        String::from_utf8_lossy(&wasmtime_output.stderr)
+    );
+    assert!(out_dir.join("target_override.wasm").is_file());
+
+    let _ = fs::remove_dir_all(temp);
+}
+
+#[test]
 fn run_decodes_managed_string_return_before_arena_reset() {
     let temp = unique_temp_dir("regulus_cli_run_string");
     fs::create_dir_all(&temp).expect("create temp dir");
@@ -140,6 +228,31 @@ pub fn pair() -> #(Int, String) { #(7, "moons") }
         String::from_utf8_lossy(&pair.stderr)
     );
     assert_eq!(String::from_utf8_lossy(&pair.stdout), "#(7, \"moons\")\n");
+
+    let _ = fs::remove_dir_all(temp);
+}
+
+#[test]
+fn run_rejects_non_wasmtime_targets_before_execution() {
+    let temp = unique_temp_dir("regulus_cli_run_target_mismatch");
+    fs::create_dir_all(&temp).expect("create temp dir");
+    let input = temp.join("app.gleam");
+    fs::write(&input, "pub fn main() -> Int { 1 }\n").expect("write Gleam input");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_reggie"))
+        .arg("run")
+        .arg(&input)
+        .arg("--target")
+        .arg("browser")
+        .output()
+        .expect("run reggie run");
+
+    assert!(!output.status.success(), "browser run target should fail");
+    let stderr = strip_ansi(&String::from_utf8_lossy(&output.stderr));
+    assert!(
+        stderr.contains("target `browser` cannot be executed by Wasmtime"),
+        "unexpected stderr:\n{stderr}"
+    );
 
     let _ = fs::remove_dir_all(temp);
 }

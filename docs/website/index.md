@@ -3,7 +3,7 @@ layout: home
 
 hero:
   name: Regulus
-  tagline: Compile Gleam to WebAssembly.
+  tagline: A Gleam to WebAssembly Compiler.
   actions:
     - theme: brand
       text: Get started

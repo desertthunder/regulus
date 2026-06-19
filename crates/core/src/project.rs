@@ -12,6 +12,7 @@ use crate::{loader::dependency, target, types};
 pub struct Project {
     pub root: PathBuf,
     pub config: GleamToml,
+    pub compile_target: target::CompileTarget,
     pub graph: PackageGraph,
     pub sources: Vec<SourceFile>,
 }
@@ -190,6 +191,7 @@ pub enum ProjectLoadProgress {
 #[derive(Default)]
 pub struct ProjectLoadOptions<'a> {
     pub progress: Option<&'a mut dyn FnMut(ProjectLoadProgress)>,
+    pub compile_target: Option<target::CompileTarget>,
 }
 
 pub fn load_project(path: impl AsRef<Path>) -> Result<Project, Diagnostics> {
@@ -201,9 +203,11 @@ pub fn load_project_with_options(
 ) -> Result<Project, Diagnostics> {
     let root = project_root(path.as_ref());
     let config = read_config(&root)?;
+    let compile_target = options
+        .compile_target
+        .unwrap_or_else(|| target::project_compile_target(config.target.as_ref()));
     let (sources, modules) = discover_modules(&root)?;
     let configured_dependencies = configured_dependencies(&config);
-    let compile_target = target::project_compile_target(config.target.as_ref());
     let dependency_interfaces = dependency::load_dependency_interfaces_with_progress(
         &root,
         &configured_dependencies,
@@ -227,6 +231,7 @@ pub fn load_project_with_options(
         },
         root,
         config,
+        compile_target,
         sources,
     })
 }

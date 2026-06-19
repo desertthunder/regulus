@@ -43,8 +43,8 @@ Make compiler commands predictable and generated artifacts useful.
 
 ### Diagnostics and user output
 
-- [ ] Render diagnostics with source snippets, labels, notes, and file paths.
-- [ ] Group diagnostics across project modules in a stable order.
+- [x] Render diagnostics with source snippets, labels, notes, and file paths.
+- [x] Group diagnostics across project modules in a stable order.
 - [ ] Improve type-inference diagnostics for local generalization, ambiguous
       types, recursive types, constructor fields, and branch mismatches.
 - [x] Show unsupported-feature diagnostics from AST, resolver, type, lowering,
@@ -58,7 +58,7 @@ Make compiler commands predictable and generated artifacts useful.
 - [x] Add CLI integration tests for project compilation commands.
 - [x] Add CLI integration tests for diagnostics across multiple files.
 - [x] Add tests for output path handling and optional WAT/debug artifacts.
-- [ ] Add tests for target selection and unsupported target combinations.
+- [x] Add tests for target selection and unsupported target combinations.
 - [x] Add tests for browser and Node.js JS host profile output.
 - [x] Add tests for bundler host adapter artifact paths.
 

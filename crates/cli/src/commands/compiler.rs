@@ -36,9 +36,11 @@ impl Compiler<'_> {
             Err(error) => return echo::fail("read", self.input.display(), error),
         };
 
-        let compiled = match super::CompiledModule::with_dumps(source, self.target.into()) {
+        let compiled = match super::CompiledModule::with_dumps(source.clone(), self.target.into()) {
             Ok(compiled) => compiled,
-            Err(diagnostics) => return echo::fail_with_diagnostics("compile", self.input.display(), &diagnostics),
+            Err(diagnostics) => {
+                return echo::fail_with_source_diagnostics("compile", self.input.display(), &diagnostics, &[source]);
+            }
         };
 
         let artifact_base = self

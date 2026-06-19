@@ -256,8 +256,8 @@ fn js_host_reader_helpers_validate_runtime_objects() {
 fn omits_unreachable_runtime_fragment_domains() {
     let wasm = compile_wasm("pub fn join() { \"a\" <> \"b\" }");
 
-    assert!(!wasm.wat.contains("(func $__string_concat"), "{}", wasm.wat);
-    assert!(!wasm.wat.contains("(func $__alloc "), "{}", wasm.wat);
+    assert!(wasm.wat.contains("(func $__string_concat"), "{}", wasm.wat);
+    assert!(wasm.wat.contains("(func $__alloc "), "{}", wasm.wat);
     assert!(wasm.wat.contains("(func $__allocation_fail"), "{}", wasm.wat);
     assert!(!wasm.wat.contains("(func $__dict_new"), "{}", wasm.wat);
     assert!(!wasm.wat.contains("(func $__list_cons"), "{}", wasm.wat);
@@ -268,11 +268,11 @@ fn omits_unreachable_runtime_fragment_domains() {
 fn includes_transitive_runtime_fragment_dependencies() {
     let wasm = compile_wasm("pub fn join() { \"a\" <> \"b\" }");
 
-    assert!(!wasm.wat.contains("$__string_concat"), "{}", wasm.wat);
-    assert!(!wasm.wat.contains("$__string_len"), "{}", wasm.wat);
-    assert!(!wasm.wat.contains("$__string_data"), "{}", wasm.wat);
-    assert!(!wasm.wat.contains("$__string_new"), "{}", wasm.wat);
-    assert!(!wasm.wat.contains("$__copy_bytes"), "{}", wasm.wat);
+    assert!(wasm.wat.contains("$__string_concat"), "{}", wasm.wat);
+    assert!(wasm.wat.contains("$__string_len"), "{}", wasm.wat);
+    assert!(wasm.wat.contains("$__string_data"), "{}", wasm.wat);
+    assert!(wasm.wat.contains("$__string_new"), "{}", wasm.wat);
+    assert!(wasm.wat.contains("$__copy_bytes"), "{}", wasm.wat);
 }
 
 #[test]

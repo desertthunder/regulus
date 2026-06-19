@@ -122,11 +122,10 @@ pub fn resolve_project(project: &Project) -> Result<ResolvedProject, Diagnostics
     let mut ast_modules = Vec::new();
     let mut diagnostics = Vec::new();
 
-    let compile_target = target::project_compile_target(project.config.target.as_ref());
     for (module_info, source) in project.graph.modules.iter().zip(project.sources.iter()) {
         match parse::parse(source.clone())
             .and_then(|cst| ast::build(&cst))
-            .and_then(|ast| target::select_module(ast, compile_target))
+            .and_then(|ast| target::select_module(ast, project.compile_target))
         {
             Ok(ast) => ast_modules.push((module_info.name.clone(), ast)),
             Err(mut errors) => diagnostics.append(&mut errors),

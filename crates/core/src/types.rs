@@ -492,6 +492,7 @@ fn dependency_source_projects(project: &Project) -> Vec<Project> {
                     dependencies: Default::default(),
                     dev_dependencies: Default::default(),
                 },
+                compile_target: project.compile_target,
                 graph: PackageGraph {
                     root_package: PackageNode {
                         name: sources.package.name.clone(),

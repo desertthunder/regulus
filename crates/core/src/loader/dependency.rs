@@ -418,6 +418,7 @@ mod tests {
                 dependencies: BTreeMap::new(),
                 dev_dependencies: BTreeMap::new(),
             },
+            compile_target: target::CompileTarget::Wasmtime,
             graph: PackageGraph {
                 root_package: PackageNode {
                     name: package_sources.package.name.clone(),

@@ -29,6 +29,16 @@ impl Runner<'_> {
         if self.json {
             return echo::fail("run", "--json", "machine-readable output is not implemented yet");
         }
+        if self.target != Target::Wasmtime {
+            return echo::fail(
+                "run",
+                self.function,
+                format!(
+                    "target `{}` cannot be executed by Wasmtime; use `--target wasmtime`",
+                    self.target.name()
+                ),
+            );
+        }
         if self.verbose {
             echo::status("compile", self.input.display().to_string());
         }
@@ -36,9 +46,11 @@ impl Runner<'_> {
             Ok(source) => SourceFile::with_path(SourceFileId(0), self.input, source),
             Err(error) => return echo::fail("read", self.input.display(), error),
         };
-        let compiled = match super::CompiledModule::with_dumps(source, self.target.into()) {
+        let compiled = match super::CompiledModule::with_dumps(source.clone(), self.target.into()) {
             Ok(compiled) => compiled,
-            Err(diagnostics) => return echo::fail_with_diagnostics("compile", self.input.display(), &diagnostics),
+            Err(diagnostics) => {
+                return echo::fail_with_source_diagnostics("compile", self.input.display(), &diagnostics, &[source]);
+            }
         };
 
         let return_type = compiled

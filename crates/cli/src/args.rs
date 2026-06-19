@@ -226,6 +226,18 @@ pub enum Target {
     Wasi,
 }
 
+impl Target {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Wasmtime => "wasmtime",
+            Self::Browser => "browser",
+            Self::Bundler => "bundler",
+            Self::Nodejs => "nodejs",
+            Self::Wasi => "wasi",
+        }
+    }
+}
+
 impl From<Target> for CompileTarget {
     fn from(target: Target) -> Self {
         match target {
