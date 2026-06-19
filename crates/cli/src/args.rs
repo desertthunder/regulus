@@ -194,6 +194,20 @@ impl Emit {
     }
 }
 
+pub struct DebugOptions {
+    pub ts: bool,
+    pub ast: bool,
+    pub spans: bool,
+    pub json: bool,
+    pub no_color: bool,
+}
+
+impl DebugOptions {
+    pub fn new(ts: bool, ast: bool, spans: bool, json: bool, no_color: bool) -> Self {
+        Self { ts, ast, spans, json, no_color }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum Target {
     Wasmtime,

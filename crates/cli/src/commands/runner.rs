@@ -8,12 +8,20 @@ use crate::args::Target;
 use crate::echo;
 
 pub struct Runner<'a> {
-    pub(super) input: &'a Path,
-    pub(super) function: &'a str,
-    pub(super) args: &'a [String],
-    pub(super) target: Target,
-    pub(super) verbose: bool,
-    pub(super) json: bool,
+    pub input: &'a Path,
+    pub function: &'a str,
+    pub args: &'a [String],
+    pub target: Target,
+    pub verbose: bool,
+    pub json: bool,
+}
+
+impl<'a> Runner<'a> {
+    pub fn new(
+        input: &'a Path, function: &'a str, args: &'a [String], target: Target, verbose: bool, json: bool,
+    ) -> Self {
+        Self { input, function, args, target, verbose, json }
+    }
 }
 
 impl Runner<'_> {

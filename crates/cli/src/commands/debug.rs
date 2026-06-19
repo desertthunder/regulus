@@ -7,7 +7,7 @@ use owo_colors::OwoColorize;
 use serde_json::{Value, json};
 use tree_sitter::Node;
 
-use crate::echo;
+use crate::{args::DebugOptions, echo};
 
 /// Developer-facing compiler inspection command.
 ///
@@ -24,7 +24,8 @@ pub struct Debugger<'a> {
 }
 
 impl<'a> Debugger<'a> {
-    pub fn new(input: &'a Path, ts: bool, ast: bool, spans: bool, json: bool, no_color: bool) -> Self {
+    pub fn new(input: &'a Path, opts: DebugOptions) -> Self {
+        let DebugOptions { ts, ast, spans, json, no_color } = opts;
         Self { input, tree_sitter: ts, ast, spans, json, no_color }
     }
 }
