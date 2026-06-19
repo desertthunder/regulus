@@ -33,7 +33,21 @@ impl Runner<'_> {
             Err(diagnostics) => return echo::fail_with_diagnostics("compile", self.input.display(), &diagnostics),
         };
 
-        match super::run_wasm_export(&compiled.wasm.bytes, self.function, self.args) {
+        let return_type = compiled
+            .ir
+            .exports
+            .iter()
+            .find(|export| export.name == self.function)
+            .and_then(|export| {
+                compiled
+                    .ir
+                    .functions
+                    .iter()
+                    .find(|function| function.name == export.backend_name())
+            })
+            .map(|function| &function.return_type);
+
+        match super::run_wasm_export(&compiled.wasm.bytes, self.function, self.args, return_type) {
             Ok(()) => ExitCode::SUCCESS,
             Err(message) => echo::fail("run", self.function, message),
         }

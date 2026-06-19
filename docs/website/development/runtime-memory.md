@@ -129,6 +129,11 @@ return into JS-owned data, and resets in a `finally` block. Raw Wasm and
 Wasmtime exports are not automatically reset because those callers may inspect
 borrowed managed pointers after the call.
 
+The CLI `run` command is ABI-aware for managed returns. When arena helpers are
+available, it marks before calling an export, decodes the result for display,
+and resets before printing. String returns are printed as text. Other managed
+returns use the runtime debug renderer.
+
 Compiler-generated code must not return or retain pointers allocated after a
 mark that will be reset. General internal reset scopes still require escape
 analysis or region tracking.

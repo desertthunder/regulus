@@ -4,10 +4,10 @@ pub const ALLOC_HELPER: &str = r#"
   (func $__last_panic (export "__last_panic") (result i32)
     global.get $__last_panic_payload
   )
-  (func $__arena_mark (result i32)
+  (func $__arena_mark (export "__arena_mark") (result i32)
     global.get $__heap
   )
-  (func $__arena_reset (param $mark i32)
+  (func $__arena_reset (export "__arena_reset") (param $mark i32)
     local.get $mark
     i32.const {heap_start}
     i32.lt_u

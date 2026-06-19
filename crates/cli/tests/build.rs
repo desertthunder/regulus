@@ -71,6 +71,30 @@ diagnostic ProjectError: duplicate module `app` in examples/diagnostics/duplicat
 }
 
 #[test]
+fn run_decodes_managed_string_return_before_arena_reset() {
+    let temp = unique_temp_dir("regulus_cli_run_string");
+    fs::create_dir_all(&temp).expect("create temp dir");
+    let input = temp.join("app.gleam");
+    fs::write(&input, r#"pub fn main() -> String { "Ada" <> " Lovelace" }"#).expect("write Gleam input");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_reggie"))
+        .arg("run")
+        .arg(&input)
+        .output()
+        .expect("run reggie run");
+
+    assert!(
+        output.status.success(),
+        "run failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "Ada Lovelace\n");
+
+    let _ = fs::remove_dir_all(temp);
+}
+
+#[test]
 fn build_emit_writes_wat_and_debug_artifacts_without_wasm() {
     let fixture = workspace_root().join("fixtures/projects/generated_names/dependency_module_overlap");
     let out_dir = unique_temp_dir("regulus_cli_emit_build");

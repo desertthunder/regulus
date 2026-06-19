@@ -268,6 +268,10 @@ impl<'a> StructuredEmitter<'a> {
         if self.options.target.is_js_host() {
             self.emit_js_host_abi_helpers();
         }
+        if self.options.target == WasmTarget::Wasmtime && module_exports_arena_scoped_values(source) {
+            self.runtime_helper_roots.insert("__arena_mark".into());
+            self.runtime_helper_roots.insert("__arena_reset".into());
+        }
 
         if !self.runtime_helper_roots.is_empty() {
             self.ensure_memory();
@@ -3400,6 +3404,30 @@ fn is_js_host_opaque_handle(module: &ir::Module, type_: &Type) -> bool {
             .any(|type_| type_.name == *name && type_.opaque),
         _ => false,
     }
+}
+
+fn module_exports_arena_scoped_values(module: &ir::Module) -> bool {
+    module.functions.iter().any(|function| {
+        matches!(function.abi.boundary, ir::CallBoundary::ModuleExport)
+            && needs_allocation(function)
+            && (is_heap_managed_type(&function.return_type)
+                || function.params.iter().any(|param| is_heap_managed_type(&param.type_)))
+    })
+}
+
+fn is_heap_managed_type(type_: &Type) -> bool {
+    matches!(
+        type_,
+        Type::String
+            | Type::BitArray
+            | Type::Tuple(_)
+            | Type::List(_)
+            | Type::Record { .. }
+            | Type::Custom { .. }
+            | Type::Opaque { .. }
+            | Type::Function { .. }
+            | Type::Generic(_)
+    )
 }
 
 fn value_type(type_: &Type, span: Span) -> StructuredResult<ValueType> {

@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use compiler_core::source::SourceFile;
+use compiler_core::types::Type;
 use compiler_core::{diagnostic::Diagnostics, target::CompileTarget};
 
 use super::args::{Command, DebugCommand};
@@ -107,7 +108,7 @@ fn list(input: &Path) -> ExitCode {
     }
 }
 
-fn run_wasm_export(bytes: &[u8], function: &str, args: &[String]) -> Result<(), String> {
+fn run_wasm_export(bytes: &[u8], function: &str, args: &[String], return_type: Option<&Type>) -> Result<(), String> {
     use wasmtime::{Caller, Engine, Linker, Module, Store};
 
     let engine = Engine::default();
@@ -156,13 +157,36 @@ fn run_wasm_export(bytes: &[u8], function: &str, args: &[String]) -> Result<(), 
         .map(|(arg, type_)| parse_wasm_arg(arg, type_))
         .collect::<Result<Vec<_>, _>>()?;
     let mut result_values = results.iter().map(default_wasm_value).collect::<Result<Vec<_>, _>>()?;
-    func.call(&mut store, &values, &mut result_values)
-        .map_err(|error| error.to_string())?;
+    let arena_mark = instance.get_typed_func::<(), i32>(&mut store, "__arena_mark").ok();
+    let arena_reset = instance.get_typed_func::<i32, ()>(&mut store, "__arena_reset").ok();
+    let mark = match &arena_mark {
+        Some(mark) => Some(mark.call(&mut store, ()).map_err(|error| error.to_string())?),
+        None => None,
+    };
+    let call_result = func
+        .call(&mut store, &values, &mut result_values)
+        .map_err(|error| error.to_string())
+        .and_then(|_| format_wasm_results(&instance, &mut store, &result_values, return_type));
+    let reset_result = reset_arena(&mut store, arena_reset.as_ref(), mark);
+    let formatted = match (call_result, reset_result) {
+        (Ok(formatted), Ok(())) => formatted,
+        (Err(error), Ok(())) => return Err(error),
+        (Ok(_), Err(error)) | (Err(_), Err(error)) => return Err(error),
+    };
 
-    for result in result_values {
-        println!("{}", format_wasm_value(&result));
+    for result in formatted {
+        println!("{result}");
     }
     Ok(())
+}
+
+fn reset_arena(
+    store: &mut wasmtime::Store<()>, arena_reset: Option<&wasmtime::TypedFunc<i32, ()>>, mark: Option<i32>,
+) -> Result<(), String> {
+    let (Some(reset), Some(mark)) = (arena_reset, mark) else {
+        return Ok(());
+    };
+    reset.call(store, mark).map_err(|error| error.to_string())
 }
 
 fn parse_wasm_arg(arg: &str, type_: &wasmtime::ValType) -> Result<wasmtime::Val, String> {
@@ -201,6 +225,72 @@ fn format_wasm_value(value: &wasmtime::Val) -> String {
         wasmtime::Val::F64(value) => f64::from_bits(*value).to_string(),
         other => format!("{other:?}"),
     }
+}
+
+fn format_wasm_results(
+    instance: &wasmtime::Instance, store: &mut wasmtime::Store<()>, values: &[wasmtime::Val],
+    return_type: Option<&Type>,
+) -> Result<Vec<String>, String> {
+    if values.len() == 1
+        && let Some(type_) = return_type
+        && let Some(value) = values.first()
+        && let Some(formatted) = format_typed_wasm_value(instance, store, value, type_)?
+    {
+        return Ok(vec![formatted]);
+    }
+    Ok(values.iter().map(format_wasm_value).collect())
+}
+
+fn format_typed_wasm_value(
+    instance: &wasmtime::Instance, store: &mut wasmtime::Store<()>, value: &wasmtime::Val, type_: &Type,
+) -> Result<Option<String>, String> {
+    match (type_, value) {
+        (Type::String, wasmtime::Val::I32(ptr)) => read_memory_string(instance, store, *ptr).map(Some),
+        (
+            Type::BitArray
+            | Type::Tuple(_)
+            | Type::List(_)
+            | Type::Record { .. }
+            | Type::Custom { .. }
+            | Type::Opaque { .. }
+            | Type::Function { .. }
+            | Type::Generic(_),
+            wasmtime::Val::I32(ptr),
+        ) => read_memory_debug(instance, store, *ptr).map(Some),
+        _ => Ok(None),
+    }
+}
+
+fn read_memory_string(
+    instance: &wasmtime::Instance, store: &mut wasmtime::Store<()>, ptr: i32,
+) -> Result<String, String> {
+    let memory = instance
+        .get_memory(&mut *store, "memory")
+        .ok_or_else(|| "missing memory export".to_string())?;
+    let ptr = ptr as usize;
+    let mut header = [0; 8];
+    memory
+        .read(&mut *store, ptr, &mut header)
+        .map_err(|error| error.to_string())?;
+    if u32::from_le_bytes(header[0..4].try_into().expect("string tag header")) != 1 {
+        return Err("managed return value is not a string".into());
+    }
+    let len = u32::from_le_bytes(header[4..8].try_into().expect("string length header")) as usize;
+    let mut bytes = vec![0; len];
+    memory
+        .read(&mut *store, ptr + 8, &mut bytes)
+        .map_err(|error| error.to_string())?;
+    String::from_utf8(bytes).map_err(|error| error.to_string())
+}
+
+fn read_memory_debug(
+    instance: &wasmtime::Instance, store: &mut wasmtime::Store<()>, ptr: i32,
+) -> Result<String, String> {
+    let memory = instance
+        .get_memory(&mut *store, "memory")
+        .ok_or_else(|| "missing memory export".to_string())?;
+    let data = memory.data(&mut *store);
+    compiler_core::runtime::debug_render(data, ptr as u32).ok_or_else(|| "could not decode managed return value".into())
 }
 
 fn read_host_string(caller: &mut wasmtime::Caller<'_, ()>, ptr: i32) -> String {
