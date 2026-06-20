@@ -131,6 +131,57 @@ impl Debugger<'_> {
     }
 }
 
+pub struct ProjectIrDebugger<'a> {
+    pub input: &'a Path,
+    pub no_color: bool,
+}
+
+impl<'a> ProjectIrDebugger<'a> {
+    pub fn new(input: &'a Path, no_color: bool) -> Self {
+        Self { input, no_color }
+    }
+
+    pub fn run(&self) -> ExitCode {
+        let project = match compiler_core::project::load_project(self.input) {
+            Ok(project) => project,
+            Err(diagnostics) => {
+                return echo::fail_with_diagnostics("load project", self.input.display(), &diagnostics);
+            }
+        };
+        let typed = match compiler_core::types::check_project(&project) {
+            Ok(typed) => typed,
+            Err(diagnostics) => {
+                return echo::fail_with_source_diagnostics(
+                    "type check project",
+                    self.input.display(),
+                    &diagnostics,
+                    &project.sources,
+                );
+            }
+        };
+        let ir = match compiler_core::ir::lower_project(typed) {
+            Ok(ir) => ir,
+            Err(diagnostics) => {
+                return echo::fail_with_source_diagnostics(
+                    "lower project",
+                    self.input.display(),
+                    &diagnostics,
+                    &project.sources,
+                );
+            }
+        };
+
+        if self.no_color {
+            println!("ir:");
+        } else {
+            println!("{}", "ir:".bright_magenta().bold());
+        }
+
+        print!("{}", ir.linked_debug_dump());
+        ExitCode::SUCCESS
+    }
+}
+
 fn print_tree(node: Node<'_>, depth: usize, field: Option<&str>, color: bool) {
     let indent = "  ".repeat(depth);
     let kind = if color { format!("{}", node.kind().bright_cyan()) } else { node.kind().to_string() };
@@ -143,6 +194,7 @@ fn print_tree(node: Node<'_>, depth: usize, field: Option<&str>, color: bool) {
             }
         })
         .unwrap_or_default();
+
     println!(
         "{indent}{kind}{field} [{}..{}] {}:{}..{}:{}",
         node.start_byte(),

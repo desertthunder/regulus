@@ -660,6 +660,40 @@ fn debug_subcommands_select_views() {
 }
 
 #[test]
+fn debug_ir_prints_linked_project_ir() {
+    let output = Command::new(env!("CARGO_BIN_EXE_reggie"))
+        .current_dir(workspace_root())
+        .arg("debug")
+        .arg("ir")
+        .arg("examples/scalar_project")
+        .arg("--no-color")
+        .output()
+        .expect("run reggie debug ir");
+
+    assert!(
+        output.status.success(),
+        "debug ir failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("ir:"), "missing IR heading");
+    assert!(stdout.contains("linked names:"), "missing linked names");
+    assert!(
+        stdout.contains("scalar_project:main.answer"),
+        "missing root function linked name"
+    );
+    assert!(
+        stdout.contains("gleam_stdlib:gleam/bool.to_string"),
+        "missing stdlib source linked name"
+    );
+    assert!(
+        !stdout.contains("__stdlib_gleam_bool_to_string"),
+        "IR should not use deleted bool.to_string dispatch"
+    );
+}
+
+#[test]
 fn debug_without_subcommand_requires_view_flags() {
     let output = Command::new(env!("CARGO_BIN_EXE_reggie"))
         .arg("dbg")

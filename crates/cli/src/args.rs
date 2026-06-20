@@ -95,7 +95,7 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Inspect compiler-internal views of one Gleam source file.
+    /// Inspect compiler-internal source or project views.
     #[command(visible_alias = "dbg")]
     Debug {
         #[command(subcommand)]
@@ -141,6 +141,8 @@ pub enum DebugCommand {
     Ast(DebugAstArgs),
     /// Print selected debug views as JSON.
     Json(DebugJsonArgs),
+    /// Load a project and print linked IR.
+    Ir(DebugIrArgs),
 }
 
 #[derive(Debug, ClapArgs)]
@@ -180,6 +182,15 @@ pub struct DebugJsonArgs {
     /// Include tree-sitter span details instead of only the S-expression.
     #[arg(long)]
     pub spans: bool,
+}
+
+#[derive(Debug, ClapArgs)]
+pub struct DebugIrArgs {
+    /// Project directory or gleam.toml path to inspect.
+    pub input: PathBuf,
+    /// Disable ANSI colors in human-readable output.
+    #[arg(long)]
+    pub no_color: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]

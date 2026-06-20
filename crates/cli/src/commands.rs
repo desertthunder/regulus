@@ -99,6 +99,7 @@ fn run_debug(view: Option<DebugCommand>, input: Option<&Path>, opts: DebugOption
             ),
         )
         .run(),
+        Some(DebugCommand::Ir(args)) => debug::ProjectIrDebugger::new(&args.input, no_color || args.no_color).run(),
         None => match input {
             Some(input) => Debugger::new(input, opts).run(),
             None => {
