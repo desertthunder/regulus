@@ -77,7 +77,6 @@ Retained registry entries record their blocker group and deletion condition in
 - [x] Record the deletion condition for every temporary entry.
 - [x] Move compiler-owned primitives out of the stdlib registry and into
       normal runtime, external, or ABI tables.
-- [ ] Reject adding new registry behavior unless it has a removal condition.
 
 ### Dependency Metadata And Assets
 
@@ -109,7 +108,7 @@ Retained registry entries record their blocker group and deletion condition in
 ### Native Types And `anything`
 
 - [x] Preserve bodyless runtime types as external type interfaces.
-- [ ] Define the internal type representation for `anything`.
+- [ ] Define & implement the internal type representation for `anything`.
 - [ ] Allow `anything` in stdlib-native externals such as dynamic casts,
       dynamic indexes, and `string.inspect`.
 - [ ] Reject unsupported user exports, imports, and general ABI positions that
@@ -156,13 +155,19 @@ Retained registry entries record their blocker group and deletion condition in
       native replacements for bodyless externals.
 - [x] Delete remaining scalar and registry-retained library dispatch arms once
       source loading is the default path for those modules.
-- [ ] Keep host adapters such as `gleam/io.print` and `gleam/io.println` in
+- [x] Keep host adapters such as `gleam/io.print` and `gleam/io.println` in
       ABI tables, not the stdlib registry.
-- [ ] Add unsupported-feature diagnostics for runtime primitives requested by
+- [x] Add unsupported-feature diagnostics for runtime primitives requested by
       compiled library code but not implemented.
 
 The current primitive inventory is maintained in
 [`16_runtime_primitive_inventory.md`](../specs/16_runtime_primitive_inventory.md).
+`gleam/io.print` and `gleam/io.println` are owned by the stdlib host-adapter
+ABI table.
+
+The registry may still provide their temporary interface types until
+the registry exits, but lowering discovers the adapter mapping from the ABI
+table.
 
 ### Monomorphized Dependency Emission
 
@@ -200,7 +205,7 @@ The current primitive inventory is maintained in
       emission.
 - [x] Add table-driven tests for target groups, ABI shapes, and JS host
       imports.
-- [ ] Define how dynamic values and opaque native stdlib values cross the JS
+- [ ] Define & implement how dynamic values and opaque native stdlib values cross the JS
       host ABI.
 - [ ] Split ordinary user JS import validation from dependency package asset
       validation.
@@ -229,11 +234,10 @@ closure ABI as project code.
 
 - [x] Support current registry-backed `gleam/dict` and `gleam/bit_array`
       surfaces.
-- [ ] Decide whether upstream dict uses `dict.mjs`, a runtime primitive, or
-      another validated dependency asset.
-- [ ] Define equality, hashing, transient update, and JS ABI rules for native
+- [ ] Implement upstream dict runtime primitive
+- [ ] Define & implement equality, hashing, transient update, and JS ABI rules for native
       dict values.
-- [ ] Define the JSON bridge from host JSON or JSON text to `Dynamic`.
+- [ ] Define & implement the JSON bridge from host JSON or JSON text to `Dynamic`.
 - [ ] Implement primitive dynamic operations for classification, construction,
       lookup, traversal, and error payloads.
 - [ ] Reuse normal closure dispatch for decoder combinators such as `field`,

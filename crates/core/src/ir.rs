@@ -951,6 +951,10 @@ pub fn lower_project(project: TypedProject) -> Result<Module, Diagnostics> {
                 .flatten()
         })
         .collect::<std::collections::HashSet<_>>();
+    diagnostics.extend(unsupported_source_backed_stdlib_runtime_diagnostics(
+        &project,
+        &source_backed_stdlib_modules,
+    ));
 
     if !diagnostics.is_empty() {
         return Err(diagnostics);
@@ -1078,6 +1082,87 @@ fn unsupported_dependency_member_diagnostic(module: &str, member: &str, span: Sp
         ),
     )
     .with_label(Label::primary(span, "unsupported dependency member used here"))
+}
+
+fn unsupported_source_backed_stdlib_runtime_diagnostics(
+    project: &TypedProject, source_backed_stdlib_modules: &HashSet<String>,
+) -> Diagnostics {
+    let registry = StdlibRegistry::new();
+    let mut diagnostics = Vec::new();
+    let mut reported = HashSet::new();
+
+    for module in &project.modules {
+        if module.package_name.as_deref() != Some("gleam_stdlib") {
+            continue;
+        }
+
+        for reference in &module.resolved.references {
+            let Some((dependency_module, member, span)) = stdlib_dependency_reference(module, reference) else {
+                continue;
+            };
+            if source_backed_stdlib_modules.contains(dependency_module) {
+                continue;
+            }
+            let Some(interface) = registry.interface(dependency_module) else {
+                continue;
+            };
+            if !interface.functions.contains_key(member) {
+                continue;
+            }
+            if interface.externals.contains_key(member)
+                || crate::runtime::stdlib_runtime_primitive(dependency_module, member).is_some()
+                || crate::abi::stdlib_host_adapter(dependency_module, member).is_some()
+            {
+                continue;
+            }
+            if reported.insert((span, dependency_module.to_string(), member.to_string())) {
+                diagnostics.push(unsupported_source_backed_stdlib_runtime_diagnostic(
+                    dependency_module,
+                    member,
+                    span,
+                ));
+            }
+        }
+    }
+
+    diagnostics
+}
+
+fn stdlib_dependency_reference<'a>(
+    module: &'a TypedModule, reference: &'a crate::resolve::ResolvedReference,
+) -> Option<(&'a str, &'a str, Span)> {
+    match &reference.target {
+        ReferenceTarget::Symbol(symbol_id) => {
+            let symbol = module.resolved.symbols.symbol(*symbol_id);
+            if !matches!(symbol.namespace, Namespace::Value) {
+                return None;
+            }
+            let SymbolKind::Imported { package: Some(package), module, member } = &symbol.kind else {
+                return None;
+            };
+            (package == "gleam_stdlib").then_some((module.as_str(), member.as_str(), reference.name.span))
+        }
+        ReferenceTarget::QualifiedMember { module: module_symbol, member, .. } => {
+            let symbol = module.resolved.symbols.symbol(*module_symbol);
+            let SymbolKind::Import { package: Some(package), module } = &symbol.kind else {
+                return None;
+            };
+            (package == "gleam_stdlib").then_some((module.as_str(), member.text.as_str(), member.span))
+        }
+    }
+}
+
+fn unsupported_source_backed_stdlib_runtime_diagnostic(module: &str, member: &str, span: Span) -> Diagnostic {
+    Diagnostic::new(
+        DiagnosticCode::LoweringError,
+        format!(
+            "stdlib member `{module}.{member}` is used by compiled `gleam_stdlib` source but has no source body, runtime primitive, host adapter, or external implementation for this target yet"
+        ),
+    )
+    .with_label(Label::primary(span, "unsupported stdlib dependency member used here"))
+    .with_note(
+        "add upstream source, a package asset/native external, or a narrow runtime primitive before compiling this stdlib path",
+    )
 }
 
 fn link_modules(modules: Vec<Module>) -> Result<Module, Diagnostics> {
@@ -1748,10 +1833,13 @@ mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
 
+    use crate::loader::dependency::{DependencyPackage, DependencySourcePackage};
     use crate::{
-        project,
-        source::{SourceFileId, Span},
-        types,
+        ast, parse, project,
+        project::{DependencySource, GleamToml, ModuleInfo, PackageGraph, PackageNode, Project, SourceRoot},
+        source::{SourceFile, SourceFileId, Span},
+        target, types,
+        types::{InterfaceEntry, ModuleInterface},
     };
 
     use super::*;
@@ -1761,6 +1849,90 @@ mod tests {
             .join("../..")
             .join("fixtures/projects")
             .join(path)
+    }
+
+    fn stdlib_registry_interfaces() -> HashMap<String, InterfaceEntry> {
+        StdlibRegistry::new()
+            .modules()
+            .map(|module| {
+                (
+                    module.name.to_string(),
+                    InterfaceEntry::new("gleam_stdlib", module.name, module.interface.clone()),
+                )
+            })
+            .collect()
+    }
+
+    fn interface_from_source(source: &SourceFile) -> ModuleInterface {
+        let cst = parse::parse(source.clone()).expect("parse source interface");
+        let module = ast::build(&cst).expect("build source interface");
+        ModuleInterface::from(&module)
+    }
+
+    fn project_with_source_backed_stdlib_module(module_name: &str, module_source: SourceFile) -> Project {
+        let app_source = SourceFile::new(
+            SourceFileId(0),
+            format!(
+                r#"import {module_name}
+
+pub fn main(value: String) {{
+  missing.needs_parse(value)
+}}
+"#
+            ),
+        );
+        let mut dependency_interfaces = stdlib_registry_interfaces();
+        dependency_interfaces.insert(
+            module_name.to_string(),
+            InterfaceEntry::new("gleam_stdlib", module_name, interface_from_source(&module_source)),
+        );
+        Project {
+            root: PathBuf::new(),
+            config: GleamToml {
+                name: "app".to_string(),
+                version: "1.0.0".to_string(),
+                description: None,
+                licences: Vec::new(),
+                repository: None,
+                links: Vec::new(),
+                gleam: None,
+                target: None,
+                dependencies: Default::default(),
+                dev_dependencies: Default::default(),
+            },
+            compile_target: target::CompileTarget::Wasmtime,
+            graph: PackageGraph {
+                root_package: PackageNode {
+                    name: "app".to_string(),
+                    version: "1.0.0".to_string(),
+                    root: PathBuf::new(),
+                },
+                dependencies: Vec::new(),
+                dependency_interfaces,
+                dependency_sources: vec![DependencySourcePackage {
+                    package: DependencyPackage {
+                        name: "gleam_stdlib".to_string(),
+                        version: Some("1.0.0".to_string()),
+                        root: PathBuf::new(),
+                        source: DependencySource::Path,
+                    },
+                    modules: vec![ModuleInfo {
+                        name: module_name.to_string(),
+                        path: PathBuf::from("src/gleam/missing.gleam"),
+                        source_id: module_source.id,
+                        source_root: SourceRoot::Src,
+                    }],
+                    sources: vec![module_source],
+                }],
+                modules: vec![ModuleInfo {
+                    name: "app".to_string(),
+                    path: PathBuf::from("src/app.gleam"),
+                    source_id: app_source.id,
+                    source_root: SourceRoot::Src,
+                }],
+            },
+            sources: vec![app_source],
+        }
     }
 
     #[test]
@@ -1829,6 +2001,93 @@ ProjectError: duplicate generated backend name `generated/run`
                 } if package == "dep_pkg" && module == "dep/foo"
             )
         }));
+    }
+
+    #[test]
+    fn stdlib_io_println_is_lowered_from_abi_host_adapter_table() {
+        let source = SourceFile::new(
+            SourceFileId(0),
+            r#"import gleam/io
+
+pub fn main() {
+  io.println("hello")
+}
+"#,
+        );
+        let project = Project {
+            root: PathBuf::new(),
+            config: GleamToml {
+                name: "app".to_string(),
+                version: "1.0.0".to_string(),
+                description: None,
+                licences: Vec::new(),
+                repository: None,
+                links: Vec::new(),
+                gleam: None,
+                target: None,
+                dependencies: Default::default(),
+                dev_dependencies: Default::default(),
+            },
+            compile_target: target::CompileTarget::Wasmtime,
+            graph: PackageGraph {
+                root_package: PackageNode {
+                    name: "app".to_string(),
+                    version: "1.0.0".to_string(),
+                    root: PathBuf::new(),
+                },
+                dependencies: Vec::new(),
+                dependency_interfaces: stdlib_registry_interfaces(),
+                dependency_sources: Vec::new(),
+                modules: vec![ModuleInfo {
+                    name: "app".to_string(),
+                    path: PathBuf::from("src/app.gleam"),
+                    source_id: source.id,
+                    source_root: SourceRoot::Src,
+                }],
+            },
+            sources: vec![source],
+        };
+        let typed = types::check_project(&project).expect("type check project");
+        let module = lower_project(typed).expect("lower linked project");
+
+        assert_eq!(crate::runtime::stdlib_runtime_primitive("gleam/io", "println"), None);
+        assert_eq!(
+            crate::abi::stdlib_host_adapter("gleam/io", "println"),
+            Some(crate::abi::StdlibHostAdapter {
+                import_module: crate::abi::STDLIB_IO_HOST_MODULE,
+                import_name: "println",
+            })
+        );
+        assert!(module.functions.iter().any(|function| {
+            matches!(
+                &function.abi.boundary,
+                CallBoundary::HostImport { module, name }
+                    if module == crate::abi::STDLIB_IO_HOST_MODULE && name == "println"
+            )
+        }));
+    }
+
+    #[test]
+    fn reports_missing_runtime_primitive_used_by_compiled_stdlib_source() {
+        let stdlib_source = SourceFile::new(
+            SourceFileId(1),
+            r#"import gleam/int
+
+pub fn needs_parse(value: String) -> Result(Int, Nil) {
+  int.parse(value)
+}
+"#,
+        );
+        let project = project_with_source_backed_stdlib_module("gleam/missing", stdlib_source);
+        let typed = types::check_project(&project).expect("type check project");
+        let errors = lower_project(typed).expect_err("missing primitive should fail lowering");
+
+        insta::assert_snapshot!(errors[0].render_plain(), @r#"
+LoweringError: stdlib member `gleam/int.parse` is used by compiled `gleam_stdlib` source but has no source body, runtime primitive, host adapter, or external implementation for this target yet
+  --> file 1 bytes 80..85
+      unsupported stdlib dependency member used here
+  note: add upstream source, a package asset/native external, or a narrow runtime primitive before compiling this stdlib path
+"#);
     }
 
     #[test]

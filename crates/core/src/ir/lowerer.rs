@@ -1,7 +1,10 @@
 use std::collections::{HashMap, HashSet};
 
 use super::*;
-use crate::abi::{StdlibHostAdapter, stdlib_host_adapter, validate_extern_function_abi, validate_external_info_abi};
+use crate::abi::{
+    StdlibHostAdapter, stdlib_host_adapter, stdlib_host_adapters, validate_extern_function_abi,
+    validate_external_info_abi,
+};
 use crate::ast::{self, Pattern, Statement};
 use crate::diagnostic::{Diagnostic, DiagnosticCode, Diagnostics, Label};
 use crate::labels::{FunctionLabelMap, call_argument_order, function_label_map, use_callback_placement};
@@ -1627,17 +1630,17 @@ impl Lowerer {
         let used_host_calls = resolved.used_stdlib_host_calls();
         let mut imports = Vec::new();
         for import in &ast.imports {
-            let Some(module) = StdlibRegistry::new().module(&import.module.text).cloned() else {
-                continue;
-            };
-            for member in module.members {
-                let Some(adapter) = stdlib_host_adapter(module.name, member.name) else {
-                    continue;
-                };
-                if !used_host_calls.contains(&(module.name.into(), member.name.into())) {
+            for (module, member, adapter) in stdlib_host_adapters() {
+                if module != import.module.text {
                     continue;
                 }
-                let Some(type_) = module.interface.functions.get(member.name).cloned() else {
+                if !used_host_calls.contains(&(module.into(), member.into())) {
+                    continue;
+                }
+                let Some(type_) = StdlibRegistry::new()
+                    .module(module)
+                    .and_then(|module| module.interface.functions.get(member).cloned())
+                else {
                     continue;
                 };
                 let Type::Function { params, return_type } = type_.clone() else {
@@ -1654,7 +1657,7 @@ impl Lowerer {
                     })
                     .collect::<Vec<_>>();
                 imports.push(Function {
-                    name: stdlib_lowered_name(module.name, member.name),
+                    name: stdlib_lowered_name(module, member),
                     public: false,
                     closure_captures: Vec::new(),
                     params: locals.clone(),

@@ -34,6 +34,13 @@ pub fn stdlib_host_adapter(module: &str, member: &str) -> Option<StdlibHostAdapt
         })
 }
 
+pub fn stdlib_host_adapters() -> impl Iterator<Item = (&'static str, &'static str, StdlibHostAdapter)> {
+    STDLIB_HOST_ADAPTERS
+        .iter()
+        .copied()
+        .map(|(module, member, adapter)| (module, member, adapter))
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AbiPosition {
     Parameter { index: usize },
