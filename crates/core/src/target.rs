@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use crate::diagnostic::{Diagnostic, DiagnosticCode, Diagnostics, Label};
 use crate::{ast, project, source::Span};
 
@@ -22,6 +24,12 @@ impl CompileTarget {
             Self::Wasi => "wasi",
             Self::Wasm => "wasm",
         }
+    }
+}
+
+impl Display for CompileTarget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.name())
     }
 }
 
@@ -71,29 +79,86 @@ impl TargetSelector {
     fn select_declaration(&mut self, declaration: ast::Declaration) -> Vec<ast::Declaration> {
         match declaration {
             ast::Declaration::TargetGroup(group) => self.select_group(group),
+            ast::Declaration::Function(function) => self.select_function(function),
+            ast::Declaration::Constant(constant) => self.select_constant(constant),
             ast::Declaration::ExternalFunction(function) => self.select_external_function(function),
+            ast::Declaration::ExternalType(type_) => self.select_external_type(type_),
+            ast::Declaration::TypeAlias(alias) => self.select_type_alias(alias),
+            ast::Declaration::TypeDefinition(type_) => self.select_type_definition(type_),
             declaration => vec![declaration],
         }
     }
 
     fn select_group(&mut self, group: ast::TargetGroup) -> Vec<ast::Declaration> {
-        let Some(group_target) = target_name(&group.target.text, group.target.span, &mut self.diagnostics) else {
-            return Vec::new();
-        };
-        if group_target != self.target {
+        if !target_matches(
+            &group.target.text,
+            group.target.span,
+            self.target,
+            &mut self.diagnostics,
+        ) {
             return Vec::new();
         }
         self.select_declarations(group.declarations)
     }
 
+    fn select_function(&mut self, function: ast::Function) -> Vec<ast::Declaration> {
+        if self.declaration_target_matches(function.target.as_ref()) {
+            vec![ast::Declaration::Function(function)]
+        } else {
+            Vec::new()
+        }
+    }
+
+    fn select_constant(&mut self, constant: ast::Constant) -> Vec<ast::Declaration> {
+        if self.declaration_target_matches(constant.target.as_ref()) {
+            vec![ast::Declaration::Constant(constant)]
+        } else {
+            Vec::new()
+        }
+    }
+
     fn select_external_function(&mut self, function: ast::ExternalFunction) -> Vec<ast::Declaration> {
+        if !self.declaration_target_matches(function.target.as_ref()) {
+            return Vec::new();
+        }
         let Some(target) = function.body.target.as_ref() else {
             return vec![ast::Declaration::ExternalFunction(function)];
         };
-        if external_target_matches(&target.text, target.span, self.target, &mut self.diagnostics) {
+        if target_matches(&target.text, target.span, self.target, &mut self.diagnostics) {
             vec![ast::Declaration::ExternalFunction(function)]
         } else {
             Vec::new()
+        }
+    }
+
+    fn select_external_type(&mut self, type_: ast::ExternalType) -> Vec<ast::Declaration> {
+        if self.declaration_target_matches(type_.target.as_ref()) {
+            vec![ast::Declaration::ExternalType(type_)]
+        } else {
+            Vec::new()
+        }
+    }
+
+    fn select_type_alias(&mut self, alias: ast::TypeAlias) -> Vec<ast::Declaration> {
+        if self.declaration_target_matches(alias.target.as_ref()) {
+            vec![ast::Declaration::TypeAlias(alias)]
+        } else {
+            Vec::new()
+        }
+    }
+
+    fn select_type_definition(&mut self, type_: ast::TypeDefinition) -> Vec<ast::Declaration> {
+        if self.declaration_target_matches(type_.target.as_ref()) {
+            vec![ast::Declaration::TypeDefinition(type_)]
+        } else {
+            Vec::new()
+        }
+    }
+
+    fn declaration_target_matches(&mut self, target: Option<&ast::Name>) -> bool {
+        match target {
+            Some(target) => target_matches(&target.text, target.span, self.target, &mut self.diagnostics),
+            None => true,
         }
     }
 }
@@ -123,7 +188,7 @@ fn target_name(name: &str, span: Span, diagnostics: &mut Diagnostics) -> Option<
     }
 }
 
-fn external_target_matches(name: &str, span: Span, selected: CompileTarget, diagnostics: &mut Diagnostics) -> bool {
+fn target_matches(name: &str, span: Span, selected: CompileTarget, diagnostics: &mut Diagnostics) -> bool {
     match name {
         "javascript" => matches!(
             selected,
@@ -211,5 +276,47 @@ pub fn request_text(input: String) -> String
                 .iter()
                 .any(|declaration| matches!(declaration, ast::Declaration::ExternalFunction(_)))
         );
+    }
+
+    #[test]
+    fn standalone_target_attributes_filter_duplicate_declarations_before_type_checking() {
+        let source = r#"
+@target(javascript)
+pub const selected = 1
+
+@target(erlang)
+pub const selected = 2
+
+@target(javascript)
+pub type Shape {
+  Shape(value: Int)
+}
+
+@target(erlang)
+pub type Shape {
+  Shape(value: String)
+}
+
+@target(javascript)
+@external(javascript, "regulus/js", "identity")
+pub fn identity(input: Int) -> Int
+
+@target(erlang)
+@external(erlang, "env", "identity")
+pub fn identity(input: Int) -> Int
+
+pub fn main() -> Int { identity(selected) }
+"#;
+
+        for target in [
+            CompileTarget::Browser,
+            CompileTarget::Bundler,
+            CompileTarget::Nodejs,
+            CompileTarget::Wasmtime,
+        ] {
+            let module = select_module(ast_for(source), target).expect("select target");
+            let resolved = resolve::resolve(module).expect("resolve selected module");
+            types::check(resolved).expect("type check selected module");
+        }
     }
 }

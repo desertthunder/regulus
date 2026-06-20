@@ -45,6 +45,7 @@ pub struct Import {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Constant {
     pub span: Span,
+    pub target: Option<Name>,
     pub public: bool,
     pub name: Name,
     pub type_annotation: Option<TypeAnnotation>,
@@ -54,6 +55,7 @@ pub struct Constant {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExternalFunction {
     pub span: Span,
+    pub target: Option<Name>,
     pub public: bool,
     pub name: Name,
     pub parameters: Vec<Parameter>,
@@ -72,6 +74,7 @@ pub struct ExternalFunctionBody {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExternalType {
     pub span: Span,
+    pub target: Option<Name>,
     pub public: bool,
     pub opaque: bool,
     pub name: Name,
@@ -80,6 +83,7 @@ pub struct ExternalType {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TypeAlias {
     pub span: Span,
+    pub target: Option<Name>,
     pub public: bool,
     pub opaque: bool,
     pub name: Name,
@@ -90,6 +94,7 @@ pub struct TypeAlias {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TypeDefinition {
     pub span: Span,
+    pub target: Option<Name>,
     pub public: bool,
     pub opaque: bool,
     pub name: Name,
@@ -156,6 +161,7 @@ pub enum UnqualifiedImportKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Function {
     pub span: Span,
+    pub target: Option<Name>,
     pub public: bool,
     pub name: Name,
     pub parameters: Vec<Parameter>,
@@ -563,6 +569,37 @@ pub fn build(cst: &ConcreteSyntaxTree) -> Result<Module, Diagnostics> {
     builder.module(root)
 }
 
+fn attach_target(declaration: Declaration, target: Name) -> (Declaration, Option<Name>) {
+    match declaration {
+        Declaration::Function(mut function) => {
+            function.target = Some(target);
+            (Declaration::Function(function), None)
+        }
+        Declaration::Constant(mut constant) => {
+            constant.target = Some(target);
+            (Declaration::Constant(constant), None)
+        }
+        Declaration::ExternalFunction(mut function) => {
+            function.target = Some(target);
+            (Declaration::ExternalFunction(function), None)
+        }
+        Declaration::ExternalType(mut type_) => {
+            type_.target = Some(target);
+            (Declaration::ExternalType(type_), None)
+        }
+        Declaration::TypeAlias(mut alias) => {
+            alias.target = Some(target);
+            (Declaration::TypeAlias(alias), None)
+        }
+        Declaration::TypeDefinition(mut type_) => {
+            type_.target = Some(target);
+            (Declaration::TypeDefinition(type_), None)
+        }
+        Declaration::Comment(comment) => (Declaration::Comment(comment), Some(target)),
+        declaration => (declaration, None),
+    }
+}
+
 struct AstBuilder<'a> {
     source: &'a SourceFile,
 }
@@ -574,8 +611,14 @@ impl AstBuilder<'_> {
         let mut functions = Vec::new();
         let children = self.named_children(node);
         let mut index = 0;
+        let mut pending_target = None;
 
         while let Some(child) = children.get(index).copied() {
+            if self.is_target_attribute(child) {
+                pending_target = Some(self.target_attribute_target(child)?);
+                index += 1;
+                continue;
+            }
             let declaration = if self.is_external_attribute(child) {
                 if let Some(function) = children
                     .get(index + 1)
@@ -589,6 +632,13 @@ impl AstBuilder<'_> {
                 }
             } else {
                 self.declaration(child)?
+            };
+            let declaration = if let Some(target) = pending_target.take() {
+                let (declaration, target) = attach_target(declaration, target);
+                pending_target = target;
+                declaration
+            } else {
+                declaration
             };
             match &declaration {
                 Declaration::Import(import) => imports.push(import.clone()),
@@ -624,6 +674,7 @@ impl AstBuilder<'_> {
             .ok_or_else(|| vec![self.missing(node, "constant value")])?;
         Ok(Constant {
             span: self.span(node),
+            target: None,
             public: self.has_child_kind(node, "visibility_modifier"),
             name: self.required_name_field(node, "name")?,
             type_annotation: self.type_field(node, "type")?,
@@ -640,6 +691,7 @@ impl AstBuilder<'_> {
             .ok_or_else(|| vec![self.missing(node, "external function body")])?;
         Ok(ExternalFunction {
             span: self.span(node),
+            target: None,
             public: self.has_child_kind(node, "visibility_modifier"),
             name: self.required_name_field(node, "name")?,
             parameters: node
@@ -664,6 +716,7 @@ impl AstBuilder<'_> {
                 start: self.span(attribute_node).start,
                 end: self.span(function_node).end,
             },
+            target: None,
             public: self.has_child_kind(function_node, "visibility_modifier"),
             name: self.required_name_field(function_node, "name")?,
             parameters: function_node
@@ -734,6 +787,7 @@ impl AstBuilder<'_> {
     fn external_type(&self, node: Node<'_>) -> Result<ExternalType, Diagnostics> {
         Ok(ExternalType {
             span: self.span(node),
+            target: None,
             public: self.has_child_kind(node, "visibility_modifier"),
             opaque: self.has_child_kind(node, "opacity_modifier"),
             name: self.required_named_child_as_name(node, "type_name")?,
@@ -749,6 +803,7 @@ impl AstBuilder<'_> {
         let name_node = self.required_named_child(node, "type_name")?;
         Ok(TypeAlias {
             span: self.span(node),
+            target: None,
             public: self.has_child_kind(node, "visibility_modifier"),
             opaque: self.has_child_kind(node, "opacity_modifier"),
             name: self.type_decl_name(name_node),
@@ -768,6 +823,7 @@ impl AstBuilder<'_> {
         let name_node = self.required_named_child(node, "type_name")?;
         Ok(TypeDefinition {
             span: self.span(node),
+            target: None,
             public: self.has_child_kind(node, "visibility_modifier"),
             opaque: self.has_child_kind(node, "opacity_modifier"),
             name: self.type_decl_name(name_node),
@@ -827,6 +883,29 @@ impl AstBuilder<'_> {
             && node
                 .child_by_field_name("name")
                 .is_some_and(|name| self.text(name) == "external")
+    }
+
+    fn is_target_attribute(&self, node: Node<'_>) -> bool {
+        node.kind() == "attribute"
+            && node
+                .child_by_field_name("name")
+                .is_some_and(|name| self.text(name) == "target")
+    }
+
+    fn target_attribute_target(&self, node: Node<'_>) -> Result<Name, Diagnostics> {
+        let arguments = node
+            .child_by_field_name("arguments")
+            .ok_or_else(|| vec![self.missing(node, "target attribute arguments")])?;
+        self.named_children(arguments)
+            .into_iter()
+            .filter(|child| child.kind() == "attribute_value")
+            .find_map(|value| {
+                self.named_children(value)
+                    .into_iter()
+                    .find(|child| child.kind() == "identifier")
+                    .map(|identifier| self.name(identifier))
+            })
+            .ok_or_else(|| vec![self.missing(node, "target attribute target")])
     }
 
     fn target_group(&self, node: Node<'_>) -> Result<TargetGroup, Diagnostics> {
@@ -900,7 +979,7 @@ impl AstBuilder<'_> {
             .ok_or_else(|| vec![self.missing(node, "function body")])?;
         let body = self.block_like(body_node)?;
 
-        Ok(Function { span: self.span(node), public, name, parameters, return_type, body })
+        Ok(Function { span: self.span(node), target: None, public, name, parameters, return_type, body })
     }
 
     fn parameters(&self, node: Node<'_>) -> Result<Vec<Parameter>, Diagnostics> {
@@ -1749,14 +1828,27 @@ pub fn main() {
     }
 
     #[test]
+    fn preserves_standalone_target_attributes_on_declarations() {
+        let ast = parse_ast("@target(javascript)\npub fn main() -> Int { 1 }\n");
+
+        let Declaration::Function(function) = &ast.declarations[0] else {
+            panic!("expected targeted function");
+        };
+        assert_eq!(
+            function.target.as_ref().map(|target| target.text.as_str()),
+            Some("javascript")
+        );
+        assert!(ast.functions[0].target.is_some());
+    }
+
+    #[test]
     fn represents_top_level_gleam_syntax_as_declarations() {
         let ast = parse_ast(include_str!("../../../fixtures/ast/full_syntax.gleam"));
 
-        assert!(matches!(ast.declarations[0], Declaration::Attribute(_)));
-        assert!(matches!(ast.declarations[1], Declaration::Constant(_)));
-        assert!(matches!(ast.declarations[2], Declaration::TypeDefinition(_)));
-        assert!(matches!(ast.declarations[3], Declaration::TypeAlias(_)));
-        assert!(matches!(ast.declarations[4], Declaration::ExternalFunction(_)));
+        assert!(matches!(ast.declarations[0], Declaration::Constant(_)));
+        assert!(matches!(ast.declarations[1], Declaration::TypeDefinition(_)));
+        assert!(matches!(ast.declarations[2], Declaration::TypeAlias(_)));
+        assert!(matches!(ast.declarations[3], Declaration::ExternalFunction(_)));
     }
 
     #[test]

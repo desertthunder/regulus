@@ -95,10 +95,10 @@ Retained registry entries record their blocker group and deletion condition in
 ### Target Selection
 
 - [x] Filter target-group declarations before typing and lowering.
-- [ ] Preserve standalone `@target(erlang)` and `@target(javascript)`
+- [x] Preserve standalone `@target(erlang)` and `@target(javascript)`
       attributes on parsed declarations.
-- [ ] Apply target filtering to functions, constants, types, and externals.
-- [ ] Treat upstream `javascript` declarations as available to browser,
+- [x] Apply target filtering to functions, constants, types, and externals.
+- [x] Treat upstream `javascript` declarations as available to browser,
       bundler, and Node.js profiles.
 - [ ] Add duplicate-name fixtures where target selection prevents conflicts,
       including upstream `gleam/set` shapes.

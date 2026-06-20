@@ -881,12 +881,11 @@ mod tests {
                 .any(|source| { source.text.contains(r#"@external(javascript, "../dict.mjs", "make")"#) })
         );
         assert!(package_sources.assets.iter().any(|asset| {
-            asset.relative_path == PathBuf::from("src/gleam_stdlib.mjs")
+            asset.relative_path == *"src/gleam_stdlib.mjs"
                 && asset.path == package_sources.package.root.join("src/gleam_stdlib.mjs")
         }));
         assert!(package_sources.assets.iter().any(|asset| {
-            asset.relative_path == PathBuf::from("src/dict.mjs")
-                && asset.path == package_sources.package.root.join("src/dict.mjs")
+            asset.relative_path == *"src/dict.mjs" && asset.path == package_sources.package.root.join("src/dict.mjs")
         }));
     }
 
