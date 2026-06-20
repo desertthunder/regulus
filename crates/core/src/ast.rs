@@ -17,6 +17,7 @@ pub struct Module {
     pub declarations: Vec<Declaration>,
     pub imports: Vec<Import>,
     pub functions: Vec<Function>,
+    pub filtered_declarations: Vec<FilteredDeclaration>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,6 +33,21 @@ pub enum Declaration {
     TargetGroup(TargetGroup),
     Comment(Comment),
     Statement(RawSyntax),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FilteredDeclaration {
+    pub name: Name,
+    pub kind: FilteredDeclarationKind,
+    pub target: Name,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FilteredDeclarationKind {
+    Value,
+    Type,
+    Constructor,
+    Field,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -649,7 +665,7 @@ impl AstBuilder<'_> {
             index += 1;
         }
 
-        Ok(Module { span: self.span(node), declarations, imports, functions })
+        Ok(Module { span: self.span(node), declarations, imports, functions, filtered_declarations: Vec::new() })
     }
 
     fn declaration(&self, node: Node<'_>) -> Result<Declaration, Diagnostics> {

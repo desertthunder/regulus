@@ -41,7 +41,7 @@ pub fn project_compile_target(target: Option<&project::Target>) -> CompileTarget
 }
 
 pub fn select_module(module: ast::Module, target: CompileTarget) -> Result<ast::Module, Diagnostics> {
-    let mut selector = TargetSelector { target, diagnostics: Vec::new() };
+    let mut selector = TargetSelector { target, diagnostics: Vec::new(), filtered_declarations: Vec::new() };
     let declarations = selector.select_declarations(module.declarations);
     if !selector.diagnostics.is_empty() {
         return Err(selector.diagnostics);
@@ -60,12 +60,19 @@ pub fn select_module(module: ast::Module, target: CompileTarget) -> Result<ast::
             _ => None,
         })
         .collect();
-    Ok(ast::Module { span: module.span, declarations, imports, functions })
+    Ok(ast::Module {
+        span: module.span,
+        declarations,
+        imports,
+        functions,
+        filtered_declarations: selector.filtered_declarations,
+    })
 }
 
 struct TargetSelector {
     target: CompileTarget,
     diagnostics: Diagnostics,
+    filtered_declarations: Vec<ast::FilteredDeclaration>,
 }
 
 impl TargetSelector {
@@ -96,6 +103,7 @@ impl TargetSelector {
             self.target,
             &mut self.diagnostics,
         ) {
+            self.record_filtered_declarations(&group.declarations, &group.target);
             return Vec::new();
         }
         self.select_declarations(group.declarations)
@@ -105,6 +113,7 @@ impl TargetSelector {
         if self.declaration_target_matches(function.target.as_ref()) {
             vec![ast::Declaration::Function(function)]
         } else {
+            self.record_filtered_value(&function.name, function.target.as_ref());
             Vec::new()
         }
     }
@@ -113,12 +122,14 @@ impl TargetSelector {
         if self.declaration_target_matches(constant.target.as_ref()) {
             vec![ast::Declaration::Constant(constant)]
         } else {
+            self.record_filtered_value(&constant.name, constant.target.as_ref());
             Vec::new()
         }
     }
 
     fn select_external_function(&mut self, function: ast::ExternalFunction) -> Vec<ast::Declaration> {
         if !self.declaration_target_matches(function.target.as_ref()) {
+            self.record_filtered_value(&function.name, function.target.as_ref());
             return Vec::new();
         }
         let Some(target) = function.body.target.as_ref() else {
@@ -127,6 +138,7 @@ impl TargetSelector {
         if target_matches(&target.text, target.span, self.target, &mut self.diagnostics) {
             vec![ast::Declaration::ExternalFunction(function)]
         } else {
+            self.record_filtered_value(&function.name, Some(target));
             Vec::new()
         }
     }
@@ -135,6 +147,7 @@ impl TargetSelector {
         if self.declaration_target_matches(type_.target.as_ref()) {
             vec![ast::Declaration::ExternalType(type_)]
         } else {
+            self.record_filtered_type(&type_.name, type_.target.as_ref());
             Vec::new()
         }
     }
@@ -143,6 +156,7 @@ impl TargetSelector {
         if self.declaration_target_matches(alias.target.as_ref()) {
             vec![ast::Declaration::TypeAlias(alias)]
         } else {
+            self.record_filtered_type(&alias.name, alias.target.as_ref());
             Vec::new()
         }
     }
@@ -151,6 +165,7 @@ impl TargetSelector {
         if self.declaration_target_matches(type_.target.as_ref()) {
             vec![ast::Declaration::TypeDefinition(type_)]
         } else {
+            self.record_filtered_type_definition(&type_, type_.target.as_ref());
             Vec::new()
         }
     }
@@ -160,6 +175,49 @@ impl TargetSelector {
             Some(target) => target_matches(&target.text, target.span, self.target, &mut self.diagnostics),
             None => true,
         }
+    }
+
+    fn record_filtered_declarations(&mut self, declarations: &[ast::Declaration], target: &ast::Name) {
+        for declaration in declarations {
+            match declaration {
+                ast::Declaration::TargetGroup(group) => self.record_filtered_declarations(&group.declarations, target),
+                ast::Declaration::Function(function) => self.record_filtered_value(&function.name, Some(target)),
+                ast::Declaration::Constant(constant) => self.record_filtered_value(&constant.name, Some(target)),
+                ast::Declaration::ExternalFunction(function) => {
+                    self.record_filtered_value(&function.name, function.target.as_ref().or(Some(target)));
+                }
+                ast::Declaration::ExternalType(type_) => self.record_filtered_type(&type_.name, Some(target)),
+                ast::Declaration::TypeAlias(alias) => self.record_filtered_type(&alias.name, Some(target)),
+                ast::Declaration::TypeDefinition(type_) => self.record_filtered_type_definition(type_, Some(target)),
+                _ => {}
+            }
+        }
+    }
+
+    fn record_filtered_value(&mut self, name: &ast::Name, target: Option<&ast::Name>) {
+        self.record_filtered(name, ast::FilteredDeclarationKind::Value, target);
+    }
+
+    fn record_filtered_type(&mut self, name: &ast::Name, target: Option<&ast::Name>) {
+        self.record_filtered(name, ast::FilteredDeclarationKind::Type, target);
+    }
+
+    fn record_filtered_type_definition(&mut self, type_: &ast::TypeDefinition, target: Option<&ast::Name>) {
+        self.record_filtered_type(&type_.name, target);
+        for constructor in &type_.constructors {
+            self.record_filtered(&constructor.name, ast::FilteredDeclarationKind::Constructor, target);
+            for argument in &constructor.arguments {
+                if let Some(label) = &argument.label {
+                    self.record_filtered(label, ast::FilteredDeclarationKind::Field, target);
+                }
+            }
+        }
+    }
+
+    fn record_filtered(&mut self, name: &ast::Name, kind: ast::FilteredDeclarationKind, target: Option<&ast::Name>) {
+        let Some(target) = target else { return };
+        self.filtered_declarations
+            .push(ast::FilteredDeclaration { name: name.clone(), kind, target: target.clone() });
     }
 }
 
@@ -317,6 +375,32 @@ pub fn main() -> Int { identity(selected) }
             let module = select_module(ast_for(source), target).expect("select target");
             let resolved = resolve::resolve(module).expect("resolve selected module");
             types::check(resolved).expect("type check selected module");
+        }
+    }
+
+    #[test]
+    fn standalone_target_attributes_filter_upstream_set_shaped_duplicates() {
+        let source = r#"
+@target(javascript)
+pub type Set(element) = List(element)
+
+@target(erlang)
+pub type Set(element) {
+  Set(values: List(element))
+}
+
+@target(javascript)
+pub fn new() -> Set(Int) { [] }
+
+@target(erlang)
+pub fn new() -> Set(Int) { Set([]) }
+
+pub fn main() -> Set(Int) { new() }
+"#;
+
+        for target in [CompileTarget::Browser, CompileTarget::Wasmtime] {
+            let module = select_module(ast_for(source), target).expect("select target");
+            resolve::resolve(module).expect("resolve selected module");
         }
     }
 }

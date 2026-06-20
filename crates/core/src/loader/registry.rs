@@ -62,6 +62,10 @@ impl ResolveInterfaceRegistry {
         self.get(module)?.members.get(&(namespace, name.to_string()))
     }
 
+    pub fn filtered_member(&self, module: &str, namespace: Namespace, name: &str) -> Option<&ast::FilteredDeclaration> {
+        self.get(module)?.filtered_members.get(&(namespace, name.to_string()))
+    }
+
     pub fn has_public_member(&self, namespace: Namespace, name: &str) -> bool {
         self.modules
             .values()
@@ -90,6 +94,7 @@ pub struct ResolveModuleInterface {
     pub package: Option<String>,
     pub module: String,
     pub members: HashMap<(Namespace, String), ResolveModuleMember>,
+    pub filtered_members: HashMap<(Namespace, String), ast::FilteredDeclaration>,
     pub externals: HashMap<String, ExternalFunctionInfo>,
 }
 
@@ -104,7 +109,13 @@ impl ResolveModuleInterface {
                 )
             })
             .collect::<HashMap<_, _>>();
-        Self { package: None, module: "prelude".to_string(), members, externals: HashMap::new() }
+        Self {
+            package: None,
+            module: "prelude".to_string(),
+            members,
+            filtered_members: HashMap::new(),
+            externals: HashMap::new(),
+        }
     }
 
     fn from_project(package: &str, name: &str, module: &ast::Module) -> Self {
@@ -119,6 +130,7 @@ impl From<&ast::Module> for ResolveModuleInterface {
     fn from(value: &ast::Module) -> Self {
         // TODO: can this be constructed from an iterator?
         let mut members = HashMap::new();
+        let mut filtered_members = HashMap::new();
         let mut externals = HashMap::new();
         for function in &value.functions {
             members.insert(
@@ -181,6 +193,7 @@ impl From<&ast::Module> for ResolveModuleInterface {
                         declarations: group.declarations.clone(),
                         imports: Vec::new(),
                         functions: Vec::new(),
+                        filtered_declarations: Vec::new(),
                     });
                     members.extend(nested.members);
                     externals.extend(nested.externals);
@@ -189,7 +202,13 @@ impl From<&ast::Module> for ResolveModuleInterface {
             }
         }
 
-        Self { package: None, module: String::new(), members, externals }
+        for filtered in &value.filtered_declarations {
+            if let Some(namespace) = filtered.kind.namespace() {
+                filtered_members.insert((namespace, filtered.name.text.clone()), filtered.clone());
+            }
+        }
+
+        Self { package: None, module: String::new(), members, filtered_members, externals }
     }
 }
 
@@ -304,6 +323,7 @@ fn stdlib_resolve_interfaces() -> HashMap<String, ResolveModuleInterface> {
                     package: Some("gleam_stdlib".to_string()),
                     module: module.name.to_string(),
                     members,
+                    filtered_members: HashMap::new(),
                     externals: module.interface.externals.clone(),
                 },
             )
@@ -349,6 +369,7 @@ fn dependency_resolve_interfaces(
                     package: Some(entry.package.clone()),
                     module: entry.module.clone(),
                     members,
+                    filtered_members: HashMap::new(),
                     externals: interface.externals.clone(),
                 },
             )

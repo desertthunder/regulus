@@ -100,9 +100,9 @@ Retained registry entries record their blocker group and deletion condition in
 - [x] Apply target filtering to functions, constants, types, and externals.
 - [x] Treat upstream `javascript` declarations as available to browser,
       bundler, and Node.js profiles.
-- [ ] Add duplicate-name fixtures where target selection prevents conflicts,
+- [x] Add duplicate-name fixtures where target selection prevents conflicts,
       including upstream `gleam/set` shapes.
-- [ ] Add diagnostics for selected code that references declarations removed
+- [x] Add diagnostics for selected code that references declarations removed
       by target filtering.
 
 ### Native Types And `anything`

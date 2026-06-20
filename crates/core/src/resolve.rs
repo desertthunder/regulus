@@ -21,6 +21,39 @@ pub enum Namespace {
     Module,
 }
 
+impl Namespace {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Value => "name",
+            Self::Type => "type",
+            Self::Constructor => "constructor",
+            Self::Field => "field",
+            Self::Module => "module",
+        }
+    }
+
+    fn filtered_declaration_kind(self) -> Option<ast::FilteredDeclarationKind> {
+        match self {
+            Self::Value => Some(ast::FilteredDeclarationKind::Value),
+            Self::Type => Some(ast::FilteredDeclarationKind::Type),
+            Self::Constructor => Some(ast::FilteredDeclarationKind::Constructor),
+            Self::Field => Some(ast::FilteredDeclarationKind::Field),
+            Self::Module => None,
+        }
+    }
+}
+
+impl ast::FilteredDeclarationKind {
+    pub(crate) fn namespace(self) -> Option<Namespace> {
+        match self {
+            Self::Value => Some(Namespace::Value),
+            Self::Type => Some(Namespace::Type),
+            Self::Constructor => Some(Namespace::Constructor),
+            Self::Field => Some(Namespace::Field),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SymbolKind {
     Function {
@@ -357,6 +390,11 @@ impl Resolver {
 
     fn validate_imported_member(&mut self, module: &str, namespace: Namespace, member: &ast::Name) -> bool {
         let Some(found) = self.interfaces.member(module, namespace, &member.text).cloned() else {
+            if let Some(filtered) = self.interfaces.filtered_member(module, namespace, &member.text) {
+                self.diagnostics
+                    .push(target_filtered_diagnostic(namespace.label(), member, filtered));
+                return false;
+            }
             self.diagnostics.push(
                 Diagnostic::new(
                     DiagnosticCode::ResolveError,
@@ -728,6 +766,12 @@ impl Resolver {
             return;
         }
 
+        if let Some(filtered) = self.filtered_local(Namespace::Type, &name.text) {
+            self.diagnostics
+                .push(target_filtered_diagnostic("type", name, filtered));
+            return;
+        }
+
         self.diagnostics.push(
             Diagnostic::new(DiagnosticCode::ResolveError, format!("unknown type `{}`", name.text))
                 .with_label(Label::primary(name.span, "type not found")),
@@ -805,6 +849,11 @@ impl Resolver {
     ) -> Option<SymbolId> {
         let interface = self.interfaces.get(module_name)?;
         let Some(found) = interface.members.get(&(namespace, member.text.clone())).cloned() else {
+            if let Some(filtered) = interface.filtered_members.get(&(namespace, member.text.clone())) {
+                self.diagnostics
+                    .push(target_filtered_diagnostic(namespace.label(), member, filtered));
+                return None;
+            }
             self.diagnostics.push(
                 Diagnostic::new(
                     DiagnosticCode::ResolveError,
@@ -927,6 +976,10 @@ impl Resolver {
                 Some(symbol)
             }
             None => {
+                if let Some(filtered) = self.filtered_local(namespace, &name.text) {
+                    self.diagnostics.push(target_filtered_diagnostic(label, name, filtered));
+                    return None;
+                }
                 self.diagnostics.push(
                     Diagnostic::new(DiagnosticCode::ResolveError, format!("unknown {label} `{}`", name.text))
                         .with_label(Label::primary(name.span, format!("{label} not found"))),
@@ -958,10 +1011,25 @@ impl Resolver {
                     .with_note("`use` passes the following block statements as its callback body"),
             ),
             None => self.diagnostics.push(
-                Diagnostic::new(DiagnosticCode::ResolveError, format!("unknown name `{}`", name.text))
-                    .with_label(Label::primary(name.span, "not found in scope")),
+                self.filtered_local(Namespace::Value, &name.text)
+                    .or_else(|| self.filtered_local(Namespace::Constructor, &name.text))
+                    .map_or_else(
+                        || {
+                            Diagnostic::new(DiagnosticCode::ResolveError, format!("unknown name `{}`", name.text))
+                                .with_label(Label::primary(name.span, "not found in scope"))
+                        },
+                        |filtered| target_filtered_diagnostic("name", name, filtered),
+                    ),
             ),
         }
+    }
+
+    fn filtered_local(&self, namespace: Namespace, name: &str) -> Option<&ast::FilteredDeclaration> {
+        let kind = namespace.filtered_declaration_kind()?;
+        self.module
+            .filtered_declarations
+            .iter()
+            .find(|declaration| declaration.kind == kind && declaration.name.text == name)
     }
 
     fn define(
@@ -1005,6 +1073,21 @@ impl Resolver {
         self.scopes.push(Scope { id, parent, symbols: HashMap::new() });
         id
     }
+}
+
+fn target_filtered_diagnostic(
+    label: &str, reference: &ast::Name, declaration: &ast::FilteredDeclaration,
+) -> Diagnostic {
+    Diagnostic::new(
+        DiagnosticCode::ResolveError,
+        format!("{label} `{}` was removed by target filtering", reference.text),
+    )
+    .with_label(Label::primary(reference.span, "not available for the selected target"))
+    .with_label(Label::primary(
+        declaration.name.span,
+        format!("declaration targets `{}`", declaration.target.text),
+    ))
+    .with_note("compile for a compatible target or use a declaration selected for this target")
 }
 
 #[cfg(test)]
@@ -1082,6 +1165,38 @@ mod tests {
 
         assert_eq!(diagnostics[0].code, DiagnosticCode::ResolveError);
         assert!(diagnostics[0].message.contains("unknown name `missing`"));
+    }
+
+    #[test]
+    fn reports_target_filtered_local_references() {
+        let source = SourceFile::new(
+            SourceFileId(0),
+            r#"
+@target(javascript)
+fn only_js() -> Int { 1 }
+
+fn main() -> Int { only_js() }
+"#,
+        );
+        let cst = parse::parse(source).expect("parse source");
+        let ast = ast::build(&cst).expect("build ast");
+        let ast = target::select_module(ast, target::CompileTarget::Wasmtime).expect("select wasmtime target");
+
+        let diagnostics = resolve(ast).expect_err("target-filtered reference should fail");
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic
+                .message
+                .contains("name `only_js` was removed by target filtering")
+                && diagnostic
+                    .labels
+                    .iter()
+                    .any(|label| label.message.as_deref() == Some("not available for the selected target"))
+                && diagnostic
+                    .labels
+                    .iter()
+                    .any(|label| label.message.as_deref() == Some("declaration targets `javascript`"))
+        }));
     }
 
     #[test]
@@ -1425,6 +1540,53 @@ if erlang {
                         if function.body.module.source == "\"browser\""
                 )
             })
+        }));
+    }
+
+    #[test]
+    fn fixture_target_selection_allows_duplicate_set_shapes() {
+        let project = project::load_project(fixture_project("target_selection/duplicate_target_names"))
+            .expect("load target selection fixture");
+
+        let resolved = resolve_project(&project).expect("resolve selected target fixture");
+
+        assert_eq!(resolved.modules.len(), 2);
+    }
+
+    #[test]
+    fn reports_target_filtered_project_member_references() {
+        let dir = tempdir().expect("tempdir");
+        write(
+            &dir.path().join("gleam.toml"),
+            "name = \"sample\"\nversion = \"1.0.0\"\n",
+        );
+        write(
+            &dir.path().join("src/app.gleam"),
+            r#"
+@target(javascript)
+pub fn only_js() -> Int { 1 }
+"#,
+        );
+        write(
+            &dir.path().join("src/main.gleam"),
+            "import app\nfn main() -> Int { app.only_js() }\n",
+        );
+        let project = project::load_project(dir.path()).expect("load project");
+
+        let diagnostics = resolve_project(&project).expect_err("target-filtered project member should fail");
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic
+                .message
+                .contains("name `only_js` was removed by target filtering")
+                && diagnostic
+                    .labels
+                    .iter()
+                    .any(|label| label.message.as_deref() == Some("not available for the selected target"))
+                && diagnostic
+                    .labels
+                    .iter()
+                    .any(|label| label.message.as_deref() == Some("declaration targets `javascript`"))
         }));
     }
 
