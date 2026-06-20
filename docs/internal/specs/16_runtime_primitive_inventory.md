@@ -75,19 +75,19 @@ after a source proof shows the upstream function compiles and links from
 
 | Entry                     | Owner          | Current blocker                                                    | Deletion condition                                                                         |
 | ------------------------- | -------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------ |
-| `gleam/bool.compare`      | library source | Not present in the current upstream fixture.                       | Keep runtime dispatch until upstream source or a replacement proof exists.                 |
+| `gleam/bool.compare`      | library source | Source body proof exists in the upstream fixture path.             | Delete runtime dispatch once source loading is the default path for this module.           |
 | `gleam/bool.negate`       | library source | Pure source proof exists; full module now lowers.                  | Runtime table and direct codegen dispatch deleted.                                         |
 | `gleam/bool.to_string`    | library source | Source-backed link proof exists; full module now lowers.           | Runtime table and direct codegen dispatch deleted.                                         |
 | `gleam/float.compare`     | library source | Source-backed link proof exists with `gleam/order`.                | Runtime table and direct codegen dispatch deleted.                                         |
 | `gleam/float.max`         | library source | Source-backed link proof exists; full module now lowers.           | Runtime table and direct codegen dispatch deleted.                                         |
 | `gleam/float.min`         | library source | Source-backed link proof exists; full module now lowers.           | Runtime table and direct codegen dispatch deleted.                                         |
 | `gleam/float.negate`      | library source | Source-backed link proof exists; full module now lowers.           | Runtime table and direct codegen dispatch deleted.                                         |
-| `gleam/float.to_string`   | library source | Full module needs imported dependencies or native externals.       | Compile upstream function or isolate required primitive, then delete runtime dispatch.     |
-| `gleam/function.compose`  | library source | Not present in the current upstream fixture.                       | Keep runtime dispatch until upstream source or a replacement proof exists.                 |
-| `gleam/function.constant` | library source | Not present in the current upstream fixture.                       | Keep runtime dispatch until upstream source or a replacement proof exists.                 |
-| `gleam/function.flip`     | library source | Not present in the current upstream fixture.                       | Keep runtime dispatch until upstream source or a replacement proof exists.                 |
+| `gleam/float.to_string`   | library source | Source wrapper calls a private native string conversion helper.    | Delete runtime dispatch once source loading is the default path for this module.           |
+| `gleam/function.compose`  | library source | Source body proof exists in the upstream fixture path.             | Delete runtime dispatch once source loading is the default path for this module.           |
+| `gleam/function.constant` | library source | Source body proof exists in the upstream fixture path.             | Delete runtime dispatch once source loading is the default path for this module.           |
+| `gleam/function.flip`     | library source | Source body proof exists in the upstream fixture path.             | Delete runtime dispatch once source loading is the default path for this module.           |
 | `gleam/function.identity` | library source | Source-backed link proof exists; full module now lowers.           | Runtime table and direct codegen dispatch deleted.                                         |
-| `gleam/int.to_string`     | library source | Full module needs imported `gleam/float` source or native support. | Compile upstream function or isolate required primitive, then delete runtime dispatch.     |
+| `gleam/int.to_string`     | library source | Source wrapper calls a private native string conversion helper.    | Delete runtime dispatch once source loading is the default path for this module.           |
 | `gleam/list.fold`         | library source | Source-backed link proof and registry behavior fixture exist.      | Runtime table dispatch deleted; registry-backed lowering adapter still remains.            |
 | `gleam/list.length`       | library source | Source-backed link proof exists; pure module subset now lowers.    | Runtime table and direct codegen dispatch deleted.                                         |
 | `gleam/list.map`          | library source | Source-backed link proof and registry behavior fixture exist.      | Runtime table dispatch deleted; registry-backed lowering adapter still remains.            |
@@ -122,3 +122,8 @@ Remaining deletion work requires:
 - behavior fixture still passes
 - linked debug dump contains `gleam_stdlib:gleam/<module>.<function>`
 - linked debug dump does not contain `__stdlib_gleam_<module>_<function>`
+
+The remaining scalar library-source entries now have source-path proofs. The
+numeric `to_string` proofs use private `__regulus_native` helpers for the
+bodyless upstream externals; those helpers are runtime conversion primitives,
+not public stdlib dispatch arms.

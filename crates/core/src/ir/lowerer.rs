@@ -2112,6 +2112,14 @@ impl Lowerer {
     }
 
     fn lower_external_host_import(&self, function: &ast::ExternalFunction) -> Option<Function> {
+        if is_regulus_native_external(
+            self.module.package_name.as_deref(),
+            &function.name.text,
+            &unquote(&function.body.module.source),
+            &unquote(&function.body.function.source),
+        ) {
+            return None;
+        }
         let type_ = self.function_types.get(&function.name.text)?.clone();
         let Type::Function { params, return_type } = type_.clone() else {
             return None;
@@ -2200,6 +2208,14 @@ impl Lowerer {
 
     fn external_import_boundary(&self, name: &str) -> Option<CallBoundary> {
         let import = self.external_imports.get(name)?;
+        if is_regulus_native_external(
+            self.module.package_name.as_deref(),
+            name,
+            &import.module,
+            &import.function,
+        ) {
+            return None;
+        }
         Some(CallBoundary::HostImport { module: import.module.clone(), name: import.function.clone() })
     }
 
@@ -2325,6 +2341,15 @@ fn collect_external_import(declaration: &ast::Declaration, imports: &mut HashMap
         }
         _ => {}
     }
+}
+
+fn is_regulus_native_external(package: Option<&str>, local_name: &str, module: &str, function: &str) -> bool {
+    package == Some("gleam_stdlib")
+        && module == "__regulus_native"
+        && matches!(
+            (local_name, function),
+            ("__regulus_int_to_string", "int_to_string") | ("__regulus_float_to_string", "float_to_string")
+        )
 }
 
 #[derive(Debug, Clone)]

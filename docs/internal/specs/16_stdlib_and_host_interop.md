@@ -52,6 +52,11 @@ When upstream source delegates to native code, Regulus should expose the
 missing primitive narrowly, package the validated dependency asset, or reject
 the unsupported shape with a source-spanned diagnostic.
 
+The scalar source migration uses private `__regulus_native` helpers for
+upstream bodyless externals such as `int.to_string` and `float.to_string`.
+These helpers keep the public function body in compiled dependency source
+while routing only the representation-level conversion to the runtime.
+
 ## Package Source
 
 The compiler should compile the published `gleam_stdlib` package from source as

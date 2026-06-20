@@ -1117,11 +1117,11 @@ impl<'a> StructuredEmitter<'a> {
                 self.expression(&call.arguments[0].value, out)?;
                 self.call_runtime_helper("__string_concat_list", [ValueType::I32], [ValueType::I32], out);
             }
-            "__stdlib_gleam_int_to_string" => {
+            "__regulus_int_to_string" | "__stdlib_gleam_int_to_string" => {
                 self.expression(&call.arguments[0].value, out)?;
                 self.call_runtime_helper("__int_to_string", [ValueType::I64], [ValueType::I32], out);
             }
-            "__stdlib_gleam_float_to_string" => {
+            "__regulus_float_to_string" | "__stdlib_gleam_float_to_string" => {
                 self.expression(&call.arguments[0].value, out)?;
                 self.call_runtime_helper("__float_to_string", [ValueType::F64], [ValueType::I32], out);
             }

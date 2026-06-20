@@ -151,7 +151,7 @@ Retained registry entries record their blocker group and deletion condition in
       upstream function, add a behavior fixture, assert the linked dump uses
       `gleam_stdlib:...`, then assert it no longer uses
       `__stdlib_gleam_*`.
-- [ ] Remove the remaining registry-path blockers before deleting scalar
+- [x] Remove the remaining registry-path blockers before deleting scalar
       runtime dispatch arms: upstream bodies for fixture-missing functions and
       native replacements for bodyless externals.
 - [ ] Delete remaining scalar and registry-retained library dispatch arms once

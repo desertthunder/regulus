@@ -194,7 +194,8 @@ fn supported_stdlib_module_source(module: &str, source: &str) -> String {
             "/// Compares two `Order`",
         )]
         .join("\n"),
-        "gleam/bool" | "gleam/function" => source.to_string(),
+        "gleam/bool" => with_bool_compare_source(source),
+        "gleam/function" => with_function_helper_source(source),
         "gleam/result" => [
             slice_between(source, "/// Checks whether the result", "/// Merges a nested `Result`"),
             slice_between(source, "/// Extracts the `Ok` value", "/// Combines a list of results"),
@@ -246,6 +247,7 @@ fn supported_stdlib_module_source(module: &str, source: &str) -> String {
         "gleam/int" => {
             let source = remove_imports(source);
             [
+                int_to_string_native_source(),
                 slice_between(
                     &source,
                     "/// Returns the absolute value",
@@ -262,6 +264,7 @@ fn supported_stdlib_module_source(module: &str, source: &str) -> String {
         }
         "gleam/float" => [
             "import gleam/order".to_string(),
+            float_to_string_native_source(),
             slice_between(
                 source,
                 "/// Compares two `Float`s, returning an `Order`",
@@ -283,6 +286,64 @@ fn supported_stdlib_module_source(module: &str, source: &str) -> String {
         .join("\n"),
         _ => source.to_string(),
     }
+}
+
+fn with_bool_compare_source(source: &str) -> String {
+    [
+        "import gleam/order".to_string(),
+        source.to_string(),
+        r#"pub fn compare(a: Bool, with b: Bool) -> order.Order {
+  case a == b {
+    True -> order.Eq
+    False ->
+      case a {
+        False -> order.Lt
+        True -> order.Gt
+      }
+  }
+}"#
+        .to_string(),
+    ]
+    .join("\n")
+}
+
+fn with_function_helper_source(source: &str) -> String {
+    [
+        source.to_string(),
+        r#"pub fn constant(value: a, _argument: b) -> a {
+  value
+}
+
+pub fn compose(outer: fn(b) -> c, inner: fn(a) -> b) -> fn(a) -> c {
+  fn(value) { outer(inner(value)) }
+}
+
+pub fn flip(function: fn(a, b) -> c) -> fn(b, a) -> c {
+  fn(second, first) { function(first, second) }
+}"#
+        .to_string(),
+    ]
+    .join("\n")
+}
+
+fn int_to_string_native_source() -> String {
+    r#"external fn __regulus_int_to_string(x: Int) -> String =
+  "__regulus_native" "int_to_string"
+
+pub fn to_string(x: Int) -> String {
+  __regulus_int_to_string(x)
+}"#
+    .to_string()
+}
+
+fn float_to_string_native_source() -> String {
+    r#"external fn __regulus_float_to_string(x: Float) -> String =
+  "__regulus_native" "float_to_string"
+
+pub fn to_string(x: Float) -> String {
+  __regulus_float_to_string(x)
+}"#
+    .to_string()
 }
 
 fn slice_between(source: &str, start: &str, end: &str) -> String {
@@ -850,13 +911,19 @@ mod tests {
             assert!(dump.contains(&format!("gleam_stdlib:{module}.")), "{dump}");
         }
         for function in [
+            "gleam_stdlib:gleam/bool.compare",
             "gleam_stdlib:gleam/bool.negate",
             "gleam_stdlib:gleam/bool.to_string",
             "gleam_stdlib:gleam/float.compare",
             "gleam_stdlib:gleam/float.max",
             "gleam_stdlib:gleam/float.min",
             "gleam_stdlib:gleam/float.negate",
+            "gleam_stdlib:gleam/float.to_string",
+            "gleam_stdlib:gleam/function.compose",
+            "gleam_stdlib:gleam/function.constant",
+            "gleam_stdlib:gleam/function.flip",
             "gleam_stdlib:gleam/function.identity",
+            "gleam_stdlib:gleam/int.to_string",
             "gleam_stdlib:gleam/list.fold",
             "gleam_stdlib:gleam/list.length",
             "gleam_stdlib:gleam/list.map",
@@ -893,6 +960,7 @@ mod tests {
             r#"import gleam/bool
 import gleam/float
 import gleam/function
+import gleam/int
 import gleam/list
 import gleam/option.{Some}
 import gleam/order
@@ -900,8 +968,17 @@ import gleam/result.{Ok, Error}
 
 pub fn bool_negated() -> Bool { bool.negate(False) }
 pub fn bool_text_matches() -> Bool { bool.to_string(True) == "True" }
+pub fn bool_rank() -> Int {
+  case bool.compare(False, True) {
+    order.Lt -> -1
+    order.Eq -> 0
+    order.Gt -> 1
+  }
+}
+
 pub fn float_larger() -> Float { float.max(1.5, float.negate(-2.5)) }
 pub fn float_smaller() -> Float { float.min(1.5, 2.5) }
+pub fn float_text_matches() -> Bool { float.to_string(1.5) == "1.5" }
 
 pub fn float_rank() -> Int {
   case float.compare(1.0, 2.0) {
@@ -912,7 +989,22 @@ pub fn float_rank() -> Int {
 }
 
 pub fn same_value() -> Int { function.identity(9) }
+pub fn constant_value() -> Int { function.constant(7, "ignored") }
+pub fn int_text_matches() -> Bool { int.to_string(-42) == "-42" }
 pub fn item_count() -> Int { list.length([1, 2, 3]) }
+
+pub fn composed() -> Int {
+  let add1 = fn(x) { x + 1 }
+  let double = fn(x) { x * 2 }
+  let f = function.compose(add1, double)
+  f(4)
+}
+
+pub fn flipped() -> Int {
+  let sub = fn(a, b) { a - b }
+  let f = function.flip(sub)
+  f(3, 10)
+}
 
 pub fn reversed_head() -> Int {
   case list.reverse([1, 2, 3]) {
@@ -952,13 +1044,19 @@ pub fn result_mapped() -> Int {
         let lowered = ir::lower_project(typed).expect("lower source-backed stdlib calls");
         let dump = lowered.linked_debug_dump();
         for function in [
+            "gleam_stdlib:gleam/bool.compare",
             "gleam_stdlib:gleam/bool.negate",
             "gleam_stdlib:gleam/bool.to_string",
             "gleam_stdlib:gleam/float.compare",
             "gleam_stdlib:gleam/float.max",
             "gleam_stdlib:gleam/float.min",
             "gleam_stdlib:gleam/float.negate",
+            "gleam_stdlib:gleam/float.to_string",
+            "gleam_stdlib:gleam/function.compose",
+            "gleam_stdlib:gleam/function.constant",
+            "gleam_stdlib:gleam/function.flip",
             "gleam_stdlib:gleam/function.identity",
+            "gleam_stdlib:gleam/int.to_string",
             "gleam_stdlib:gleam/list.fold",
             "gleam_stdlib:gleam/list.length",
             "gleam_stdlib:gleam/list.map",
@@ -1073,103 +1171,12 @@ pub fn result_mapped() -> Int {
     }
 
     fn pure_stdlib_module_source(module: &str) -> String {
+        assert!(
+            SUPPORTED_STDLIB_SOURCE_MODULES.contains(&module),
+            "no pure stdlib source fixture for {module}"
+        );
         let source = upstream_stdlib_module_source(module);
-        match module {
-            "gleam/order" => [slice_between(
-                &source,
-                "/// Represents the result",
-                "/// Compares two `Order`",
-            )]
-            .join("\n"),
-            "gleam/bool" | "gleam/function" => source,
-            "gleam/result" => [
-                slice_between(&source, "/// Checks whether the result", "/// Merges a nested `Result`"),
-                slice_between(&source, "/// Extracts the `Ok` value", "/// Combines a list of results"),
-                slice_between(
-                    &source,
-                    "/// Replace the value within a result",
-                    "/// Given a list of results, returns only",
-                ),
-                slice_from(&source, "pub fn try_recover"),
-            ]
-            .join("\n"),
-            "gleam/option" => {
-                let source = strip_external_attributes(&source);
-                [
-                    slice_between(&source, "/// `Option` represents", "/// Combines a list of `Option`s"),
-                    slice_between(
-                        &source,
-                        "/// Checks whether the `Option`",
-                        "/// Merges a nested `Option`",
-                    ),
-                    slice_between(&source, "/// Returns the first value", "/// Given a list of `Option`s"),
-                ]
-                .join("\n")
-            }
-            "gleam/list" => {
-                let source = strip_external_attributes(&remove_imports(&source));
-                [
-                    slice_between(
-                        &source,
-                        "/// Counts the number",
-                        "/// Determines whether or not a given element",
-                    ),
-                    slice_between(&source, "/// Gets the first element", "/// Groups the elements"),
-                    slice_between(
-                        &source,
-                        "/// Returns the given item wrapped",
-                        "/// Joins one list onto the end",
-                    ),
-                    slice_between(&source, "/// Returns a new list containing", "/// Combines two lists"),
-                    slice_between(&source, "/// Prefixes an item", "/// Joins a list of lists"),
-                    slice_between(
-                        &source,
-                        "/// Reduces a list of elements into a single value by calling a given function\n/// on each element, going from left to right",
-                        "/// Reduces a list of elements into a single value by calling a given function\n/// on each element, going from right to left",
-                    ),
-                ]
-                .join("\n")
-            }
-            "gleam/int" => {
-                let source = remove_imports(&source);
-                [
-                    slice_between(
-                        &source,
-                        "/// Returns the absolute value",
-                        "/// Returns the result of the base",
-                    ),
-                    slice_between(
-                        &source,
-                        "/// Compares two ints, returning the smaller",
-                        "/// Generates a random int",
-                    ),
-                    slice_from(&source, "/// Run a function for each int"),
-                ]
-                .join("\n")
-            }
-            "gleam/float" => [
-                "import gleam/order".to_string(),
-                slice_between(
-                    &source,
-                    "/// Compares two `Float`s, returning an `Order`",
-                    "/// Compares two `Float`s within a tolerance",
-                )
-                .replace(") -> Order", ") -> order.Order"),
-                slice_between(
-                    &source,
-                    "/// Compares two `Float`s, returning the smaller",
-                    "/// Rounds the value to the next highest",
-                ),
-                slice_between(&source, "/// Returns the negative", "/// Sums a list"),
-                slice_between(
-                    &remove_imports(&source),
-                    "/// Adds two floats together",
-                    "/// Returns the natural logarithm",
-                ),
-            ]
-            .join("\n"),
-            other => panic!("no pure stdlib source fixture for {other}"),
-        }
+        supported_stdlib_module_source(module, &source)
     }
 
     fn upstream_stdlib_module_source(module: &str) -> String {
@@ -1179,33 +1186,6 @@ pub fn result_mapped() -> Int {
                 .join(format!("{module}.gleam")),
         )
         .expect("read upstream stdlib source")
-    }
-
-    fn remove_imports(source: &str) -> String {
-        source
-            .lines()
-            .filter(|line| !line.trim_start().starts_with("import "))
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-
-    fn strip_external_attributes(source: &str) -> String {
-        source
-            .lines()
-            .filter(|line| !line.trim_start().starts_with("@external"))
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-
-    fn slice_from(source: &str, marker: &str) -> String {
-        let start = source.find(marker).expect("slice start marker");
-        source[start..].trim().to_string()
-    }
-
-    fn slice_between(source: &str, start: &str, end: &str) -> String {
-        let start = source.find(start).expect("slice start marker");
-        let end = source[start..].find(end).expect("slice end marker") + start;
-        source[start..end].trim().to_string()
     }
 
     fn project_from_dependency_source_package(package_sources: DependencySourcePackage) -> Project {
