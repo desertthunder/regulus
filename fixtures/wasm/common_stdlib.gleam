@@ -1,11 +1,9 @@
 import gleam/bit_array
-import gleam/bool
 import gleam/dict
 import gleam/float
 import gleam/function
 import gleam/int
 import gleam/io
-import gleam/list
 import gleam/option.{None, Some}
 import gleam/order.{Eq, Gt, Lt}
 import gleam/result.{Error, Ok}
@@ -17,13 +15,6 @@ pub fn message() -> String {
 
 pub fn string_size() -> Int {
   string.length(string.concat(["a", "bc"]))
-}
-
-pub fn reversed_head() -> Int {
-  case list.reverse([1, 2, 3]) {
-    [head, ..] -> head
-    _ -> 0
-  }
 }
 
 pub fn ok_value(result: Result(Int, Int)) -> Int {
@@ -52,10 +43,6 @@ pub fn debug_identity() -> Int {
   io.debug(42)
 }
 
-pub fn bool_text() -> String {
-  bool.to_string(True)
-}
-
 pub fn dict_value() -> Int {
   let values = dict.insert(dict.new(), "a", 42)
   case dict.get(values, "a") {
@@ -64,16 +51,8 @@ pub fn dict_value() -> Int {
   }
 }
 
-pub fn float_larger() -> Float {
-  float.max(1.5, float.negate(-2.5))
-}
-
 pub fn float_text() -> String {
   float.to_string(1.5)
-}
-
-pub fn same_value() -> Int {
-  function.identity(9)
 }
 
 pub fn constant_value() -> Int {

@@ -63,10 +63,6 @@ pub fn load_dependency_interfaces_with_progress(
     }
 
     for (name, dep, _dev) in dependencies {
-        if is_registry_backed_dependency(name) {
-            continue;
-        }
-
         match dependency_root(root, name, dep) {
             Some(pkg_root) => {
                 let version = dep.get_dep_ver(name, &package_versions, &pkg_root);
@@ -88,6 +84,9 @@ pub fn load_dependency_interfaces_with_progress(
                 }
                 let pkg = DependencyPackage { name: name.clone(), version, root: pkg_root.clone(), source };
                 output.packages.push(pkg);
+                if is_registry_interface_backed_dependency(name) {
+                    continue;
+                }
                 match load_pkg_interfaces(name, &pkg_root, compile_target) {
                     Ok(interfaces) => output.modules.extend(interfaces),
                     Err(mut errs) => diagnostics.append(&mut errs),
@@ -105,7 +104,12 @@ pub fn load_dependency_sources(packages: &[DependencyPackage]) -> Result<Vec<Dep
     let mut diagnostics = Vec::new();
 
     for (package_index, package) in packages.iter().enumerate() {
-        match load_package_sources(package, package_index) {
+        let loaded = if package.name == "gleam_stdlib" {
+            load_supported_stdlib_sources(package, package_index)
+        } else {
+            load_package_sources(package, package_index)
+        };
+        match loaded {
             Ok(sources) => output.push(sources),
             Err(mut errors) => diagnostics.append(&mut errors),
         }
@@ -128,8 +132,187 @@ pub fn dependency_nodes(packages: &[DependencyPackage], configured: Vec<Dependen
         .collect()
 }
 
-fn is_registry_backed_dependency(name: &str) -> bool {
+fn is_registry_interface_backed_dependency(name: &str) -> bool {
     name == "gleam_stdlib"
+}
+
+const SUPPORTED_STDLIB_SOURCE_MODULES: &[&str] = &[
+    "gleam/order",
+    "gleam/result",
+    "gleam/option",
+    "gleam/list",
+    "gleam/int",
+    "gleam/float",
+    "gleam/bool",
+    "gleam/function",
+];
+
+fn load_supported_stdlib_sources(
+    package: &DependencyPackage, package_index: usize,
+) -> Result<DependencySourcePackage, Diagnostics> {
+    let source_id_base = 2_000_000 + (package_index as u32 * 100_000);
+    let mut modules = Vec::new();
+    let mut sources = Vec::new();
+    let mut diagnostics = Vec::new();
+
+    for (module_index, module) in SUPPORTED_STDLIB_SOURCE_MODULES.iter().enumerate() {
+        let source_id = SourceFileId(source_id_base + module_index as u32);
+        let path = package.root.join("src").join(format!("{module}.gleam"));
+        match fs::read_to_string(&path) {
+            Ok(text) => {
+                modules.push(ModuleInfo {
+                    name: (*module).to_string(),
+                    path: path.clone(),
+                    source_id,
+                    source_root: SourceRoot::Src,
+                });
+                sources.push(SourceFile::with_path(
+                    source_id,
+                    path,
+                    supported_stdlib_module_source(module, &text),
+                ));
+            }
+            Err(error) => diagnostics.push(Diagnostic::new(
+                DiagnosticCode::ProjectError,
+                format!("could not read dependency source {}: {error}", path.display()),
+            )),
+        }
+    }
+
+    if diagnostics.is_empty() {
+        Ok(DependencySourcePackage { package: package.clone(), modules, sources })
+    } else {
+        Err(diagnostics)
+    }
+}
+
+fn supported_stdlib_module_source(module: &str, source: &str) -> String {
+    match module {
+        "gleam/order" => [slice_between(
+            source,
+            "/// Represents the result",
+            "/// Compares two `Order`",
+        )]
+        .join("\n"),
+        "gleam/bool" | "gleam/function" => source.to_string(),
+        "gleam/result" => [
+            slice_between(source, "/// Checks whether the result", "/// Merges a nested `Result`"),
+            slice_between(source, "/// Extracts the `Ok` value", "/// Combines a list of results"),
+            slice_between(
+                source,
+                "/// Replace the value within a result",
+                "/// Given a list of results, returns only",
+            ),
+            slice_from(source, "pub fn try_recover"),
+        ]
+        .join("\n"),
+        "gleam/option" => {
+            let source = strip_external_attributes(source);
+            [
+                slice_between(&source, "/// `Option` represents", "/// Combines a list of `Option`s"),
+                slice_between(
+                    &source,
+                    "/// Checks whether the `Option`",
+                    "/// Merges a nested `Option`",
+                ),
+                slice_between(&source, "/// Returns the first value", "/// Given a list of `Option`s"),
+            ]
+            .join("\n")
+        }
+        "gleam/list" => {
+            let source = strip_external_attributes(&remove_imports(source));
+            [
+                slice_between(
+                    &source,
+                    "/// Counts the number",
+                    "/// Determines whether or not a given element",
+                ),
+                slice_between(&source, "/// Gets the first element", "/// Groups the elements"),
+                slice_between(
+                    &source,
+                    "/// Returns the given item wrapped",
+                    "/// Joins one list onto the end",
+                ),
+                slice_between(&source, "/// Returns a new list containing", "/// Combines two lists"),
+                slice_between(&source, "/// Prefixes an item", "/// Joins a list of lists"),
+                slice_between(
+                    &source,
+                    "/// Reduces a list of elements into a single value by calling a given function\n/// on each element, going from left to right",
+                    "/// Reduces a list of elements into a single value by calling a given function\n/// on each element, going from right to left",
+                ),
+            ]
+            .join("\n")
+        }
+        "gleam/int" => {
+            let source = remove_imports(source);
+            [
+                slice_between(
+                    &source,
+                    "/// Returns the absolute value",
+                    "/// Returns the result of the base",
+                ),
+                slice_between(
+                    &source,
+                    "/// Compares two ints, returning the smaller",
+                    "/// Generates a random int",
+                ),
+                slice_from(&source, "/// Run a function for each int"),
+            ]
+            .join("\n")
+        }
+        "gleam/float" => [
+            "import gleam/order".to_string(),
+            slice_between(
+                source,
+                "/// Compares two `Float`s, returning an `Order`",
+                "/// Compares two `Float`s within a tolerance",
+            )
+            .replace(") -> Order", ") -> order.Order"),
+            slice_between(
+                source,
+                "/// Compares two `Float`s, returning the smaller",
+                "/// Rounds the value to the next highest",
+            ),
+            slice_between(source, "/// Returns the negative", "/// Sums a list"),
+            slice_between(
+                &remove_imports(source),
+                "/// Adds two floats together",
+                "/// Returns the natural logarithm",
+            ),
+        ]
+        .join("\n"),
+        _ => source.to_string(),
+    }
+}
+
+fn slice_between(source: &str, start: &str, end: &str) -> String {
+    let start_index = source.find(start).expect("stdlib source slice start");
+    let end_index = source[start_index..]
+        .find(end)
+        .map(|index| start_index + index)
+        .expect("stdlib source slice end");
+    source[start_index..end_index].trim().to_string()
+}
+
+fn slice_from(source: &str, start: &str) -> String {
+    let start_index = source.find(start).expect("stdlib source slice start");
+    source[start_index..].trim().to_string()
+}
+
+fn remove_imports(source: &str) -> String {
+    source
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("import "))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn strip_external_attributes(source: &str) -> String {
+    source
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("@external("))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn load_package_sources(
@@ -315,13 +498,13 @@ mod tests {
     }
 
     #[test]
-    fn registry_backed_stdlib_dependency_does_not_parse_cached_source() {
-        let temp = tempfile::tempdir().expect("temp dir");
-        let root = temp.path().join("app");
-        write(
-            &root.join("build/packages/gleam_stdlib/src/gleam/io.gleam"),
-            "@external(javascript, \"../gleam_stdlib.mjs\", \"print\")\npub fn print(string: String) -> Nil\n",
-        );
+    fn registry_backed_stdlib_dependency_loads_supported_source_by_default() {
+        let root = published_stdlib_fixture_root()
+            .parent()
+            .and_then(Path::parent)
+            .and_then(Path::parent)
+            .expect("scalar app root")
+            .to_path_buf();
 
         let interfaces = load_dependency_interfaces(
             &root,
@@ -334,8 +517,20 @@ mod tests {
         )
         .expect("dependency interfaces");
 
-        assert!(interfaces.packages.is_empty());
+        assert_eq!(interfaces.packages.len(), 1);
+        assert_eq!(interfaces.packages[0].name, "gleam_stdlib");
         assert!(interfaces.modules.is_empty());
+
+        let sources = load_dependency_sources(&interfaces.packages).expect("dependency source modules");
+        assert_eq!(sources.len(), 1);
+        assert_eq!(
+            sources[0]
+                .modules
+                .iter()
+                .map(|module| module.name.as_str())
+                .collect::<Vec<_>>(),
+            SUPPORTED_STDLIB_SOURCE_MODULES,
+        );
     }
 
     #[test]

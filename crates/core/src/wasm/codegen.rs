@@ -172,12 +172,13 @@ impl<'a> StructuredEmitter<'a> {
         if self.options.target.is_js_host() {
             validate_js_host_abi(source, self.options.target)?;
         }
-        for function in &source.functions {
+        let emitted_functions = reachable_functions(source);
+        for function in &emitted_functions {
             let signature = self.function_signature(function)?;
             self.signatures.insert(function.name.clone(), signature);
         }
 
-        let needs_table = source.functions.iter().any(|f| {
+        let needs_table = emitted_functions.iter().any(|f| {
             f.body.instructions.iter().any(|instr| match instr {
                 ir::Instruction::Evaluate { expression, .. } | ir::Instruction::LocalSet { value: expression, .. } => {
                     expression.contains_indirect_call()
@@ -186,14 +187,14 @@ impl<'a> StructuredEmitter<'a> {
             }) || f.body.result.contains_indirect_call()
         });
         if needs_table {
-            let n = source.functions.len().max(1) as u32;
+            let n = emitted_functions.len().max(1) as u32;
             let table =
                 self.module
                     .push_table(Table { element_type: ReferenceType::FuncRef, minimum: n, maximum: Some(n) });
             self.func_table = Some(table);
         }
 
-        for function in &source.functions {
+        for function in &emitted_functions {
             if matches!(
                 function.abi.boundary,
                 ir::CallBoundary::HostImport { .. } | ir::CallBoundary::ModuleImport { .. }
@@ -202,7 +203,7 @@ impl<'a> StructuredEmitter<'a> {
             }
         }
 
-        for function in &source.functions {
+        for function in &emitted_functions {
             for import in needed_debug_imports(function) {
                 match self.options.target {
                     WasmTarget::Wasi => {
@@ -225,7 +226,7 @@ impl<'a> StructuredEmitter<'a> {
             }
         }
 
-        for function in &source.functions {
+        for function in &emitted_functions {
             if matches!(
                 function.abi.boundary,
                 ir::CallBoundary::Internal | ir::CallBoundary::ModuleExport
@@ -241,7 +242,7 @@ impl<'a> StructuredEmitter<'a> {
             self.constant(constant)?;
         }
 
-        for function in &source.functions {
+        for function in &emitted_functions {
             if matches!(function.abi.boundary, ir::CallBoundary::ModuleExport) {
                 let export_name = source
                     .exports
@@ -283,7 +284,7 @@ impl<'a> StructuredEmitter<'a> {
         }
 
         if self.func_table.is_some() {
-            self.emit_function_table(source)?;
+            self.emit_function_table(&emitted_functions)?;
         }
 
         Ok(self.module)
@@ -1124,27 +1125,6 @@ impl<'a> StructuredEmitter<'a> {
                 self.expression(&call.arguments[0].value, out)?;
                 self.call_runtime_helper("__float_to_string", [ValueType::F64], [ValueType::I32], out);
             }
-            "__stdlib_gleam_list_length" => {
-                self.expression(&call.arguments[0].value, out)?;
-                self.call_runtime_helper("__list_length", [ValueType::I32], [ValueType::I64], out);
-            }
-            "__stdlib_gleam_list_reverse" => {
-                self.expression(&call.arguments[0].value, out)?;
-                self.call_runtime_helper("__list_reverse", [ValueType::I32], [ValueType::I32], out);
-            }
-            "__stdlib_gleam_float_negate" => {
-                out.push(Instruction::F64Const((-0.0f64).to_bits()));
-                self.expression(&call.arguments[0].value, out)?;
-                out.push(Instruction::F64Sub);
-            }
-            "__stdlib_gleam_float_max" | "__stdlib_gleam_float_min" => {
-                self.binary_arguments(call, out)?;
-                out.push(if call.function == "__stdlib_gleam_float_max" {
-                    Instruction::F64Max
-                } else {
-                    Instruction::F64Min
-                });
-            }
             "__stdlib_gleam_string_length" => {
                 self.expression(&call.arguments[0].value, out)?;
                 out.push(Instruction::I32Load(MemoryArg::new(self.ensure_memory(), 4, 2)));
@@ -1198,7 +1178,6 @@ impl<'a> StructuredEmitter<'a> {
                     out,
                 );
             }
-            "__stdlib_gleam_bool_to_string" => self.bool_to_string(call, out)?,
             "__stdlib_gleam_bool_compare" => {
                 let scratch = self.required_local(self.scratch_local, "scratch")?;
                 self.expression(&call.arguments[0].value, out)?;
@@ -1207,7 +1186,6 @@ impl<'a> StructuredEmitter<'a> {
                 out.push(Instruction::LocalSet { local: scratch, type_: ValueType::I32 });
                 self.order_from_compare_local(scratch, out);
             }
-            "__stdlib_gleam_float_compare" => self.float_compare(call, out)?,
             "__stdlib_gleam_dict_new" => {
                 self.call_runtime_helper("__dict_new", [], [ValueType::I32], out);
             }
@@ -1223,7 +1201,7 @@ impl<'a> StructuredEmitter<'a> {
             "__stdlib_gleam_dict_get" => self.dict_get(call, out)?,
             "__stdlib_gleam_dict_has_key" => self.dict_has_key(call, out)?,
             "__stdlib_gleam_dict_delete" => self.dict_delete(call, out)?,
-            "__stdlib_gleam_function_identity" | "__stdlib_gleam_function_constant" => {
+            "__stdlib_gleam_function_constant" => {
                 self.expression(&call.arguments[0].value, out)?;
             }
             "__stdlib_gleam_dynamic_int" => self.dynamic_i64(call, 1, out)?,
@@ -1463,18 +1441,6 @@ impl<'a> StructuredEmitter<'a> {
         out.push(Instruction::CallName { name: name.into(), type_: FunctionType::new(params, results) });
     }
 
-    fn bool_to_string(&mut self, call: &ir::DirectCall, out: &mut Vec<Instruction>) -> StructuredResult<()> {
-        let true_ptr = self.push_static(runtime::string_object(self.config, self.next_static_offset, "True"));
-        let false_ptr = self.push_static(runtime::string_object(self.config, self.next_static_offset, "False"));
-        self.expression(&call.arguments[0].value, out)?;
-        out.push(Instruction::If {
-            type_: BlockType::new([], [ValueType::I32]),
-            then_body: vec![Instruction::I32Const(true_ptr as i32)],
-            else_body: vec![Instruction::I32Const(false_ptr as i32)],
-        });
-        Ok(())
-    }
-
     fn order_from_compare_local(&mut self, local: LocalId, out: &mut Vec<Instruction>) {
         let lt_ptr = self.push_static(runtime::custom_object(
             self.config,
@@ -1511,32 +1477,6 @@ impl<'a> StructuredEmitter<'a> {
                 },
             ],
         });
-    }
-
-    fn float_compare(&mut self, call: &ir::DirectCall, out: &mut Vec<Instruction>) -> StructuredResult<()> {
-        let scratch = self.required_local(self.scratch_local, "scratch")?;
-        self.expression(&call.arguments[0].value, out)?;
-        self.expression(&call.arguments[1].value, out)?;
-        out.push(Instruction::F64Lt);
-        out.push(Instruction::If {
-            type_: BlockType::new([], [ValueType::I32]),
-            then_body: vec![Instruction::I32Const(-1)],
-            else_body: {
-                let mut body = Vec::new();
-                self.expression(&call.arguments[0].value, &mut body)?;
-                self.expression(&call.arguments[1].value, &mut body)?;
-                body.push(Instruction::F64Gt);
-                body.push(Instruction::If {
-                    type_: BlockType::new([], [ValueType::I32]),
-                    then_body: vec![Instruction::I32Const(1)],
-                    else_body: vec![Instruction::I32Const(0)],
-                });
-                body
-            },
-        });
-        out.push(Instruction::LocalSet { local: scratch, type_: ValueType::I32 });
-        self.order_from_compare_local(scratch, out);
-        Ok(())
     }
 
     fn dict_insert(&mut self, call: &ir::DirectCall, out: &mut Vec<Instruction>) -> StructuredResult<()> {
@@ -2804,17 +2744,17 @@ impl<'a> StructuredEmitter<'a> {
     /// The funcref table itself is pre-declared at the start of `module()` so that
     /// `call_indirect` can reference it during function body emission.  This method
     /// fills in the trampolines and the active element segment that populates the table.
-    fn emit_function_table(&mut self, source: &ir::Module) -> StructuredResult<()> {
+    fn emit_function_table(&mut self, functions: &[&ir::Function]) -> StructuredResult<()> {
         let table = self
             .func_table
             .expect("func_table must be set before emit_function_table");
-        let n = source.functions.len();
+        let n = functions.len();
         if n == 0 {
             return Ok(());
         }
 
         let mut table_entries: Vec<FunctionId> = Vec::with_capacity(n);
-        for ir_function in &source.functions {
+        for ir_function in functions {
             let id = self.emit_trampoline(ir_function)?;
             table_entries.push(id);
         }
@@ -3324,6 +3264,83 @@ fn module_exports_arena_scoped_values(module: &ir::Module) -> bool {
     })
 }
 
+fn reachable_functions(module: &ir::Module) -> Vec<&ir::Function> {
+    let has_indirect_call = module.functions.iter().any(|function| {
+        function
+            .body
+            .instructions
+            .iter()
+            .any(|instruction| instruction.expression().contains_indirect_call())
+            || function.body.result.contains_indirect_call()
+    });
+    let has_linked_stdlib_source = module
+        .linked_names
+        .iter()
+        .any(|name| name.source_name.starts_with("gleam_stdlib:"));
+    if has_indirect_call && !has_linked_stdlib_source {
+        return module.functions.iter().collect();
+    }
+
+    let by_name = module
+        .functions
+        .iter()
+        .map(|function| (function.name.as_str(), function))
+        .collect::<HashMap<_, _>>();
+    let roots = module
+        .functions
+        .iter()
+        .filter(|function| !matches!(function.abi.boundary, ir::CallBoundary::Internal))
+        .map(|function| function.name.clone())
+        .collect::<Vec<_>>();
+    if roots.is_empty() {
+        return module.functions.iter().collect();
+    }
+
+    let mut reachable = HashSet::new();
+    let mut stack = roots;
+    while let Some(name) = stack.pop() {
+        if !reachable.insert(name.clone()) {
+            continue;
+        }
+        let Some(function) = by_name.get(name.as_str()) else {
+            continue;
+        };
+        collect_function_references(function, &by_name, &mut stack);
+    }
+
+    module
+        .functions
+        .iter()
+        .filter(|function| reachable.contains(&function.name))
+        .collect()
+}
+
+fn collect_function_references(
+    function: &ir::Function, by_name: &HashMap<&str, &ir::Function>, stack: &mut Vec<String>,
+) {
+    for instruction in &function.body.instructions {
+        collect_expression_references(instruction.expression(), by_name, stack);
+    }
+    collect_expression_references(&function.body.result, by_name, stack);
+}
+
+fn collect_expression_references(
+    expression: &ir::Expression, by_name: &HashMap<&str, &ir::Function>, stack: &mut Vec<String>,
+) {
+    match &expression.kind {
+        ExpressionKind::DirectCall(call) if by_name.contains_key(call.function.as_str()) => {
+            stack.push(call.function.clone());
+        }
+        ExpressionKind::FunctionValue(function) if by_name.contains_key(function.name.as_str()) => {
+            stack.push(function.name.clone());
+        }
+        _ => {}
+    }
+    for child in expression.children() {
+        collect_expression_references(child, by_name, stack);
+    }
+}
+
 fn is_heap_managed_type(type_: &Type) -> bool {
     matches!(
         type_,
@@ -3615,13 +3632,11 @@ fn expression_needs_scratch(expression: &ir::Expression) -> bool {
         ExpressionKind::IndirectCall(_) | ExpressionKind::RecordUpdate { .. } => true,
         ExpressionKind::List(_) if !expression_is_static_allocatable(expression) => true,
         ExpressionKind::DirectCall(call) => {
-            matches!(
-                call.function.as_str(),
-                "__stdlib_gleam_bool_compare" | "__stdlib_gleam_float_compare"
-            ) || call
-                .arguments
-                .iter()
-                .any(|argument| expression_needs_scratch(&argument.value))
+            call.function == "__stdlib_gleam_bool_compare"
+                || call
+                    .arguments
+                    .iter()
+                    .any(|argument| expression_needs_scratch(&argument.value))
         }
         ExpressionKind::Branch(branch) => {
             branch.subjects.iter().any(expression_needs_scratch)

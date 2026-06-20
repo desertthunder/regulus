@@ -136,15 +136,24 @@ Retained registry entries record their blocker group and deletion condition in
 - [x] Delete the first unblocked source-backed runtime dispatch entries:
       `gleam/bool.negate`, `gleam/list.fold`, `gleam/list.map`,
       `gleam/option.map`, and `gleam/result.map`.
+- [x] Load the source-proven scalar stdlib module subset by default for
+      `gleam_stdlib` dependency packages, while keeping registry interfaces
+      transitional.
+- [x] Keep dependency package functions internal during project linking so
+      public generic stdlib helpers are not exported through the host ABI.
+- [x] Delete the next source-backed scalar runtime dispatch entries:
+      `gleam/bool.to_string`, `gleam/float.compare`, `gleam/float.max`,
+      `gleam/float.min`, `gleam/float.negate`,
+      `gleam/function.identity`, `gleam/list.length`, and
+      `gleam/list.reverse`.
 - [x] For remaining unblocked library-level entries, add an upstream source
       proof before deleting the runtime dispatch arm. Checklist: compile the
       upstream function, add a behavior fixture, assert the linked dump uses
       `gleam_stdlib:...`, then assert it no longer uses
       `__stdlib_gleam_*`.
 - [ ] Remove the remaining registry-path blockers before deleting scalar
-      runtime dispatch arms: default stdlib source loading, no export of public
-      generic dependency functions, upstream bodies for fixture-missing
-      functions, and native replacements for bodyless externals.
+      runtime dispatch arms: upstream bodies for fixture-missing functions and
+      native replacements for bodyless externals.
 - [ ] Delete remaining scalar and registry-retained library dispatch arms once
       source loading is the default path for those modules.
 - [ ] Keep host adapters such as `gleam/io.print` and `gleam/io.println` in

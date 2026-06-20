@@ -306,14 +306,17 @@ fn renders_deterministic_structured_wat_for_managed_values() {
 #[test]
 fn structured_codegen_runs_dynamic_tuple_and_list_literals() {
     let wasm = compile_wasm(
-        r#"import gleam/list
-
-pub fn first(x: Int) -> Int {
+        r#"pub fn first(x: Int) -> Int {
 case #(x, 2) {
  #(left, _) -> left
 }
 }
-pub fn count(x: Int) -> Int { list.length([x, 2, 3]) }
+pub fn count(x: Int) -> Int {
+case [x, 2, 3] {
+ [_, _, _] -> 3
+ _ -> 0
+}
+}
 "#,
     );
 
@@ -439,14 +442,6 @@ fn structured_codegen_ports_helper_backed_stdlib_intrinsics() {
             "import gleam/string\npub fn text_len() -> Int { string.length(string.concat([\"a\", \"bc\"])) }",
         ),
         (
-            "list_length",
-            "import gleam/list\npub fn item_count() -> Int { list.length([1, 2, 3]) }",
-        ),
-        (
-            "list_reverse",
-            "import gleam/list\npub fn reversed() { list.reverse([1, 2, 3]) }",
-        ),
-        (
             "bit_array_starts_with",
             "import gleam/bit_array\npub fn bits_start() -> Bool { bit_array.starts_with(<<1, 2, 3>>, <<1, 2>>) }",
         ),
@@ -488,8 +483,6 @@ dict.size(original) + dict.size(updated)
         "$__int_to_string",
         "$__float_to_string",
         "$__string_concat_list",
-        "$__list_length",
-        "$__list_reverse",
         "$__bit_array_append",
         "$__bit_array_concat_list",
         "$__bit_array_match",
@@ -2050,14 +2043,6 @@ fn call_i32_export(instance: &Instance, store: &mut Store<String>, name: &str) -
         .unwrap_or_else(|_| panic!("call {name}"))
 }
 
-fn call_f64_export(instance: &Instance, store: &mut Store<String>, name: &str) -> f64 {
-    instance
-        .get_typed_func::<(), f64>(&mut *store, name)
-        .unwrap_or_else(|_| panic!("get {name} export"))
-        .call(store, ())
-        .unwrap_or_else(|_| panic!("call {name}"))
-}
-
 fn read_exported_bytes(
     instance: &Instance, store: &mut Store<String>, memory: &WasmtimeMemory, name: &str, len: usize,
 ) -> Vec<u8> {
@@ -2087,22 +2072,14 @@ fn assert_string_and_debug_intrinsics(instance: &Instance, store: &mut Store<Str
 }
 
 fn assert_collection_and_number_intrinsics(instance: &Instance, store: &mut Store<String>, memory: &WasmtimeMemory) {
-    assert_eq!(call_i64_export(instance, store, "item_count"), 3);
-    assert_eq!(call_i64_export(instance, store, "reversed_head"), 3);
-
-    let bytes = read_exported_bytes(instance, store, memory, "bool_text", 16);
-    assert_eq!(&bytes[8..12], b"True");
     assert_eq!(call_i64_export(instance, store, "bool_rank"), -1);
     assert_eq!(call_i64_export(instance, store, "dict_value"), 42);
     assert_eq!(call_i32_export(instance, store, "dict_missing"), 0);
     assert_eq!(call_i64_export(instance, store, "dict_persistent_size"), 1);
-    assert_eq!(call_i64_export(instance, store, "float_rank"), -1);
-    assert_eq!(call_f64_export(instance, store, "float_larger"), 2.5);
 
     let bytes = read_exported_bytes(instance, store, memory, "float_text", 16);
     assert_eq!(&bytes[8..16], b"1.500000");
 
-    assert_eq!(call_i64_export(instance, store, "same_value"), 9);
     assert_eq!(call_i64_export(instance, store, "constant_value"), 7);
 }
 
@@ -2175,16 +2152,8 @@ pub fn number() { int.to_string(-42) }
 pub fn text() { string.append("a", "b") }
 pub fn text_len() -> Int { string.length(string.concat(["a", "bc"])) }
 pub fn empty() -> Bool { string.is_empty("") }
-pub fn item_count() -> Int { list.length([1, 2, 3]) }
-pub fn reversed_head() -> Int {
-case list.reverse([1, 2, 3]) {
- [head, ..] -> head
- _ -> 0
-}
-}
 pub fn debugged() -> Int { io.debug(42) }
 pub fn debugged_text() -> String { io.debug("ok") }
-pub fn bool_text() -> String { bool.to_string(True) }
 pub fn bool_rank() -> Int {
 case bool.compare(False, True) {
  order.Lt -> -1
@@ -2208,16 +2177,7 @@ let original = dict.new()
 let updated = dict.insert(original, "a", 42)
 dict.size(original) + dict.size(updated)
 }
-pub fn float_rank() -> Int {
-case float.compare(1.0, 2.0) {
- order.Lt -> -1
- order.Eq -> 0
- order.Gt -> 1
-}
-}
-pub fn float_larger() -> Float { float.max(1.5, float.negate(-2.5)) }
 pub fn float_text() -> String { float.to_string(1.5) }
-pub fn same_value() -> Int { function.identity(9) }
 pub fn constant_value() -> Int { function.constant(7, "ignored") }
 pub fn bits_size() -> Int { bit_array.bit_size(<<1, 2, 3>>) }
 pub fn bytes_size() -> Int { bit_array.byte_size(<<1:4, 2:4, 3:4>>) }

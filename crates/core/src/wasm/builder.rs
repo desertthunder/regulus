@@ -383,8 +383,6 @@ pub enum Instruction {
     F64Sub,
     F64Mul,
     F64Div,
-    F64Min,
-    F64Max,
     I32Load(MemoryArg),
     I32Load8U(MemoryArg),
     I32Store(MemoryArg),
@@ -447,9 +445,7 @@ impl Instruction {
             I::I64ExtendI32U => StackEffect::new([I32], [I64]),
             I::I64ReinterpretF64 => StackEffect::new([F64], [I64]),
             I::F64ReinterpretI64 => StackEffect::new([I64], [F64]),
-            I::F64Add | I::F64Sub | I::F64Mul | I::F64Div | I::F64Min | I::F64Max => {
-                StackEffect::new([F64, F64], [F64])
-            }
+            I::F64Add | I::F64Sub | I::F64Mul | I::F64Div => StackEffect::new([F64, F64], [F64]),
             I::I32Load(_) | I::I32Load8U(_) => StackEffect::new([I32], [I32]),
             I::I32Store(_) | I::I32Store8(_) => StackEffect::new([I32, I32], []),
             I::I64Load(_) => StackEffect::new([I32], [I64]),
@@ -828,8 +824,6 @@ fn instruction_inline_wat(instruction: &Instruction) -> String {
         Instruction::F64Sub => "f64.sub".into(),
         Instruction::F64Mul => "f64.mul".into(),
         Instruction::F64Div => "f64.div".into(),
-        Instruction::F64Min => "f64.min".into(),
-        Instruction::F64Max => "f64.max".into(),
         Instruction::I32Load(arg) => memory_wat("i32.load", arg),
         Instruction::I32Load8U(arg) => memory_wat("i32.load8_u", arg),
         Instruction::I32Store(arg) => memory_wat("i32.store", arg),

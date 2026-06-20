@@ -77,21 +77,21 @@ after a source proof shows the upstream function compiles and links from
 | ------------------------- | -------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------ |
 | `gleam/bool.compare`      | library source | Not present in the current upstream fixture.                       | Keep runtime dispatch until upstream source or a replacement proof exists.                 |
 | `gleam/bool.negate`       | library source | Pure source proof exists; full module now lowers.                  | Runtime table and direct codegen dispatch deleted.                                         |
-| `gleam/bool.to_string`    | library source | Source-backed link proof exists; registry path still needs it.     | Delete after stdlib source is loaded by default.                                           |
-| `gleam/float.compare`     | library source | Source-backed link proof exists with `gleam/order`.                | Delete after stdlib source is loaded by default.                                           |
-| `gleam/float.max`         | library source | Source-backed link proof exists; registry path still needs it.     | Delete after stdlib source is loaded by default.                                           |
-| `gleam/float.min`         | library source | Source-backed link proof exists; registry path still needs it.     | Delete after stdlib source is loaded by default.                                           |
-| `gleam/float.negate`      | library source | Source-backed link proof exists; registry path still needs it.     | Delete after stdlib source is loaded by default.                                           |
+| `gleam/bool.to_string`    | library source | Source-backed link proof exists; full module now lowers.           | Runtime table and direct codegen dispatch deleted.                                         |
+| `gleam/float.compare`     | library source | Source-backed link proof exists with `gleam/order`.                | Runtime table and direct codegen dispatch deleted.                                         |
+| `gleam/float.max`         | library source | Source-backed link proof exists; full module now lowers.           | Runtime table and direct codegen dispatch deleted.                                         |
+| `gleam/float.min`         | library source | Source-backed link proof exists; full module now lowers.           | Runtime table and direct codegen dispatch deleted.                                         |
+| `gleam/float.negate`      | library source | Source-backed link proof exists; full module now lowers.           | Runtime table and direct codegen dispatch deleted.                                         |
 | `gleam/float.to_string`   | library source | Full module needs imported dependencies or native externals.       | Compile upstream function or isolate required primitive, then delete runtime dispatch.     |
 | `gleam/function.compose`  | library source | Not present in the current upstream fixture.                       | Keep runtime dispatch until upstream source or a replacement proof exists.                 |
 | `gleam/function.constant` | library source | Not present in the current upstream fixture.                       | Keep runtime dispatch until upstream source or a replacement proof exists.                 |
 | `gleam/function.flip`     | library source | Not present in the current upstream fixture.                       | Keep runtime dispatch until upstream source or a replacement proof exists.                 |
-| `gleam/function.identity` | library source | Source-backed link proof exists; registry path still needs it.     | Delete after stdlib source is loaded by default.                                           |
+| `gleam/function.identity` | library source | Source-backed link proof exists; full module now lowers.           | Runtime table and direct codegen dispatch deleted.                                         |
 | `gleam/int.to_string`     | library source | Full module needs imported `gleam/float` source or native support. | Compile upstream function or isolate required primitive, then delete runtime dispatch.     |
 | `gleam/list.fold`         | library source | Source-backed link proof and registry behavior fixture exist.      | Runtime table dispatch deleted; registry-backed lowering adapter still remains.            |
-| `gleam/list.length`       | library source | Source-backed link proof exists; registry path still needs it.     | Delete after stdlib source is loaded by default.                                           |
+| `gleam/list.length`       | library source | Source-backed link proof exists; pure module subset now lowers.    | Runtime table and direct codegen dispatch deleted.                                         |
 | `gleam/list.map`          | library source | Source-backed link proof and registry behavior fixture exist.      | Runtime table dispatch deleted; registry-backed lowering adapter still remains.            |
-| `gleam/list.reverse`      | library source | Source-backed link proof exists; registry path still needs it.     | Delete after stdlib source is loaded by default.                                           |
+| `gleam/list.reverse`      | library source | Source-backed link proof exists; pure module subset now lowers.    | Runtime table and direct codegen dispatch deleted.                                         |
 | `gleam/option.map`        | library source | Pure source proof exists for selected functions.                   | Runtime table dispatch deleted; registry-backed lowering adapter still remains.            |
 | `gleam/result.map`        | library source | Pure source proof exists for selected functions.                   | Runtime table dispatch deleted; registry-backed lowering adapter still remains.            |
 
@@ -104,6 +104,17 @@ Completed entries from the first source-backed deletion slice:
 3. `gleam/list.map`
 4. `gleam/option.map`
 5. `gleam/result.map`
+
+Completed entries from the second source-backed scalar deletion slice:
+
+1. `gleam/bool.to_string`
+2. `gleam/float.compare`
+3. `gleam/float.max`
+4. `gleam/float.min`
+5. `gleam/float.negate`
+6. `gleam/function.identity`
+7. `gleam/list.length`
+8. `gleam/list.reverse`
 
 Remaining deletion work requires:
 

@@ -130,7 +130,7 @@ impl StdlibModule {
                     "debug",
                     vec![Type::generic("a")],
                     Type::generic("a"),
-                    runtime_primitive_retention(),
+                    upstream_source_retention(),
                 ),
             ],
             &[],
@@ -200,13 +200,13 @@ impl StdlibModule {
                     "length",
                     vec![Type::List(Box::new(Type::generic("a")))],
                     Type::Int,
-                    runtime_primitive_retention(),
+                    upstream_source_retention(),
                 ),
                 function(
                     "reverse",
                     vec![Type::List(Box::new(Type::generic("a")))],
                     list(Type::generic("a")),
-                    runtime_primitive_retention(),
+                    upstream_source_retention(),
                 ),
                 function(
                     "map",
@@ -383,12 +383,7 @@ impl StdlibModule {
             ModuleStrategy::Hybrid,
             module_retention(RetentionGap::SourceLanguageFeature),
             &[
-                function(
-                    "to_string",
-                    vec![Type::Bool],
-                    Type::String,
-                    runtime_primitive_retention(),
-                ),
+                function("to_string", vec![Type::Bool], Type::String, upstream_source_retention()),
                 function("negate", vec![Type::Bool], Type::Bool, upstream_source_retention()),
                 function(
                     "compare",
@@ -663,7 +658,7 @@ impl StdlibModule {
                     "compare",
                     vec![Type::Float, Type::Float],
                     Type::custom("Order", vec![]),
-                    runtime_primitive_retention(),
+                    upstream_source_retention(),
                 ),
                 function(
                     "to_string",
@@ -675,15 +670,15 @@ impl StdlibModule {
                     "max",
                     vec![Type::Float, Type::Float],
                     Type::Float,
-                    runtime_primitive_retention(),
+                    upstream_source_retention(),
                 ),
                 function(
                     "min",
                     vec![Type::Float, Type::Float],
                     Type::Float,
-                    runtime_primitive_retention(),
+                    upstream_source_retention(),
                 ),
-                function("negate", vec![Type::Float], Type::Float, runtime_primitive_retention()),
+                function("negate", vec![Type::Float], Type::Float, upstream_source_retention()),
             ],
             &[],
         )
@@ -699,7 +694,7 @@ impl StdlibModule {
                     "identity",
                     vec![Type::generic("a")],
                     Type::generic("a"),
-                    runtime_primitive_retention(),
+                    upstream_source_retention(),
                 ),
                 function(
                     "constant",

@@ -957,8 +957,14 @@ pub fn lower_project(project: TypedProject) -> Result<Module, Diagnostics> {
     }
 
     for module in project.modules {
+        let is_dependency_module = module.package_name.as_deref() != Some(project.package_name.as_str());
         match lowerer::lower_with_project_context(module, &project.interfaces, &source_backed_stdlib_modules) {
-            Ok(module) => modules.push(module),
+            Ok(mut module) => {
+                if is_dependency_module {
+                    keep_dependency_module_internal(&mut module);
+                }
+                modules.push(module);
+            }
             Err(mut errors) => diagnostics.append(&mut errors),
         }
     }
@@ -968,6 +974,15 @@ pub fn lower_project(project: TypedProject) -> Result<Module, Diagnostics> {
     }
 
     link_modules(modules)
+}
+
+fn keep_dependency_module_internal(module: &mut Module) {
+    module.exports.clear();
+    for function in &mut module.functions {
+        if matches!(function.abi.boundary, CallBoundary::ModuleExport) {
+            function.abi.boundary = CallBoundary::Internal;
+        }
+    }
 }
 
 fn unsupported_dependency_member_diagnostics(project: &TypedProject) -> Diagnostics {

@@ -15,7 +15,6 @@ const STDLIB_RUNTIME_PRIMITIVES: &[StdlibRuntimePrimitive] = &[
     primitive("gleam/bit_array", "is_empty"),
     primitive("gleam/bit_array", "starts_with"),
     primitive("gleam/bool", "compare"),
-    primitive("gleam/bool", "to_string"),
     primitive("gleam/dict", "delete"),
     primitive("gleam/dict", "get"),
     primitive("gleam/dict", "has_key"),
@@ -42,19 +41,12 @@ const STDLIB_RUNTIME_PRIMITIVES: &[StdlibRuntimePrimitive] = &[
     primitive("gleam/dynamic/decode", "optional"),
     primitive("gleam/dynamic/decode", "run"),
     primitive("gleam/dynamic/decode", "string"),
-    primitive("gleam/float", "compare"),
-    primitive("gleam/float", "max"),
-    primitive("gleam/float", "min"),
-    primitive("gleam/float", "negate"),
     primitive("gleam/float", "to_string"),
     primitive("gleam/function", "compose"),
     primitive("gleam/function", "constant"),
     primitive("gleam/function", "flip"),
-    primitive("gleam/function", "identity"),
     primitive("gleam/int", "to_string"),
     primitive("gleam/io", "debug"),
-    primitive("gleam/list", "length"),
-    primitive("gleam/list", "reverse"),
     primitive("gleam/string", "append"),
     primitive("gleam/string", "concat"),
     primitive("gleam/string", "is_empty"),
@@ -589,7 +581,15 @@ mod tests {
         );
         assert_eq!(stdlib_runtime_primitive("gleam/list", "fold"), None);
         assert_eq!(stdlib_runtime_primitive("gleam/list", "map"), None);
+        assert_eq!(stdlib_runtime_primitive("gleam/list", "length"), None);
+        assert_eq!(stdlib_runtime_primitive("gleam/list", "reverse"), None);
         assert_eq!(stdlib_runtime_primitive("gleam/bool", "negate"), None);
+        assert_eq!(stdlib_runtime_primitive("gleam/bool", "to_string"), None);
+        assert_eq!(stdlib_runtime_primitive("gleam/float", "compare"), None);
+        assert_eq!(stdlib_runtime_primitive("gleam/float", "max"), None);
+        assert_eq!(stdlib_runtime_primitive("gleam/float", "min"), None);
+        assert_eq!(stdlib_runtime_primitive("gleam/float", "negate"), None);
+        assert_eq!(stdlib_runtime_primitive("gleam/function", "identity"), None);
         assert_eq!(stdlib_runtime_primitive("gleam/option", "map"), None);
         assert_eq!(stdlib_runtime_primitive("gleam/result", "map"), None);
         assert_eq!(stdlib_runtime_primitive("gleam/io", "println"), None);

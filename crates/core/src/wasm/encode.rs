@@ -131,8 +131,6 @@ pub fn encode_instruction(instruction: &Instruction, out: &mut Vec<u8>, module: 
         Instruction::F64Sub => out.push(0xa1),
         Instruction::F64Mul => out.push(0xa2),
         Instruction::F64Div => out.push(0xa3),
-        Instruction::F64Min => out.push(0xa4),
-        Instruction::F64Max => out.push(0xa5),
         Instruction::I32Load(arg) => encode_memory_instruction(0x28, arg, out),
         Instruction::I32Load8U(arg) => encode_memory_instruction(0x2d, arg, out),
         Instruction::I64Load(arg) => encode_memory_instruction(0x29, arg, out),
