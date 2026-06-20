@@ -1,8 +1,9 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::ast::{self, Declaration, Expression, Pattern, Statement, UnqualifiedImportKind};
 use crate::diagnostic::{Diagnostic, DiagnosticCode, Diagnostics, Label};
 use crate::loader::registry::ResolveInterfaceRegistry;
+use crate::types::ModuleInterface;
 use crate::{parse, project::Project, source::Span, target};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -207,15 +208,55 @@ impl Resolver {
     }
 
     fn collect_prelude(&mut self, scope: ScopeId) {
-        let members = self
+        let local_prelude_members = self.local_stdlib_prelude_members();
+        let mut members = self
             .interfaces
             .prelude_members()
             .map(|((namespace, name), member)| (*namespace, name.clone(), member.span))
             .collect::<Vec<_>>();
+        if self.is_gleam_stdlib_project_module() {
+            let span = ModuleInterface::module_span();
+            members.extend(
+                ModuleInterface::prelude()
+                    .constructors
+                    .keys()
+                    .map(|name| (Namespace::Constructor, name.clone(), span)),
+            );
+        }
         for (namespace, name, span) in members {
+            if local_prelude_members.contains(&(namespace, name.clone())) {
+                continue;
+            }
             let name = ast::Name { span, text: name };
             self.define(scope, &name, namespace, SymbolKind::Prelude);
         }
+    }
+
+    fn local_stdlib_prelude_members(&self) -> HashSet<(Namespace, String)> {
+        if !self.is_gleam_stdlib_project_module() {
+            return HashSet::new();
+        }
+
+        let mut members = HashSet::new();
+        for declaration in &self.module.declarations {
+            if let Declaration::TypeDefinition(type_) = declaration {
+                members.insert((Namespace::Type, type_.name.text.clone()));
+                for constructor in &type_.constructors {
+                    members.insert((Namespace::Constructor, constructor.name.text.clone()));
+                }
+            }
+        }
+        members
+    }
+
+    fn is_gleam_stdlib_project_module(&self) -> bool {
+        let Some(module_name) = &self.module_name else {
+            return false;
+        };
+        let Some(interface) = self.interfaces.get(module_name) else {
+            return false;
+        };
+        interface.package.as_deref() == Some("gleam_stdlib")
     }
 
     fn collect_imports(&mut self, scope: ScopeId) {

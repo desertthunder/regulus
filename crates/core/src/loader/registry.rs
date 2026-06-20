@@ -20,9 +20,9 @@ impl ResolveInterfaceRegistry {
         root_package: &str, dependency_interfaces: &HashMap<String, InterfaceEntry>,
         modules: impl IntoIterator<Item = (&'a String, &'a ast::Module)>,
     ) -> Self {
-        Self::default()
-            .with_prelude_interface()
-            .with_stdlib_interfaces()
+        let registry = Self::default().with_prelude_interface();
+        let registry = if root_package == "gleam_stdlib" { registry } else { registry.with_stdlib_interfaces() };
+        registry
             .with_dependency_interfaces(dependency_interfaces)
             .with_project_interfaces(root_package, modules)
     }
@@ -103,7 +103,7 @@ impl ResolveModuleInterface {
                     ResolveModuleMember { public: true, span: ModuleInterface::module_span() },
                 )
             })
-            .collect();
+            .collect::<HashMap<_, _>>();
         Self { package: None, module: "prelude".to_string(), members, externals: HashMap::new() }
     }
 
@@ -208,9 +208,9 @@ impl TypeInterfaceRegistry {
         root_package: &str, dependency_interfaces: &HashMap<String, InterfaceEntry>,
         project_modules: impl IntoIterator<Item = (&'a str, &'a ast::Module)>,
     ) -> Self {
-        Self::default()
-            .with_prelude_interface()
-            .with_stdlib_interfaces()
+        let registry = Self::default().with_prelude_interface();
+        let registry = if root_package == "gleam_stdlib" { registry } else { registry.with_stdlib_interfaces() };
+        registry
             .with_dependency_interfaces(dependency_interfaces)
             .with_project_interfaces(root_package, project_modules)
     }

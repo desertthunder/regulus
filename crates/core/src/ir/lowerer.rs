@@ -264,7 +264,7 @@ impl Lowerer {
     }
 
     fn validate_concrete_runtime_types(&mut self) {
-        if self.allows_upstream_pair_generics() {
+        if self.allows_upstream_stdlib_generics() {
             return;
         }
         for function in self.module.functions.clone() {
@@ -297,9 +297,22 @@ impl Lowerer {
         }
     }
 
-    fn allows_upstream_pair_generics(&self) -> bool {
+    fn allows_upstream_stdlib_generics(&self) -> bool {
         self.module.package_name.as_deref() == Some("gleam_stdlib")
-            && self.module.module_name.as_deref() == Some("gleam/pair")
+            && matches!(
+                self.module.module_name.as_deref(),
+                Some(
+                    "gleam/bool"
+                        | "gleam/float"
+                        | "gleam/function"
+                        | "gleam/int"
+                        | "gleam/list"
+                        | "gleam/option"
+                        | "gleam/order"
+                        | "gleam/pair"
+                        | "gleam/result"
+                )
+            )
     }
 
     fn validate_external_function_abis(&mut self) {

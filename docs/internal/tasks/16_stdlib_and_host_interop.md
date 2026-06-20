@@ -32,7 +32,7 @@ enough that Regulus does not reimplement standard-library behavior.
       metadata, package asset, runtime primitive, and host ABI.
 - [x] Compile `gleam/pair` from upstream source as the first registry deletion
       proof.
-- [ ] Compile pure portions of `gleam/order`, `gleam/result`, `gleam/option`,
+- [x] Compile pure portions of `gleam/order`, `gleam/result`, `gleam/option`,
       `gleam/list`, `gleam/int`, `gleam/float`, `gleam/bool`, and
       `gleam/function`.
 - [ ] Keep any temporary registry entry only when the blocker report shows a
@@ -43,20 +43,24 @@ enough that Regulus does not reimplement standard-library behavior.
 Current blocker groups are snapshotted in
 `loader::dependency::tests::snapshots_first_compile_blocker_for_each_upstream_stdlib_module`.
 
-- Source language feature: `gleam/bool` and `gleam/function` reach lowering
-  with generic functions that require monomorphization.
-- Target filtering: `gleam/bit_array` and `gleam/set` keep duplicate
-  standalone `@target` declarations selected at the same time.
+- Source language feature: full `gleam/order` still hits current
+  exhaustiveness handling for multi-constructor branches.
+- Target filtering: full `gleam/bit_array` and `gleam/set` now first need
+  their imported dependency modules before standalone `@target` declarations
+  can be isolated.
 - Dependency metadata: `gleam/bytes_tree`, `gleam/dict`,
   `gleam/dynamic/decode`, `gleam/float`, `gleam/int`, `gleam/list`,
-  `gleam/option`, `gleam/order`, `gleam/result`, `gleam/string`, and
-  `gleam/uri` are blocked by transitional registry/interface collisions or
-  missing upstream dependency members.
-- Package asset: `gleam/dynamic` and `gleam/string_tree` first fail around
-  upstream bodyless externals backed by package-relative JS assets.
+  `gleam/result`, `gleam/string`, and `gleam/uri` first need their imported
+  dependency modules loaded as source.
+- Package asset: full `gleam/dynamic`, `gleam/option`, and
+  `gleam/string_tree` first fail around imported package modules or
+  package-relative native externals.
 - Runtime primitive: no module currently reaches a first blocker in this group.
 - Host ABI: no module currently reaches a first blocker in this group.
-- No current blocker through lowering: `gleam/io` and `gleam/pair`.
+- No current blocker through lowering: full `gleam/bool`, `gleam/function`,
+  `gleam/io`, and `gleam/pair`, plus pure portions of `gleam/order`,
+  `gleam/result`, `gleam/option`, `gleam/list`, `gleam/int`, and
+  `gleam/float`.
 
 ### Registry Exit Plan
 

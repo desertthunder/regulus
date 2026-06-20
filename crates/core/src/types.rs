@@ -205,6 +205,7 @@ impl ModuleInterface {
                 },
             );
         }
+        interface.constructors.extend(prelude_constructors());
         interface
     }
 
@@ -242,6 +243,60 @@ impl ModuleInterface {
             })
             .collect()
     }
+}
+
+fn prelude_constructors() -> HashMap<String, ConstructorInfo> {
+    let span = ModuleInterface::module_span();
+    let result = Type::Custom { name: "Result".into(), args: vec![Type::generic("a"), Type::generic("e")] };
+    let option = Type::Custom { name: "Option".into(), args: vec![Type::generic("a")] };
+    let order = Type::Custom { name: "Order".into(), args: Vec::new() };
+    [
+        (
+            "Ok".to_string(),
+            ConstructorInfo {
+                name: "Ok".into(),
+                fields: vec![FieldInfo::new("value".into(), Type::generic("a"))],
+                return_type: result.clone(),
+                span,
+            },
+        ),
+        (
+            "Error".to_string(),
+            ConstructorInfo {
+                name: "Error".into(),
+                fields: vec![FieldInfo::new("reason".into(), Type::generic("e"))],
+                return_type: result,
+                span,
+            },
+        ),
+        (
+            "Some".to_string(),
+            ConstructorInfo {
+                name: "Some".into(),
+                fields: vec![FieldInfo::new("value".into(), Type::generic("a"))],
+                return_type: option.clone(),
+                span,
+            },
+        ),
+        (
+            "None".to_string(),
+            ConstructorInfo { name: "None".into(), fields: Vec::new(), return_type: option, span },
+        ),
+        (
+            "Lt".to_string(),
+            ConstructorInfo { name: "Lt".into(), fields: Vec::new(), return_type: order.clone(), span },
+        ),
+        (
+            "Eq".to_string(),
+            ConstructorInfo { name: "Eq".into(), fields: Vec::new(), return_type: order.clone(), span },
+        ),
+        (
+            "Gt".to_string(),
+            ConstructorInfo { name: "Gt".into(), fields: Vec::new(), return_type: order, span },
+        ),
+    ]
+    .into_iter()
+    .collect()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

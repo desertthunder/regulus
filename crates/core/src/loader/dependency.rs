@@ -427,89 +427,64 @@ mod tests {
 
         insta::assert_snapshot!(report, @r#"
 ## dependency metadata
-- `gleam/bytes_tree`: ResolveError: module `gleam/string_tree` has no member `StringTree`
-    --> file 2000002 bytes 1222..1232
-        unknown module member
-- `gleam/dict`: ResolveError: duplicate name `Option`
-    --> file 2000003 bytes 26..32
-        defined again here
-    --> file 4294967295 bytes 0..0
-        previously defined here
-- `gleam/dynamic/decode`: ResolveError: duplicate name `Option`
-    --> file 2000004 bytes 9268..9274
-        defined again here
-    --> file 4294967295 bytes 0..0
-        previously defined here
-- `gleam/float`: ResolveError: duplicate name `Order`
-    --> file 2000006 bytes 1386..1391
-        defined again here
-    --> file 4294967295 bytes 0..0
-        previously defined here
-- `gleam/int`: ResolveError: duplicate name `Order`
-    --> file 2000008 bytes 522..527
-        defined again here
-    --> file 4294967295 bytes 0..0
-        previously defined here
-- `gleam/list`: ResolveError: duplicate name `Order`
-    --> file 2000010 bytes 812..817
-        defined again here
-    --> file 4294967295 bytes 0..0
-        previously defined here
-- `gleam/option`: ResolveError: duplicate name `Option`
-    --> file 2000011 bytes 893..899
-        defined again here
-    --> file 4294967295 bytes 0..0
-        previously defined here
-- `gleam/order`: ResolveError: duplicate name `Order`
-    --> file 2000012 bytes 115..120
-        defined again here
-    --> file 4294967295 bytes 0..0
-        previously defined here
-- `gleam/result`: ResolveError: unknown constructor `Error`
-    --> file 2000014 bytes 405..410
-        constructor not found
-- `gleam/string`: ResolveError: duplicate name `Option`
-    --> file 2000016 bytes 166..172
-        defined again here
-    --> file 4294967295 bytes 0..0
-        previously defined here
-- `gleam/uri`: ResolveError: duplicate name `Option`
-    --> file 2000018 bytes 485..491
-        defined again here
-    --> file 4294967295 bytes 0..0
-        previously defined here
+- `gleam/bytes_tree`: ResolveError: unknown module `gleam/bit_array`
+    --> file 2000002 bytes 1157..1172
+        module not found
+- `gleam/dict`: ResolveError: unknown module `gleam/option`
+    --> file 2000003 bytes 7..19
+        module not found
+- `gleam/dynamic/decode`: ResolveError: unknown module `gleam/bit_array`
+    --> file 2000004 bytes 9121..9136
+        module not found
+- `gleam/float`: ResolveError: unknown module `gleam/order`
+    --> file 2000006 bytes 1368..1379
+        module not found
+- `gleam/int`: ResolveError: unknown module `gleam/float`
+    --> file 2000008 bytes 485..496
+        module not found
+- `gleam/list`: ResolveError: unknown module `gleam/dict`
+    --> file 2000010 bytes 728..738
+        module not found
+- `gleam/result`: ResolveError: unknown module `gleam/list`
+    --> file 2000014 bytes 152..162
+        module not found
+- `gleam/string`: ResolveError: unknown module `gleam/list`
+    --> file 2000016 bytes 129..139
+        module not found
+- `gleam/uri`: ResolveError: unknown module `gleam/int`
+    --> file 2000018 bytes 431..440
+        module not found
 
 ## none
+- `gleam/bool`: compiles through lowering
+- `gleam/function`: compiles through lowering
 - `gleam/io`: compiles through lowering
 - `gleam/pair`: compiles through lowering
 
 ## package asset
-- `gleam/dynamic`: ResolveError: unknown name `cast`
-    --> file 2000005 bytes 2861..2865
-        not found in scope
-- `gleam/string_tree`: ResolveError: unknown name `from_strings`
-    --> file 2000017 bytes 1100..1112
-        not found in scope
+- `gleam/dynamic`: ResolveError: unknown module `gleam/dict`
+    --> file 2000005 bytes 7..17
+        module not found
+- `gleam/option`: LoweringError: external function `reverse` parameter 1 uses unsupported ABI shape `List(Generic("a"))`
+    --> file 2000011 bytes 1741..1748
+        unsupported external ABI shape here
+    note: host import `lists.reverse` must use concrete scalar values, managed values, or Nil returns
+- `gleam/string_tree`: ResolveError: unknown module `gleam/list`
+    --> file 2000017 bytes 7..17
+        module not found
 
 ## source language feature
-- `gleam/bool`: LoweringError: function `guard` has generic type `Function { params: [Bool, Generic("a"), Function { params: [], return_type: Generic("a") }], return_type: Generic("a") }` that cannot be lowered without monomorphization
-    --> file 2000001 bytes 4663..4668
-        generic function type here
-- `gleam/function`: LoweringError: function `identity` has generic type `Function { params: [Generic("a")], return_type: Generic("a") }` that cannot be lowered without monomorphization
-    --> file 2000007 bytes 75..83
-        generic function type here
+- `gleam/order`: TypeError: case branch is unreachable
+    --> file 2000012 bytes 1178..1188
+        unreachable branch
 
 ## target filtering
-- `gleam/bit_array`: ResolveError: duplicate name `is_utf8_loop`
-    --> file 2000000 bytes 2125..2137
-        defined again here
-    --> file 2000000 bytes 1961..1973
-        previously defined here
-- `gleam/set`: ResolveError: duplicate name `Token`
-    --> file 2000015 bytes 284..289
-        defined again here
-    --> file 2000015 bytes 204..209
-        previously defined here
+- `gleam/bit_array`: ResolveError: unknown module `gleam/int`
+    --> file 2000000 bytes 68..77
+        module not found
+- `gleam/set`: ResolveError: unknown module `gleam/dict`
+    --> file 2000015 bytes 7..17
+        module not found
 "#);
     }
 
@@ -650,6 +625,46 @@ mod tests {
     }
 
     #[test]
+    fn compiles_pure_portions_of_upstream_stdlib_modules() {
+        let package_sources = pure_stdlib_source_package(&[
+            "gleam/order",
+            "gleam/result",
+            "gleam/option",
+            "gleam/list",
+            "gleam/int",
+            "gleam/float",
+            "gleam/bool",
+            "gleam/function",
+        ]);
+        let project = project_from_dependency_source_package(package_sources);
+
+        let typed = types::check_project(&project).expect("type check pure stdlib source portions");
+        let lowered = ir::lower_project(typed).expect("lower pure stdlib source portions");
+        let dump = lowered.linked_debug_dump();
+
+        for module in [
+            "gleam/order",
+            "gleam/result",
+            "gleam/option",
+            "gleam/list",
+            "gleam/int",
+            "gleam/float",
+            "gleam/bool",
+            "gleam/function",
+        ] {
+            assert!(dump.contains(&format!("gleam_stdlib:{module}.")), "{dump}");
+        }
+        assert!(!dump.contains("__stdlib_gleam_order"));
+        assert!(!dump.contains("__stdlib_gleam_result"));
+        assert!(!dump.contains("__stdlib_gleam_option"));
+        assert!(!dump.contains("__stdlib_gleam_list"));
+        assert!(!dump.contains("__stdlib_gleam_int"));
+        assert!(!dump.contains("__stdlib_gleam_float"));
+        assert!(!dump.contains("__stdlib_gleam_bool"));
+        assert!(!dump.contains("__stdlib_gleam_function"));
+    }
+
+    #[test]
     fn absolute_path_dependency_source_is_loaded_directly() {
         let temp = tempfile::tempdir().expect("temp dir");
         let root = temp.path().join("app");
@@ -721,6 +736,154 @@ mod tests {
             modules: vec![module.clone()],
             sources: vec![package_sources.sources[index].clone()],
         }
+    }
+
+    fn pure_stdlib_source_package(modules: &[&str]) -> DependencySourcePackage {
+        let package = DependencyPackage {
+            name: "gleam_stdlib".to_string(),
+            version: Some("1.0.3".to_string()),
+            root: published_stdlib_fixture_root(),
+            source: DependencySource::Hex,
+        };
+        let mut module_infos = Vec::new();
+        let mut sources = Vec::new();
+        for (index, module) in modules.iter().enumerate() {
+            let source_id = SourceFileId(2_500_000 + index as u32);
+            let path = package.root.join("src").join(format!("{module}.gleam"));
+            module_infos.push(ModuleInfo {
+                name: (*module).to_string(),
+                path: path.clone(),
+                source_id,
+                source_root: SourceRoot::Src,
+            });
+            sources.push(SourceFile::with_path(
+                source_id,
+                path,
+                pure_stdlib_module_source(module),
+            ));
+        }
+        DependencySourcePackage { package, modules: module_infos, sources }
+    }
+
+    fn pure_stdlib_module_source(module: &str) -> String {
+        let source = upstream_stdlib_module_source(module);
+        match module {
+            "gleam/order" => [slice_between(
+                &source,
+                "/// Represents the result",
+                "/// Compares two `Order`",
+            )]
+            .join("\n"),
+            "gleam/bool" | "gleam/function" => source,
+            "gleam/result" => [
+                slice_between(&source, "/// Checks whether the result", "/// Merges a nested `Result`"),
+                slice_between(&source, "/// Extracts the `Ok` value", "/// Combines a list of results"),
+                slice_between(
+                    &source,
+                    "/// Replace the value within a result",
+                    "/// Given a list of results, returns only",
+                ),
+                slice_from(&source, "pub fn try_recover"),
+            ]
+            .join("\n"),
+            "gleam/option" => {
+                let source = strip_external_attributes(&source);
+                [
+                    slice_between(&source, "/// `Option` represents", "/// Combines a list of `Option`s"),
+                    slice_between(
+                        &source,
+                        "/// Checks whether the `Option`",
+                        "/// Merges a nested `Option`",
+                    ),
+                    slice_between(&source, "/// Returns the first value", "/// Given a list of `Option`s"),
+                ]
+                .join("\n")
+            }
+            "gleam/list" => {
+                let source = strip_external_attributes(&remove_imports(&source));
+                [
+                    slice_between(
+                        &source,
+                        "/// Counts the number",
+                        "/// Determines whether or not a given element",
+                    ),
+                    slice_between(&source, "/// Gets the first element", "/// Groups the elements"),
+                    slice_between(
+                        &source,
+                        "/// Returns the given item wrapped",
+                        "/// Joins one list onto the end",
+                    ),
+                    slice_between(&source, "/// Prefixes an item", "/// Joins a list of lists"),
+                ]
+                .join("\n")
+            }
+            "gleam/int" => {
+                let source = remove_imports(&source);
+                [
+                    slice_between(
+                        &source,
+                        "/// Returns the absolute value",
+                        "/// Returns the result of the base",
+                    ),
+                    slice_between(
+                        &source,
+                        "/// Compares two ints, returning the smaller",
+                        "/// Generates a random int",
+                    ),
+                    slice_from(&source, "/// Run a function for each int"),
+                ]
+                .join("\n")
+            }
+            "gleam/float" => {
+                let source = remove_imports(&source);
+                [
+                    slice_between(&source, "/// Returns the negative", "/// Sums a list"),
+                    slice_between(
+                        &source,
+                        "/// Adds two floats together",
+                        "/// Returns the natural logarithm",
+                    ),
+                ]
+                .join("\n")
+            }
+            other => panic!("no pure stdlib source fixture for {other}"),
+        }
+    }
+
+    fn upstream_stdlib_module_source(module: &str) -> String {
+        fs::read_to_string(
+            published_stdlib_fixture_root()
+                .join("src")
+                .join(format!("{module}.gleam")),
+        )
+        .expect("read upstream stdlib source")
+    }
+
+    fn remove_imports(source: &str) -> String {
+        source
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("import "))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn strip_external_attributes(source: &str) -> String {
+        source
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("@external"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn slice_from(source: &str, marker: &str) -> String {
+        let start = source.find(marker).expect("slice start marker");
+        source[start..].trim().to_string()
+    }
+
+    fn slice_between(source: &str, start: &str, end: &str) -> String {
+        let start = source.find(start).expect("slice start marker");
+        let end = source[start..].find(end).expect("slice end marker") + start;
+        source[start..end].trim().to_string()
     }
 
     fn project_from_dependency_source_package(package_sources: DependencySourcePackage) -> Project {
