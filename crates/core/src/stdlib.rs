@@ -215,7 +215,7 @@ impl StdlibModule {
                         fn_type(vec![Type::generic("a")], Type::generic("b")),
                     ],
                     list(Type::generic("b")),
-                    runtime_primitive_retention(),
+                    upstream_source_retention(),
                 ),
                 function(
                     "fold",
@@ -225,7 +225,7 @@ impl StdlibModule {
                         fn_type(vec![Type::generic("b"), Type::generic("a")], Type::generic("b")),
                     ],
                     Type::generic("b"),
-                    runtime_primitive_retention(),
+                    upstream_source_retention(),
                 ),
             ],
             &[],

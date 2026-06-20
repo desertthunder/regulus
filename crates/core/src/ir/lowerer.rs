@@ -5,7 +5,7 @@ use crate::abi::{StdlibHostAdapter, stdlib_host_adapter, validate_extern_functio
 use crate::ast::{self, Pattern, Statement};
 use crate::diagnostic::{Diagnostic, DiagnosticCode, Diagnostics, Label};
 use crate::labels::{FunctionLabelMap, call_argument_order, function_label_map, use_callback_placement};
-use crate::resolve::ReferenceTarget;
+use crate::resolve::{ReferenceTarget, ResolvedModule, SymbolKind};
 use crate::shared::unquote;
 use crate::stdlib::StdlibRegistry;
 use crate::types::{ConstructorInfo, ExternalFunctionInfo, FieldInfo, InterfaceEntry, TypedModule};
@@ -15,10 +15,13 @@ pub fn lower(module: TypedModule) -> Result<Module, Diagnostics> {
     Lowerer::new(module).lower()
 }
 
-pub fn lower_with_project_interfaces(
-    module: TypedModule, interfaces: &HashMap<String, InterfaceEntry>,
+pub fn lower_with_project_context(
+    module: TypedModule, interfaces: &HashMap<String, InterfaceEntry>, source_backed_stdlib_modules: &HashSet<String>,
 ) -> Result<Module, Diagnostics> {
-    Lowerer::new(module).with_project_interfaces(interfaces).lower()
+    Lowerer::new(module)
+        .with_project_interfaces(interfaces)
+        .with_source_backed_stdlib_modules(source_backed_stdlib_modules)
+        .lower()
 }
 
 pub struct Lowerer {
@@ -30,6 +33,7 @@ pub struct Lowerer {
     expression_types: HashMap<Span, Type>,
     external_imports: HashMap<String, ExternalImport>,
     imported_external_imports: HashMap<String, ImportedExternalImport>,
+    source_backed_stdlib_modules: HashSet<String>,
     diagnostics: Diagnostics,
     pub lifted_functions: Vec<Function>,
     anonymous_counter: usize,
@@ -64,6 +68,7 @@ impl Lowerer {
             expression_types,
             external_imports,
             imported_external_imports: HashMap::new(),
+            source_backed_stdlib_modules: HashSet::new(),
             diagnostics: Vec::new(),
             lifted_functions: Vec::new(),
             anonymous_counter: 0,
@@ -163,6 +168,11 @@ impl Lowerer {
         self
     }
 
+    fn with_source_backed_stdlib_modules(mut self, modules: &HashSet<String>) -> Self {
+        self.source_backed_stdlib_modules = modules.clone();
+        self
+    }
+
     fn lower(mut self) -> Result<Module, Diagnostics> {
         self.validate_concrete_runtime_types();
         self.validate_external_function_abis();
@@ -231,7 +241,7 @@ impl Lowerer {
         }
 
         let mut functions = self.lower_external_host_imports(&ast);
-        functions.extend(self.lower_stdlib_host_imports(&ast));
+        functions.extend(self.lower_stdlib_host_imports(&self.module.resolved));
         for function in ast.functions {
             if let Some(function) = self.lower_function(&function) {
                 functions.push(function);
@@ -605,7 +615,8 @@ impl Lowerer {
                 })
             }
             ast::Expression::FieldAccess(field_access) => {
-                if let Some(stdlib_value) = stdlib_call(&self.module.resolved.ast, expression)
+                if let Some(stdlib_value) =
+                    stdlib_call(&self.module.resolved, expression, &self.source_backed_stdlib_modules)
                     && stdlib_value.implementation == Some(StdlibImplementation::RuntimePrimitive)
                     && !matches!(stdlib_value.type_, Type::Function { .. })
                 {
@@ -1203,7 +1214,11 @@ impl Lowerer {
     }
 
     fn lower_call(&mut self, context: &mut FunctionContext, call: &ast::Call) -> Option<Expression> {
-        if let Some(stdlib_call) = stdlib_call(&self.module.resolved.ast, &call.function) {
+        if let Some(stdlib_call) = stdlib_call(
+            &self.module.resolved,
+            &call.function,
+            &self.source_backed_stdlib_modules,
+        ) {
             if let Some(expression) = self.lower_higher_order_stdlib_call(context, call, &stdlib_call) {
                 return Some(expression);
             }
@@ -2188,8 +2203,9 @@ impl Lowerer {
         Some(CallBoundary::HostImport { module: import.module.clone(), name: import.function.clone() })
     }
 
-    fn lower_stdlib_host_imports(&self, ast: &ast::Module) -> Vec<Function> {
-        let used_host_calls = ast.used_stdlib_host_calls();
+    fn lower_stdlib_host_imports(&self, resolved: &ResolvedModule) -> Vec<Function> {
+        let ast = &resolved.ast;
+        let used_host_calls = resolved.used_stdlib_host_calls();
         let mut imports = Vec::new();
         for import in &ast.imports {
             let Some(module) = StdlibRegistry::new().module(&import.module.text).cloned() else {
@@ -2325,7 +2341,14 @@ enum StdlibImplementation {
     HostAdapter(StdlibHostAdapter),
 }
 
-fn stdlib_call(module: &ast::Module, function: &ast::Expression) -> Option<StdlibCall> {
+fn stdlib_call(
+    resolved: &ResolvedModule, function: &ast::Expression, source_backed_stdlib_modules: &HashSet<String>,
+) -> Option<StdlibCall> {
+    if is_source_backed_stdlib_reference(resolved, function, source_backed_stdlib_modules) {
+        return None;
+    }
+
+    let module = &resolved.ast;
     let registry = StdlibRegistry::new();
     let (module_name, member_name) = match function {
         ast::Expression::FieldAccess(access) => {
@@ -2354,6 +2377,46 @@ fn stdlib_call(module: &ast::Module, function: &ast::Expression) -> Option<Stdli
     let type_ = module.interface.functions.get(&member_name)?.clone();
     let implementation = stdlib_member_implementation(&module_name, &member_name);
     Some(StdlibCall { module: module_name, member: member_name, implementation, type_ })
+}
+
+fn is_source_backed_stdlib_reference(
+    resolved: &ResolvedModule, function: &ast::Expression, source_backed_stdlib_modules: &HashSet<String>,
+) -> bool {
+    match function {
+        ast::Expression::FieldAccess(access) => {
+            let ast::Expression::Variable(module_alias) = access.record.as_ref() else {
+                return false;
+            };
+            resolved.references.iter().any(|reference| {
+                reference.name.span == module_alias.span
+                    && matches!(
+                        &reference.target,
+                        ReferenceTarget::QualifiedMember { module, member, .. }
+                            if member.span == access.field.span
+                                && matches!(
+                                    &resolved.symbols.symbol(*module).kind,
+                                    SymbolKind::Import { package: Some(package), module }
+                                        if package == "gleam_stdlib"
+                                            && source_backed_stdlib_modules.contains(module)
+                                )
+                    )
+            })
+        }
+        ast::Expression::Variable(name) => resolved.references.iter().any(|reference| {
+            reference.name.span == name.span
+                && matches!(
+                    &reference.target,
+                    ReferenceTarget::Symbol(symbol)
+                        if matches!(
+                            &resolved.symbols.symbol(*symbol).kind,
+                            SymbolKind::Imported { package: Some(package), module, .. }
+                                if package == "gleam_stdlib"
+                                    && source_backed_stdlib_modules.contains(module)
+                        )
+                )
+        }),
+        _ => false,
+    }
 }
 
 fn stdlib_member_implementation(module: &str, member: &str) -> Option<StdlibImplementation> {
@@ -2460,10 +2523,10 @@ trait UsedStdlibHostCalls {
     fn used_stdlib_host_calls(&self) -> HashSet<(String, String)>;
 }
 
-impl UsedStdlibHostCalls for ast::Module {
+impl UsedStdlibHostCalls for ResolvedModule {
     fn used_stdlib_host_calls(&self) -> HashSet<(String, String)> {
         let mut calls = HashSet::new();
-        for declaration in &self.declarations {
+        for declaration in &self.ast.declarations {
             collect_stdlib_host_calls_in_declaration(self, declaration, &mut calls);
         }
         calls
@@ -2471,7 +2534,7 @@ impl UsedStdlibHostCalls for ast::Module {
 }
 
 fn collect_stdlib_host_calls_in_declaration(
-    module: &ast::Module, declaration: &ast::Declaration, calls: &mut HashSet<(String, String)>,
+    module: &ResolvedModule, declaration: &ast::Declaration, calls: &mut HashSet<(String, String)>,
 ) {
     match declaration {
         ast::Declaration::Function(function) => collect_stdlib_host_calls_in_block(module, &function.body, calls),
@@ -2492,7 +2555,9 @@ fn collect_stdlib_host_calls_in_declaration(
     }
 }
 
-fn collect_stdlib_host_calls_in_block(module: &ast::Module, block: &ast::Block, calls: &mut HashSet<(String, String)>) {
+fn collect_stdlib_host_calls_in_block(
+    module: &ResolvedModule, block: &ast::Block, calls: &mut HashSet<(String, String)>,
+) {
     for statement in &block.statements {
         match statement {
             Statement::Let(let_) => collect_stdlib_host_calls_in_expression(module, &let_.value, calls),
@@ -2508,10 +2573,10 @@ fn collect_stdlib_host_calls_in_block(module: &ast::Module, block: &ast::Block, 
 }
 
 fn collect_stdlib_host_calls_in_expression(
-    module: &ast::Module, expression: &ast::Expression, calls: &mut HashSet<(String, String)>,
+    module: &ResolvedModule, expression: &ast::Expression, calls: &mut HashSet<(String, String)>,
 ) {
     if let ast::Expression::Call(call) = expression
-        && let Some(stdlib_call) = stdlib_call(module, &call.function)
+        && let Some(stdlib_call) = stdlib_call(module, &call.function, &HashSet::new())
         && matches!(stdlib_call.implementation, Some(StdlibImplementation::HostAdapter(_)))
     {
         calls.insert((stdlib_call.module, stdlib_call.member));

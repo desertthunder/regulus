@@ -942,13 +942,22 @@ pub fn lower(module: TypedModule) -> Result<Module, Diagnostics> {
 pub fn lower_project(project: TypedProject) -> Result<Module, Diagnostics> {
     let mut modules = Vec::new();
     let mut diagnostics = unsupported_dependency_member_diagnostics(&project);
+    let source_backed_stdlib_modules = project
+        .modules
+        .iter()
+        .filter_map(|module| {
+            (module.package_name.as_deref() == Some("gleam_stdlib"))
+                .then(|| module.module_name.clone())
+                .flatten()
+        })
+        .collect::<std::collections::HashSet<_>>();
 
     if !diagnostics.is_empty() {
         return Err(diagnostics);
     }
 
     for module in project.modules {
-        match lowerer::lower_with_project_interfaces(module, &project.interfaces) {
+        match lowerer::lower_with_project_context(module, &project.interfaces, &source_backed_stdlib_modules) {
             Ok(module) => modules.push(module),
             Err(mut errors) => diagnostics.append(&mut errors),
         }

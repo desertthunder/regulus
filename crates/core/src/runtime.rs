@@ -53,9 +53,7 @@ const STDLIB_RUNTIME_PRIMITIVES: &[StdlibRuntimePrimitive] = &[
     primitive("gleam/function", "identity"),
     primitive("gleam/int", "to_string"),
     primitive("gleam/io", "debug"),
-    primitive("gleam/list", "fold"),
     primitive("gleam/list", "length"),
-    primitive("gleam/list", "map"),
     primitive("gleam/list", "reverse"),
     primitive("gleam/string", "append"),
     primitive("gleam/string", "concat"),
@@ -589,10 +587,8 @@ mod tests {
             stdlib_runtime_primitive("gleam/int", "to_string"),
             Some(StdlibRuntimePrimitive { module: "gleam/int", member: "to_string" })
         );
-        assert_eq!(
-            stdlib_runtime_primitive("gleam/list", "map"),
-            Some(StdlibRuntimePrimitive { module: "gleam/list", member: "map" })
-        );
+        assert_eq!(stdlib_runtime_primitive("gleam/list", "fold"), None);
+        assert_eq!(stdlib_runtime_primitive("gleam/list", "map"), None);
         assert_eq!(stdlib_runtime_primitive("gleam/bool", "negate"), None);
         assert_eq!(stdlib_runtime_primitive("gleam/option", "map"), None);
         assert_eq!(stdlib_runtime_primitive("gleam/result", "map"), None);

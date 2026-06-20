@@ -656,6 +656,16 @@ mod tests {
         }
         for function in [
             "gleam_stdlib:gleam/bool.negate",
+            "gleam_stdlib:gleam/bool.to_string",
+            "gleam_stdlib:gleam/float.compare",
+            "gleam_stdlib:gleam/float.max",
+            "gleam_stdlib:gleam/float.min",
+            "gleam_stdlib:gleam/float.negate",
+            "gleam_stdlib:gleam/function.identity",
+            "gleam_stdlib:gleam/list.fold",
+            "gleam_stdlib:gleam/list.length",
+            "gleam_stdlib:gleam/list.map",
+            "gleam_stdlib:gleam/list.reverse",
             "gleam_stdlib:gleam/option.map",
             "gleam_stdlib:gleam/result.map",
         ] {
@@ -669,6 +679,101 @@ mod tests {
         assert!(!dump.contains("__stdlib_gleam_float"));
         assert!(!dump.contains("__stdlib_gleam_bool"));
         assert!(!dump.contains("__stdlib_gleam_function"));
+    }
+
+    #[test]
+    fn links_source_backed_stdlib_calls_without_runtime_dispatch() {
+        let package_sources = pure_stdlib_source_package(&[
+            "gleam/order",
+            "gleam/result",
+            "gleam/option",
+            "gleam/list",
+            "gleam/int",
+            "gleam/float",
+            "gleam/bool",
+            "gleam/function",
+        ]);
+        let project = project_using_stdlib_source_package(
+            package_sources,
+            r#"import gleam/bool
+import gleam/float
+import gleam/function
+import gleam/list
+import gleam/option.{Some}
+import gleam/order
+import gleam/result.{Ok, Error}
+
+pub fn bool_negated() -> Bool { bool.negate(False) }
+pub fn bool_text_matches() -> Bool { bool.to_string(True) == "True" }
+pub fn float_larger() -> Float { float.max(1.5, float.negate(-2.5)) }
+pub fn float_smaller() -> Float { float.min(1.5, 2.5) }
+
+pub fn float_rank() -> Int {
+  case float.compare(1.0, 2.0) {
+    order.Lt -> -1
+    order.Eq -> 0
+    order.Gt -> 1
+  }
+}
+
+pub fn same_value() -> Int { function.identity(9) }
+pub fn item_count() -> Int { list.length([1, 2, 3]) }
+
+pub fn reversed_head() -> Int {
+  case list.reverse([1, 2, 3]) {
+    [head, ..] -> head
+    _ -> 0
+  }
+}
+
+pub fn mapped_head() -> Int {
+  case list.map([1], fn(x) { x + 1 }) {
+    [x] -> x
+    _ -> 0
+  }
+}
+
+pub fn folded() -> Int {
+  list.fold([1, 2, 3], 0, fn(acc, x) { acc + x })
+}
+
+pub fn option_mapped() -> Int {
+  case option.map(Some(4), fn(x) { x + 3 }) {
+    Some(x) -> x
+    _ -> 0
+  }
+}
+
+pub fn result_mapped() -> Int {
+  case result.map(Ok(4), fn(x) { x + 5 }) {
+    Ok(x) -> x
+    Error(e) -> e
+  }
+}
+"#,
+        );
+
+        let typed = types::check_project(&project).expect("type check source-backed stdlib calls");
+        let lowered = ir::lower_project(typed).expect("lower source-backed stdlib calls");
+        let dump = lowered.linked_debug_dump();
+        for function in [
+            "gleam_stdlib:gleam/bool.negate",
+            "gleam_stdlib:gleam/bool.to_string",
+            "gleam_stdlib:gleam/float.compare",
+            "gleam_stdlib:gleam/float.max",
+            "gleam_stdlib:gleam/float.min",
+            "gleam_stdlib:gleam/float.negate",
+            "gleam_stdlib:gleam/function.identity",
+            "gleam_stdlib:gleam/list.fold",
+            "gleam_stdlib:gleam/list.length",
+            "gleam_stdlib:gleam/list.map",
+            "gleam_stdlib:gleam/list.reverse",
+            "gleam_stdlib:gleam/option.map",
+            "gleam_stdlib:gleam/result.map",
+        ] {
+            assert!(dump.contains(function), "{dump}");
+        }
+        assert!(!dump.contains("__stdlib_gleam_"), "{dump}");
     }
 
     #[test]
@@ -820,7 +925,13 @@ mod tests {
                         "/// Returns the given item wrapped",
                         "/// Joins one list onto the end",
                     ),
+                    slice_between(&source, "/// Returns a new list containing", "/// Combines two lists"),
                     slice_between(&source, "/// Prefixes an item", "/// Joins a list of lists"),
+                    slice_between(
+                        &source,
+                        "/// Reduces a list of elements into a single value by calling a given function\n/// on each element, going from left to right",
+                        "/// Reduces a list of elements into a single value by calling a given function\n/// on each element, going from right to left",
+                    ),
                 ]
                 .join("\n")
             }
@@ -841,18 +952,27 @@ mod tests {
                 ]
                 .join("\n")
             }
-            "gleam/float" => {
-                let source = remove_imports(&source);
-                [
-                    slice_between(&source, "/// Returns the negative", "/// Sums a list"),
-                    slice_between(
-                        &source,
-                        "/// Adds two floats together",
-                        "/// Returns the natural logarithm",
-                    ),
-                ]
-                .join("\n")
-            }
+            "gleam/float" => [
+                "import gleam/order".to_string(),
+                slice_between(
+                    &source,
+                    "/// Compares two `Float`s, returning an `Order`",
+                    "/// Compares two `Float`s within a tolerance",
+                )
+                .replace(") -> Order", ") -> order.Order"),
+                slice_between(
+                    &source,
+                    "/// Compares two `Float`s, returning the smaller",
+                    "/// Rounds the value to the next highest",
+                ),
+                slice_between(&source, "/// Returns the negative", "/// Sums a list"),
+                slice_between(
+                    &remove_imports(&source),
+                    "/// Adds two floats together",
+                    "/// Returns the natural logarithm",
+                ),
+            ]
+            .join("\n"),
             other => panic!("no pure stdlib source fixture for {other}"),
         }
     }
@@ -929,6 +1049,57 @@ mod tests {
                 modules: package_sources.modules,
             },
             sources: package_sources.sources,
+        }
+    }
+
+    fn project_using_stdlib_source_package(package_sources: DependencySourcePackage, source: &str) -> Project {
+        let mut dependency_interfaces = HashMap::new();
+        let registry = StdlibRegistry::new();
+        for (module, source) in package_sources.modules.iter().zip(package_sources.sources.iter()) {
+            let interface = registry
+                .interface(&module.name)
+                .cloned()
+                .unwrap_or_else(|| interface_from_source(source.clone()));
+            dependency_interfaces.insert(
+                module.name.clone(),
+                InterfaceEntry::new(package_sources.package.name.clone(), module.name.clone(), interface),
+            );
+        }
+
+        let root = package_sources.package.root.join("__regulus_stdlib_source_proof");
+        let source = SourceFile::with_path(SourceFileId(0), root.join("src/app.gleam"), source);
+        Project {
+            root: root.clone(),
+            config: GleamToml {
+                name: "stdlib_source_proof".to_string(),
+                version: "1.0.0".to_string(),
+                description: None,
+                licences: Vec::new(),
+                repository: None,
+                links: Vec::new(),
+                gleam: None,
+                target: None,
+                dependencies: BTreeMap::new(),
+                dev_dependencies: BTreeMap::new(),
+            },
+            compile_target: target::CompileTarget::Wasmtime,
+            graph: PackageGraph {
+                root_package: PackageNode {
+                    name: "stdlib_source_proof".to_string(),
+                    version: "1.0.0".to_string(),
+                    root,
+                },
+                dependencies: Vec::new(),
+                dependency_interfaces,
+                dependency_sources: vec![package_sources],
+                modules: vec![ModuleInfo {
+                    name: "app".to_string(),
+                    path: PathBuf::from("src/app.gleam"),
+                    source_id: SourceFileId(0),
+                    source_root: SourceRoot::Src,
+                }],
+            },
+            sources: vec![source],
         }
     }
 

@@ -75,23 +75,23 @@ after a source proof shows the upstream function compiles and links from
 
 | Entry                     | Owner          | Current blocker                                                    | Deletion condition                                                                         |
 | ------------------------- | -------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------ |
-| `gleam/bool.compare`      | library source | Pure source proof exists; full module now lowers.                  | Add behavior/source proof, then delete runtime dispatch.                                   |
+| `gleam/bool.compare`      | library source | Not present in the current upstream fixture.                       | Keep runtime dispatch until upstream source or a replacement proof exists.                 |
 | `gleam/bool.negate`       | library source | Pure source proof exists; full module now lowers.                  | Runtime table and direct codegen dispatch deleted.                                         |
-| `gleam/bool.to_string`    | library source | Pure source proof exists; full module now lowers.                  | Add behavior/source proof, then delete runtime dispatch.                                   |
-| `gleam/float.compare`     | library source | Full module needs imported `gleam/order` source.                   | Compile with dependency source, then delete runtime dispatch if upstream source covers it. |
-| `gleam/float.max`         | library source | Pure source proof exists for selected functions.                   | Add behavior/source proof, then delete runtime dispatch.                                   |
-| `gleam/float.min`         | library source | Pure source proof exists for selected functions.                   | Add behavior/source proof, then delete runtime dispatch.                                   |
-| `gleam/float.negate`      | library source | Pure source proof exists for selected functions.                   | Add behavior/source proof, then delete runtime dispatch.                                   |
+| `gleam/bool.to_string`    | library source | Source-backed link proof exists; registry path still needs it.     | Delete after stdlib source is loaded by default.                                           |
+| `gleam/float.compare`     | library source | Source-backed link proof exists with `gleam/order`.                | Delete after stdlib source is loaded by default.                                           |
+| `gleam/float.max`         | library source | Source-backed link proof exists; registry path still needs it.     | Delete after stdlib source is loaded by default.                                           |
+| `gleam/float.min`         | library source | Source-backed link proof exists; registry path still needs it.     | Delete after stdlib source is loaded by default.                                           |
+| `gleam/float.negate`      | library source | Source-backed link proof exists; registry path still needs it.     | Delete after stdlib source is loaded by default.                                           |
 | `gleam/float.to_string`   | library source | Full module needs imported dependencies or native externals.       | Compile upstream function or isolate required primitive, then delete runtime dispatch.     |
-| `gleam/function.compose`  | library source | Pure source proof exists; full module now lowers.                  | Add behavior/source proof, then delete runtime dispatch.                                   |
+| `gleam/function.compose`  | library source | Not present in the current upstream fixture.                       | Keep runtime dispatch until upstream source or a replacement proof exists.                 |
 | `gleam/function.constant` | library source | Not present in the current upstream fixture.                       | Keep runtime dispatch until upstream source or a replacement proof exists.                 |
-| `gleam/function.flip`     | library source | Pure source proof exists; full module now lowers.                  | Add behavior/source proof, then delete runtime dispatch.                                   |
-| `gleam/function.identity` | library source | Pure source proof exists; registry-backed imports still need it.   | Delete after stdlib source is loaded by default or the registry path stops requiring it.    |
+| `gleam/function.flip`     | library source | Not present in the current upstream fixture.                       | Keep runtime dispatch until upstream source or a replacement proof exists.                 |
+| `gleam/function.identity` | library source | Source-backed link proof exists; registry path still needs it.     | Delete after stdlib source is loaded by default.                                           |
 | `gleam/int.to_string`     | library source | Full module needs imported `gleam/float` source or native support. | Compile upstream function or isolate required primitive, then delete runtime dispatch.     |
-| `gleam/list.fold`         | library source | Pure source proof exists for selected functions.                   | Add source proof for this function, then delete runtime dispatch.                          |
-| `gleam/list.length`       | library source | Pure source proof exists for selected functions.                   | Add behavior/source proof, then delete runtime dispatch.                                   |
-| `gleam/list.map`          | library source | Pure source proof exists for selected functions.                   | Add source proof for callback behavior, then delete runtime dispatch.                      |
-| `gleam/list.reverse`      | library source | Full module currently uses package-relative external.              | Replace external with source or validated package asset, then delete runtime dispatch.     |
+| `gleam/list.fold`         | library source | Source-backed link proof and registry behavior fixture exist.      | Runtime table dispatch deleted; registry-backed lowering adapter still remains.            |
+| `gleam/list.length`       | library source | Source-backed link proof exists; registry path still needs it.     | Delete after stdlib source is loaded by default.                                           |
+| `gleam/list.map`          | library source | Source-backed link proof and registry behavior fixture exist.      | Runtime table dispatch deleted; registry-backed lowering adapter still remains.            |
+| `gleam/list.reverse`      | library source | Source-backed link proof exists; registry path still needs it.     | Delete after stdlib source is loaded by default.                                           |
 | `gleam/option.map`        | library source | Pure source proof exists for selected functions.                   | Runtime table dispatch deleted; registry-backed lowering adapter still remains.            |
 | `gleam/result.map`        | library source | Pure source proof exists for selected functions.                   | Runtime table dispatch deleted; registry-backed lowering adapter still remains.            |
 
@@ -100,8 +100,10 @@ after a source proof shows the upstream function compiles and links from
 Completed entries from the first source-backed deletion slice:
 
 1. `gleam/bool.negate`
-2. `gleam/option.map`
-3. `gleam/result.map`
+2. `gleam/list.fold`
+3. `gleam/list.map`
+4. `gleam/option.map`
+5. `gleam/result.map`
 
 Remaining deletion work requires:
 

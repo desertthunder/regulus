@@ -134,15 +134,19 @@ Retained registry entries record their blocker group and deletion condition in
 - [x] Mark library-level entries that must be replaced by compiled upstream
       source.
 - [x] Delete the first unblocked source-backed runtime dispatch entries:
-      `gleam/bool.negate`, `gleam/option.map`, and `gleam/result.map`.
-- [ ] For remaining library-level entries, add an upstream source proof before
-      deleting the runtime dispatch arm. Checklist: compile the upstream
-      function, add a behavior fixture, assert the linked dump uses
+      `gleam/bool.negate`, `gleam/list.fold`, `gleam/list.map`,
+      `gleam/option.map`, and `gleam/result.map`.
+- [x] For remaining unblocked library-level entries, add an upstream source
+      proof before deleting the runtime dispatch arm. Checklist: compile the
+      upstream function, add a behavior fixture, assert the linked dump uses
       `gleam_stdlib:...`, then assert it no longer uses
       `__stdlib_gleam_*`.
-- [ ] Delete runtime dispatch for `gleam/bool`, `gleam/function`,
-      `gleam/option.map`, `gleam/result.map`, and pure `gleam/list`
-      functions once source proofs cover them.
+- [ ] Remove the remaining registry-path blockers before deleting scalar
+      runtime dispatch arms: default stdlib source loading, no export of public
+      generic dependency functions, upstream bodies for fixture-missing
+      functions, and native replacements for bodyless externals.
+- [ ] Delete remaining scalar and registry-retained library dispatch arms once
+      source loading is the default path for those modules.
 - [ ] Keep host adapters such as `gleam/io.print` and `gleam/io.println` in
       ABI tables, not the stdlib registry.
 - [ ] Add unsupported-feature diagnostics for runtime primitives requested by
