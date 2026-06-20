@@ -143,12 +143,7 @@ impl StdlibModule {
             ModuleStrategy::Hybrid,
             module_retention(RetentionGap::PackageMetadata),
             &[
-                function(
-                    "to_string",
-                    vec![Type::Int],
-                    Type::String,
-                    runtime_primitive_retention(),
-                ),
+                function("to_string", vec![Type::Int], Type::String, upstream_source_retention()),
                 function(
                     "parse",
                     vec![Type::String],
@@ -389,7 +384,7 @@ impl StdlibModule {
                     "compare",
                     vec![Type::Bool, Type::Bool],
                     Type::custom("Order", vec![]),
-                    runtime_primitive_retention(),
+                    upstream_source_retention(),
                 ),
             ],
             &[],
@@ -664,7 +659,7 @@ impl StdlibModule {
                     "to_string",
                     vec![Type::Float],
                     Type::String,
-                    runtime_primitive_retention(),
+                    upstream_source_retention(),
                 ),
                 function(
                     "max",
@@ -700,7 +695,7 @@ impl StdlibModule {
                     "constant",
                     vec![Type::generic("a"), Type::generic("b")],
                     Type::generic("a"),
-                    runtime_primitive_retention(),
+                    upstream_source_retention(),
                 ),
                 function(
                     "compose",
@@ -709,7 +704,7 @@ impl StdlibModule {
                         fn_type(vec![Type::generic("a")], Type::generic("b")),
                     ],
                     fn_type(vec![Type::generic("a")], Type::generic("c")),
-                    runtime_primitive_retention(),
+                    upstream_source_retention(),
                 ),
                 function(
                     "flip",
@@ -718,7 +713,7 @@ impl StdlibModule {
                         Type::generic("c"),
                     )],
                     fn_type(vec![Type::generic("b"), Type::generic("a")], Type::generic("c")),
-                    runtime_primitive_retention(),
+                    upstream_source_retention(),
                 ),
             ],
             &[],
@@ -903,7 +898,7 @@ mod tests {
         );
         assert_eq!(
             registry.member_retention("gleam/int", "to_string"),
-            Some(runtime_primitive_retention()),
+            Some(upstream_source_retention()),
         );
         assert_eq!(
             registry.member_retention("gleam/result", "Ok"),

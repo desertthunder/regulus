@@ -1,24 +1,26 @@
 # Runtime Primitive Inventory
 
-This inventory tracks every current `runtime::stdlib_runtime_primitive` entry.
-It is a deletion plan, not a justification for keeping library behavior in the
+This inventory tracks the stdlib-shaped runtime entry points by status. It is a
+deletion plan, not a justification for keeping library behavior in the
 compiler.
 
-Use these owner values:
+Read it by section:
 
-- `runtime primitive`: keep only if it is representation, allocation, ABI,
-  host/debug, or low-level data access.
-- `library source`: delete after an upstream `gleam_stdlib` source proof covers
-  the function.
-- `package asset`: replace with a validated stdlib package asset or a narrow
-  native-handle primitive.
+- `Kept Runtime Primitives`: still valid compiler/runtime responsibilities.
+- `Transitional Package Asset Or Native Handle`: still present, but only until
+  package asset or native-handle support replaces collection logic in the
+  compiler.
+- `Removed Library Dispatch`: deleted from runtime dispatch and direct stdlib
+  codegen paths. Do not re-add these as registry or runtime library behavior.
+- `Next Removal Candidates`: live areas that should shrink after their blocker
+  category is implemented.
 
-## Runtime Primitive
+## Kept Runtime Primitives
 
 These entries are acceptable compiler/runtime responsibilities, though some
 should eventually be renamed away from stdlib module/member names.
 
-| Entry                            | Owner             | Current blocker                              | Deletion or move condition                                                         |
+| Entry                            | Status            | Why it remains                               | Deletion or move condition                                                         |
 | -------------------------------- | ----------------- | -------------------------------------------- | ---------------------------------------------------------------------------------- |
 | `gleam/bit_array.append`         | runtime primitive | Bit-array storage helper.                    | Keep as bit-array primitive or expose through compiled source calling a primitive. |
 | `gleam/bit_array.bit_size`       | runtime primitive | Bit-array layout metadata.                   | Keep as bit-array primitive or expose through compiled source calling a primitive. |
@@ -51,13 +53,12 @@ should eventually be renamed away from stdlib module/member names.
 | `gleam/string.is_empty`          | runtime primitive | String layout metadata.                      | Keep as string primitive or expose through compiled source calling a primitive.    |
 | `gleam/string.length`            | runtime primitive | String layout metadata.                      | Keep as string primitive or expose through compiled source calling a primitive.    |
 
-## Package Asset Or Native Handle
+## Transitional Package Asset Or Native Handle
 
-These entries should not remain as collection logic in the compiler. Decide
-whether upstream stdlib should use a validated package asset such as `dict.mjs`
-or a narrow native-handle primitive.
+These entries should not remain as collection logic in the compiler. Upstream stdlib should use a
+narrow native-handle primitive.
 
-| Entry                 | Owner         | Current blocker                                         | Deletion or move condition                                                |
+| Entry                 | Status        | Current blocker                                         | Removal condition                                                         |
 | --------------------- | ------------- | ------------------------------------------------------- | ------------------------------------------------------------------------- |
 | `gleam/dict.delete`   | package asset | Dict package asset/native representation not validated. | Replace with compiled upstream source plus validated asset/native handle. |
 | `gleam/dict.get`      | package asset | Dict package asset/native representation not validated. | Replace with compiled upstream source plus validated asset/native handle. |
@@ -67,35 +68,42 @@ or a narrow native-handle primitive.
 | `gleam/dict.new`      | package asset | Dict package asset/native representation not validated. | Replace with compiled upstream source plus validated asset/native handle. |
 | `gleam/dict.size`     | package asset | Dict package asset/native representation not validated. | Replace with compiled upstream source plus validated asset/native handle. |
 
-## Library Source
+## Removed Library Dispatch
 
-These entries are ordinary library behavior. Delete each runtime dispatch arm
-after a source proof shows the upstream function compiles and links from
-`gleam_stdlib`.
+These entries are ordinary library behavior. Their runtime dispatch arms and
+direct stdlib codegen paths have been removed.
 
-| Entry                     | Owner          | Current blocker                                                    | Deletion condition                                                                         |
-| ------------------------- | -------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------ |
-| `gleam/bool.compare`      | library source | Source body proof exists in the upstream fixture path.             | Delete runtime dispatch once source loading is the default path for this module.           |
-| `gleam/bool.negate`       | library source | Pure source proof exists; full module now lowers.                  | Runtime table and direct codegen dispatch deleted.                                         |
-| `gleam/bool.to_string`    | library source | Source-backed link proof exists; full module now lowers.           | Runtime table and direct codegen dispatch deleted.                                         |
-| `gleam/float.compare`     | library source | Source-backed link proof exists with `gleam/order`.                | Runtime table and direct codegen dispatch deleted.                                         |
-| `gleam/float.max`         | library source | Source-backed link proof exists; full module now lowers.           | Runtime table and direct codegen dispatch deleted.                                         |
-| `gleam/float.min`         | library source | Source-backed link proof exists; full module now lowers.           | Runtime table and direct codegen dispatch deleted.                                         |
-| `gleam/float.negate`      | library source | Source-backed link proof exists; full module now lowers.           | Runtime table and direct codegen dispatch deleted.                                         |
-| `gleam/float.to_string`   | library source | Source wrapper calls a private native string conversion helper.    | Delete runtime dispatch once source loading is the default path for this module.           |
-| `gleam/function.compose`  | library source | Source body proof exists in the upstream fixture path.             | Delete runtime dispatch once source loading is the default path for this module.           |
-| `gleam/function.constant` | library source | Source body proof exists in the upstream fixture path.             | Delete runtime dispatch once source loading is the default path for this module.           |
-| `gleam/function.flip`     | library source | Source body proof exists in the upstream fixture path.             | Delete runtime dispatch once source loading is the default path for this module.           |
-| `gleam/function.identity` | library source | Source-backed link proof exists; full module now lowers.           | Runtime table and direct codegen dispatch deleted.                                         |
-| `gleam/int.to_string`     | library source | Source wrapper calls a private native string conversion helper.    | Delete runtime dispatch once source loading is the default path for this module.           |
-| `gleam/list.fold`         | library source | Source-backed link proof and registry behavior fixture exist.      | Runtime table dispatch deleted; registry-backed lowering adapter still remains.            |
-| `gleam/list.length`       | library source | Source-backed link proof exists; pure module subset now lowers.    | Runtime table and direct codegen dispatch deleted.                                         |
-| `gleam/list.map`          | library source | Source-backed link proof and registry behavior fixture exist.      | Runtime table dispatch deleted; registry-backed lowering adapter still remains.            |
-| `gleam/list.reverse`      | library source | Source-backed link proof exists; pure module subset now lowers.    | Runtime table and direct codegen dispatch deleted.                                         |
-| `gleam/option.map`        | library source | Pure source proof exists for selected functions.                   | Runtime table dispatch deleted; registry-backed lowering adapter still remains.            |
-| `gleam/result.map`        | library source | Pure source proof exists for selected functions.                   | Runtime table dispatch deleted; registry-backed lowering adapter still remains.            |
+Source-backed behavior now comes from the loaded `gleam_stdlib` dependency, with
+private native helpers only where upstream source calls bodyless externals.
 
-## First Deletion Slice
+Removed here means the public stdlib dispatch path is gone.
+
+It does not mean every generic dependency call already has Wasm behavior coverage;
+that remaining work belongs to monomorphized dependency emission.
+
+| Entry                     | Replaced by                                         | Removal status                                                       |
+| ------------------------- | --------------------------------------------------- | -------------------------------------------------------------------- |
+| `gleam/bool.compare`      | Upstream source body.                               | Runtime table and direct codegen dispatch deleted.                   |
+| `gleam/bool.negate`       | Upstream source body.                               | Runtime table and direct codegen dispatch deleted.                   |
+| `gleam/bool.to_string`    | Upstream source body.                               | Runtime table and direct codegen dispatch deleted.                   |
+| `gleam/float.compare`     | Upstream source body with `gleam/order`.            | Runtime table and direct codegen dispatch deleted.                   |
+| `gleam/float.max`         | Upstream source body.                               | Runtime table and direct codegen dispatch deleted.                   |
+| `gleam/float.min`         | Upstream source body.                               | Runtime table and direct codegen dispatch deleted.                   |
+| `gleam/float.negate`      | Upstream source body.                               | Runtime table and direct codegen dispatch deleted.                   |
+| `gleam/float.to_string`   | Upstream source wrapper plus private native helper. | Runtime table and direct codegen dispatch deleted.                   |
+| `gleam/function.compose`  | Upstream source body.                               | Runtime table dispatch and registry-backed lowering adapter deleted. |
+| `gleam/function.constant` | Upstream source body.                               | Runtime table and direct codegen dispatch deleted.                   |
+| `gleam/function.flip`     | Upstream source body.                               | Runtime table dispatch and registry-backed lowering adapter deleted. |
+| `gleam/function.identity` | Upstream source body.                               | Runtime table and direct codegen dispatch deleted.                   |
+| `gleam/int.to_string`     | Upstream source wrapper plus private native helper. | Runtime table and direct codegen dispatch deleted.                   |
+| `gleam/list.fold`         | Upstream source body.                               | Runtime table dispatch and registry-backed lowering adapter deleted. |
+| `gleam/list.length`       | Upstream source body.                               | Runtime table and direct codegen dispatch deleted.                   |
+| `gleam/list.map`          | Upstream source body.                               | Runtime table dispatch and registry-backed lowering adapter deleted. |
+| `gleam/list.reverse`      | Upstream source body.                               | Runtime table and direct codegen dispatch deleted.                   |
+| `gleam/option.map`        | Upstream source body.                               | Runtime table dispatch and registry-backed lowering adapter deleted. |
+| `gleam/result.map`        | Upstream source body.                               | Runtime table dispatch and registry-backed lowering adapter deleted. |
+
+## Completed Deletion Slices
 
 Completed entries from the first source-backed deletion slice:
 
@@ -116,14 +124,41 @@ Completed entries from the second source-backed scalar deletion slice:
 7. `gleam/list.length`
 8. `gleam/list.reverse`
 
-Remaining deletion work requires:
+Completed entries from the final scalar and registry-retained deletion slice:
 
-- source proof compiles the upstream function from `gleam_stdlib`
-- behavior fixture still passes
-- linked debug dump contains `gleam_stdlib:gleam/<module>.<function>`
-- linked debug dump does not contain `__stdlib_gleam_<module>_<function>`
+1. `gleam/bool.compare`
+2. `gleam/float.to_string`
+3. `gleam/function.compose`
+4. `gleam/function.constant`
+5. `gleam/function.flip`
+6. `gleam/int.to_string`
+7. registry-backed lowering adapters for `gleam/list.{fold,map}`,
+   `gleam/option.map`, `gleam/result.map`, and
+   `gleam/function.{compose,flip}`
 
-The remaining scalar library-source entries now have source-path proofs. The
-numeric `to_string` proofs use private `__regulus_native` helpers for the
-bodyless upstream externals; those helpers are runtime conversion primitives,
+All scalar library-source runtime dispatch entries are now deleted.
+
+The numeric `to_string` source wrappers use private `__regulus_native` helpers
+for bodyless upstream externals; those helpers are runtime conversion primitives,
 not public stdlib dispatch arms.
+
+## Next Removal Candidates
+
+- `gleam/dict.*`: remove compiler-owned dict collection behavior after
+  upstream source can use a validated package asset or narrow native handle.
+- `gleam/dynamic/decode.{list,optional}`: keep primitive decoder
+  representation only; move combinator behavior to compiled upstream source.
+- `gleam/dynamic/decode.*` primitive constructors: keep only if the runtime
+  still needs concrete decoder values. Remove source-expressible wrapping
+  behavior when upstream decoder modules compile.
+- `gleam/bit_array.*` and `gleam/string.*`: not immediate deletion
+  candidates. They remain runtime primitives unless upstream source wraps
+  smaller representation-level helpers.
+
+Future deletion work should prove:
+
+- upstream source compiles from `gleam_stdlib`
+- behavior fixtures pass through Wasm execution
+- linked debug dumps contain the `gleam_stdlib:gleam/<module>.<function>`
+  source path where applicable
+- linked debug dumps do not contain public `__stdlib_gleam_*` dispatch names

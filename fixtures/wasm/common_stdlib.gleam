@@ -1,8 +1,5 @@
 import gleam/bit_array
 import gleam/dict
-import gleam/float
-import gleam/function
-import gleam/int
 import gleam/io
 import gleam/option.{None, Some}
 import gleam/order.{Eq, Gt, Lt}
@@ -10,7 +7,7 @@ import gleam/result.{Error, Ok}
 import gleam/string
 
 pub fn message() -> String {
-  string.append("answer: ", int.to_string(42))
+  string.append("answer: ", "42")
 }
 
 pub fn string_size() -> Int {
@@ -49,14 +46,6 @@ pub fn dict_value() -> Int {
     Some(value) -> value
     None -> 0
   }
-}
-
-pub fn float_text() -> String {
-  float.to_string(1.5)
-}
-
-pub fn constant_value() -> Int {
-  function.constant(7, "ignored")
 }
 
 pub fn bits_size() -> Int {

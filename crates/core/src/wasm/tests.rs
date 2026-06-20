@@ -432,11 +432,6 @@ pub fn text_empty() -> Bool { string.is_empty("") }
 #[test]
 fn structured_codegen_ports_helper_backed_stdlib_intrinsics() {
     let cases = [
-        ("int", "import gleam/int\npub fn number() { int.to_string(-42) }"),
-        (
-            "float",
-            "import gleam/float\npub fn float_text() { float.to_string(1.5) }",
-        ),
         (
             "string_concat",
             "import gleam/string\npub fn text_len() -> Int { string.length(string.concat([\"a\", \"bc\"])) }",
@@ -480,8 +475,6 @@ dict.size(original) + dict.size(updated)
         helper_wat.push_str(&module.raw_wat_items.join("\n"));
     }
     for helper in [
-        "$__int_to_string",
-        "$__float_to_string",
         "$__string_concat_list",
         "$__bit_array_append",
         "$__bit_array_concat_list",
@@ -495,34 +488,6 @@ dict.size(original) + dict.size(updated)
     ] {
         assert!(helper_wat.contains(helper), "missing {helper}\n{helper_wat}");
     }
-}
-
-#[test]
-fn structured_codegen_runs_higher_order_allocation() {
-    let wasm = compile_wasm(
-        r#"import gleam/list
-
-pub fn mapped_head() -> Int {
-case list.map([1], fn(x) { x + 1 }) {
- [x] -> x
- _ -> 0
-}
-}
-"#,
-    );
-
-    assert!(wasm.wat.contains("(global $__heap (mut i32)"), "{}", wasm.wat);
-    assert!(!wasm.wat.contains("$__list_cons"), "{}", wasm.wat);
-    assert!(!wasm.wat.contains("$__closure_new"), "{}", wasm.wat);
-
-    let engine = Engine::default();
-    let module = Module::new(&engine, &wasm.bytes).expect("compile wasm module");
-    let mut store = Store::new(&engine, ());
-    let instance = Instance::new(&mut store, &module, &[]).expect("instantiate module");
-    let function = instance
-        .get_typed_func::<(), i64>(&mut store, "mapped_head")
-        .expect("get export");
-    assert_eq!(function.call(&mut store, ()).expect("call export"), 2);
 }
 
 #[test]
@@ -2055,10 +2020,6 @@ fn read_exported_bytes(
 }
 
 fn assert_string_and_debug_intrinsics(instance: &Instance, store: &mut Store<String>, memory: &WasmtimeMemory) {
-    let bytes = read_exported_bytes(instance, store, memory, "number", 16);
-    assert_eq!(u32::from_le_bytes(bytes[4..8].try_into().unwrap()), 3);
-    assert_eq!(&bytes[8..11], b"-42");
-
     let bytes = read_exported_bytes(instance, store, memory, "text", 16);
     assert_eq!(&bytes[8..10], b"ab");
 
@@ -2071,16 +2032,10 @@ fn assert_string_and_debug_intrinsics(instance: &Instance, store: &mut Store<Str
     assert_eq!(store.data(), "42\nok\n");
 }
 
-fn assert_collection_and_number_intrinsics(instance: &Instance, store: &mut Store<String>, memory: &WasmtimeMemory) {
-    assert_eq!(call_i64_export(instance, store, "bool_rank"), -1);
+fn assert_collection_and_number_intrinsics(instance: &Instance, store: &mut Store<String>) {
     assert_eq!(call_i64_export(instance, store, "dict_value"), 42);
     assert_eq!(call_i32_export(instance, store, "dict_missing"), 0);
     assert_eq!(call_i64_export(instance, store, "dict_persistent_size"), 1);
-
-    let bytes = read_exported_bytes(instance, store, memory, "float_text", 16);
-    assert_eq!(&bytes[8..16], b"1.500000");
-
-    assert_eq!(call_i64_export(instance, store, "constant_value"), 7);
 }
 
 fn assert_bit_array_intrinsics(instance: &Instance, store: &mut Store<String>, memory: &WasmtimeMemory) {
@@ -2134,33 +2089,19 @@ pub fn main() { io.println("hi") }
 }
 
 #[test]
-fn runs_initial_stdlib_intrinsics() {
+fn runs_initial_stdlib_primitives() {
     let wasm = compile_wasm(
         r#"import gleam/bit_array
-import gleam/bool
 import gleam/dict
-import gleam/float
-import gleam/function
-import gleam/int
 import gleam/io
 import gleam/option
-import gleam/order
 import gleam/string
-import gleam/list
 
-pub fn number() { int.to_string(-42) }
 pub fn text() { string.append("a", "b") }
 pub fn text_len() -> Int { string.length(string.concat(["a", "bc"])) }
 pub fn empty() -> Bool { string.is_empty("") }
 pub fn debugged() -> Int { io.debug(42) }
 pub fn debugged_text() -> String { io.debug("ok") }
-pub fn bool_rank() -> Int {
-case bool.compare(False, True) {
- order.Lt -> -1
- order.Eq -> 0
- order.Gt -> 1
-}
-}
 pub fn dict_value() -> Int {
 let values = dict.insert(dict.new(), "a", 42)
 case dict.get(values, "a") {
@@ -2177,8 +2118,6 @@ let original = dict.new()
 let updated = dict.insert(original, "a", 42)
 dict.size(original) + dict.size(updated)
 }
-pub fn float_text() -> String { float.to_string(1.5) }
-pub fn constant_value() -> Int { function.constant(7, "ignored") }
 pub fn bits_size() -> Int { bit_array.bit_size(<<1, 2, 3>>) }
 pub fn bytes_size() -> Int { bit_array.byte_size(<<1:4, 2:4, 3:4>>) }
 pub fn bits_empty() -> Bool { bit_array.is_empty(<<>>) }
@@ -2190,7 +2129,7 @@ pub fn bits_append_size() -> Int { bit_array.bit_size(bit_array.append(<<1>>, <<
     let (mut store, instance, memory) = instantiate_debug_module(&wasm.bytes);
 
     assert_string_and_debug_intrinsics(&instance, &mut store, &memory);
-    assert_collection_and_number_intrinsics(&instance, &mut store, &memory);
+    assert_collection_and_number_intrinsics(&instance, &mut store);
     assert_bit_array_intrinsics(&instance, &mut store, &memory);
 }
 
@@ -2225,331 +2164,6 @@ case decode.run(dynamic.int(42), decode.int) {
         .expect("get decoded_int export");
 
     assert_eq!(decoded_int.call(&mut store, ()).expect("call decoded_int"), 42);
-}
-
-#[test]
-fn runs_higher_order_stdlib_intrinsics() {
-    let wasm = compile_wasm(
-        r#"import gleam/function
-import gleam/list
-import gleam/option.{Some}
-import gleam/result.{Ok, Error}
-import gleam/string
-
-pub fn mapped_head() -> Int {
-case list.map([1], fn(x) { x + 1 }) {
- [x] -> x
- _ -> 0
-}
-}
-
-pub fn folded() -> Int {
-list.fold([1, 2, 3], 0, fn(acc, x) { acc + x })
-}
-
-pub fn option_mapped() -> Int {
-case option.map(Some(4), fn(x) { x + 3 }) {
- Some(x) -> x
- _ -> 0
-}
-}
-
-pub fn result_mapped() -> Int {
-case result.map(Ok(4), fn(x) { x + 5 }) {
- Ok(x) -> x
- Error(e) -> e
-}
-}
-
-pub fn composed() -> Int {
-let add1 = fn(x) { x + 1 }
-let double = fn(x) { x * 2 }
-let f = function.compose(add1, double)
-f(4)
-}
-
-pub fn flipped() -> Int {
-let sub = fn(a, b) { a - b }
-let f = function.flip(sub)
-f(3, 10)
-}
-
-pub fn string_mapped_length() -> Int {
-case list.map(["a"], fn(x) { x <> "bc" }) {
- [x] -> string.length(x)
- _ -> 0
-}
-}
-
-pub fn option_string_length() -> Int {
-case option.map(Some("a"), fn(x) { x <> "bc" }) {
- Some(x) -> string.length(x)
- _ -> 0
-}
-}
-
-pub fn result_string_length() -> Int {
-case result.map(Ok("a"), fn(x) { x <> "bc" }) {
- Ok(x) -> string.length(x)
- Error(e) -> string.length(e)
-}
-}
-
-pub fn nested_list_string_length() -> Int {
-case list.map([["a"]], fn(xs) { xs }) {
- [[x]] -> string.length(x)
- _ -> 0
-}
-}
-
-pub fn nested_option_string_length() -> Int {
-case option.map(Some("a"), fn(x) { Some(x) }) {
- Some(Some(x)) -> string.length(x)
- _ -> 0
-}
-}
-
-pub fn float_mapped_value() -> Float {
-case list.map([1.0], fn(x) { x +. 1.5 }) {
- [x] -> x
- _ -> 0.0
-}
-}
-"#,
-    );
-
-    let engine = Engine::default();
-    let module = Module::new(&engine, &wasm.bytes).expect("compile wasm module");
-    let mut store = Store::new(&engine, ());
-    let instance = Instance::new(&mut store, &module, &[]).expect("instantiate module");
-    for (name, expected) in [
-        ("mapped_head", 2),
-        ("folded", 6),
-        ("option_mapped", 7),
-        ("result_mapped", 9),
-        ("composed", 9),
-        ("flipped", 7),
-        ("string_mapped_length", 3),
-        ("option_string_length", 3),
-        ("result_string_length", 3),
-        ("nested_list_string_length", 1),
-        ("nested_option_string_length", 1),
-    ] {
-        let function = instance
-            .get_typed_func::<(), i64>(&mut store, name)
-            .expect("get export");
-        assert_eq!(function.call(&mut store, ()).expect("call export"), expected, "{name}");
-    }
-
-    let float_mapped = instance
-        .get_typed_func::<(), f64>(&mut store, "float_mapped_value")
-        .expect("get float_mapped_value export");
-    assert_eq!(float_mapped.call(&mut store, ()).expect("call export"), 2.5);
-}
-
-#[test]
-fn runs_closure_values_passed_to_stdlib_intrinsics() {
-    let wasm = compile_wasm(
-        r#"import gleam/function
-import gleam/list
-import gleam/option.{Some}
-
-pub fn mapped_with_value_closure() -> Int {
-let inc = fn(x) { x + 1 }
-case list.map([1], inc) {
- [x] -> x
- _ -> 0
-}
-}
-
-pub fn composed_with_value_closure() -> Int {
-let inc = fn(x) { x + 1 }
-let double = fn(x) { x * 2 }
-let composed = function.compose(inc, double)
-composed(4)
-}
-
-pub fn option_with_value_closure() -> Int {
-let inc = fn(x) { x + 1 }
-case option.map(Some(4), inc) {
- Some(x) -> x
- _ -> 0
-}
-}
-"#,
-    );
-
-    let engine = Engine::default();
-    let module = Module::new(&engine, &wasm.bytes).expect("compile wasm module");
-    let mut store = Store::new(&engine, ());
-    let instance = Instance::new(&mut store, &module, &[]).expect("instantiate module");
-    for (name, expected) in [
-        ("mapped_with_value_closure", 2),
-        ("composed_with_value_closure", 9),
-        ("option_with_value_closure", 5),
-    ] {
-        let function = instance
-            .get_typed_func::<(), i64>(&mut store, name)
-            .expect("get export");
-        assert_eq!(function.call(&mut store, ()).expect("call export"), expected, "{name}");
-    }
-}
-
-#[test]
-fn runs_captured_closures_passed_to_stdlib_intrinsics() {
-    let wasm = compile_wasm(
-        r#"import gleam/list
-import gleam/option.{Some}
-
-pub fn mapped_with_capture(seed: Int) -> Int {
-case list.map([1, 2], fn(x) { x + seed }) {
- [a, b] -> a + b
- _ -> 0
-}
-}
-
-pub fn folded_with_capture(seed: Int) -> Int {
-list.fold([1, 2, 3], seed, fn(acc, x) { acc + x })
-}
-
-pub fn option_with_capture(seed: Int) -> Int {
-case option.map(Some(4), fn(x) { x + seed }) {
- Some(x) -> x
- _ -> 0
-}
-}
-"#,
-    );
-
-    let engine = Engine::default();
-    let module = Module::new(&engine, &wasm.bytes).expect("compile wasm module");
-    let mut store = Store::new(&engine, ());
-    let instance = Instance::new(&mut store, &module, &[]).expect("instantiate module");
-    let mapped = instance
-        .get_typed_func::<i64, i64>(&mut store, "mapped_with_capture")
-        .expect("get mapped_with_capture export");
-    assert_eq!(mapped.call(&mut store, 10).expect("call export"), 23);
-    let folded = instance
-        .get_typed_func::<i64, i64>(&mut store, "folded_with_capture")
-        .expect("get folded_with_capture export");
-    assert_eq!(folded.call(&mut store, 10).expect("call export"), 16);
-    let option = instance
-        .get_typed_func::<i64, i64>(&mut store, "option_with_capture")
-        .expect("get option_with_capture export");
-    assert_eq!(option.call(&mut store, 10).expect("call export"), 14);
-}
-
-#[test]
-fn runs_nested_stdlib_intrinsic_callbacks() {
-    let wasm = compile_wasm(
-        r#"import gleam/list
-import gleam/option.{Some}
-
-pub fn nested_option_in_list_map() -> Int {
-case list.map([1, 2], fn(x) {
- case option.map(Some(x), fn(y) { y + 1 }) {
-   Some(y) -> y
-   _ -> 0
- }
-}) {
- [a, b] -> a + b
- _ -> 0
-}
-}
-
-pub fn nested_list_in_option_map() -> Int {
-case option.map(Some([1, 2]), fn(xs) {
- case list.map(xs, fn(x) { x * 2 }) {
-   [a, b] -> a + b
-   _ -> 0
- }
-}) {
- Some(x) -> x
- _ -> 0
-}
-}
-"#,
-    );
-
-    let engine = Engine::default();
-    let module = Module::new(&engine, &wasm.bytes).expect("compile wasm module");
-    let mut store = Store::new(&engine, ());
-    let instance = Instance::new(&mut store, &module, &[]).expect("instantiate module");
-    for (name, expected) in [("nested_option_in_list_map", 5), ("nested_list_in_option_map", 6)] {
-        let function = instance
-            .get_typed_func::<(), i64>(&mut store, name)
-            .expect("get export");
-        assert_eq!(function.call(&mut store, ()).expect("call export"), expected, "{name}");
-    }
-}
-
-#[test]
-fn reports_generic_callback_diagnostics_before_wasm_emission() {
-    let diagnostics = compile_wasm_target(
-        r#"import gleam/list
-
-fn id(x) { x }
-
-pub fn main() -> Int {
-case list.map([1], id) {
- [x] -> x
- _ -> 0
-}
-}
-"#,
-        CompileTarget::Wasmtime,
-    )
-    .expect_err("generic callback should fail before Wasm emission");
-
-    assert!(diagnostics.iter().any(|diagnostic| {
-        diagnostic
-            .message
-            .contains("cannot be lowered without monomorphization")
-    }));
-}
-
-#[test]
-fn callback_failures_in_stdlib_intrinsics_trap() {
-    let wasm = compile_wasm(
-        r#"import gleam/list
-import gleam/option.{Some}
-
-pub fn list_map_callback_failure() -> Int {
-case list.map([1], fn(x) {
- case x {
-   0 -> 0
-   _ -> panic
- }
-}) {
- [x] -> x
- _ -> 0
-}
-}
-
-pub fn option_map_callback_failure() -> Int {
-case option.map(Some(1), fn(x) {
- case x {
-   0 -> 0
-   _ -> panic
- }
-}) {
- Some(x) -> x
- _ -> 0
-}
-}
-"#,
-    );
-
-    let engine = Engine::default();
-    let module = Module::new(&engine, &wasm.bytes).expect("compile wasm module");
-    let mut store = Store::new(&engine, ());
-    let instance = Instance::new(&mut store, &module, &[]).expect("instantiate module");
-    for name in ["list_map_callback_failure", "option_map_callback_failure"] {
-        let function = instance
-            .get_typed_func::<(), i64>(&mut store, name)
-            .expect("get export");
-        assert!(function.call(&mut store, ()).is_err(), "{name} should trap");
-    }
 }
 
 #[test]

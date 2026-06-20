@@ -979,6 +979,7 @@ pub fn lower_project(project: TypedProject) -> Result<Module, Diagnostics> {
 fn keep_dependency_module_internal(module: &mut Module) {
     module.exports.clear();
     for function in &mut module.functions {
+        function.public = false;
         if matches!(function.abi.boundary, CallBoundary::ModuleExport) {
             function.abi.boundary = CallBoundary::Internal;
         }

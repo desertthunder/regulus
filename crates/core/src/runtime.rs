@@ -14,7 +14,6 @@ const STDLIB_RUNTIME_PRIMITIVES: &[StdlibRuntimePrimitive] = &[
     primitive("gleam/bit_array", "concat"),
     primitive("gleam/bit_array", "is_empty"),
     primitive("gleam/bit_array", "starts_with"),
-    primitive("gleam/bool", "compare"),
     primitive("gleam/dict", "delete"),
     primitive("gleam/dict", "get"),
     primitive("gleam/dict", "has_key"),
@@ -41,11 +40,6 @@ const STDLIB_RUNTIME_PRIMITIVES: &[StdlibRuntimePrimitive] = &[
     primitive("gleam/dynamic/decode", "optional"),
     primitive("gleam/dynamic/decode", "run"),
     primitive("gleam/dynamic/decode", "string"),
-    primitive("gleam/float", "to_string"),
-    primitive("gleam/function", "compose"),
-    primitive("gleam/function", "constant"),
-    primitive("gleam/function", "flip"),
-    primitive("gleam/int", "to_string"),
     primitive("gleam/io", "debug"),
     primitive("gleam/string", "append"),
     primitive("gleam/string", "concat"),
@@ -575,10 +569,12 @@ mod tests {
 
     #[test]
     fn records_stdlib_runtime_primitives_in_runtime_table() {
-        assert_eq!(
-            stdlib_runtime_primitive("gleam/int", "to_string"),
-            Some(StdlibRuntimePrimitive { module: "gleam/int", member: "to_string" })
-        );
+        assert_eq!(stdlib_runtime_primitive("gleam/int", "to_string"), None);
+        assert_eq!(stdlib_runtime_primitive("gleam/float", "to_string"), None);
+        assert_eq!(stdlib_runtime_primitive("gleam/bool", "compare"), None);
+        assert_eq!(stdlib_runtime_primitive("gleam/function", "compose"), None);
+        assert_eq!(stdlib_runtime_primitive("gleam/function", "constant"), None);
+        assert_eq!(stdlib_runtime_primitive("gleam/function", "flip"), None);
         assert_eq!(stdlib_runtime_primitive("gleam/list", "fold"), None);
         assert_eq!(stdlib_runtime_primitive("gleam/list", "map"), None);
         assert_eq!(stdlib_runtime_primitive("gleam/list", "length"), None);

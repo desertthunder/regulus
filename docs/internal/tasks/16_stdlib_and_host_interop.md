@@ -154,7 +154,7 @@ Retained registry entries record their blocker group and deletion condition in
 - [x] Remove the remaining registry-path blockers before deleting scalar
       runtime dispatch arms: upstream bodies for fixture-missing functions and
       native replacements for bodyless externals.
-- [ ] Delete remaining scalar and registry-retained library dispatch arms once
+- [x] Delete remaining scalar and registry-retained library dispatch arms once
       source loading is the default path for those modules.
 - [ ] Keep host adapters such as `gleam/io.print` and `gleam/io.println` in
       ABI tables, not the stdlib registry.
@@ -163,6 +163,30 @@ Retained registry entries record their blocker group and deletion condition in
 
 The current primitive inventory is maintained in
 [`16_runtime_primitive_inventory.md`](../specs/16_runtime_primitive_inventory.md).
+
+### Monomorphized Dependency Emission
+
+- [ ] Define specialization keys for dependency functions from package,
+      module, function, and instantiated concrete type arguments.
+- [ ] Collect reachable dependency functions from project exports and
+      dependency-to-dependency calls after source loading.
+- [ ] Substitute generic type variables in dependency bodies and interfaces
+      for each concrete specialization.
+- [ ] Generate stable internal backend names for specializations and rewrite
+      calls to those names.
+- [ ] Keep dependency specializations internal so generic stdlib helpers are
+      not exported through the host ABI.
+- [ ] Emit Wasm for source-backed stdlib helpers that currently lower but need
+      concrete dependency shapes: `gleam/list.{fold,map}`,
+      `gleam/option.map`, `gleam/result.map`,
+      `gleam/function.{compose,flip}`, `gleam/int.to_string`, and
+      `gleam/float.to_string`.
+- [ ] Add behavior fixtures for multiple instantiations of the same helper,
+      transitive stdlib calls, closure capture, and native helper wrappers.
+- [ ] Add diagnostics for dependency specializations that reach unsupported
+      type, closure, native, or host ABI shapes.
+- [ ] Replace source-only and linked-dump proofs with Wasm behavior fixtures
+      once monomorphized dependency emission is available.
 
 ### Host ABI And Externals
 
@@ -196,6 +220,10 @@ The current primitive inventory is maintained in
       host boundary ABI shapes.
 - [ ] Add tests proving upstream decoder and collection combinators call
       normal compiled closures rather than runtime-specific callback paths.
+
+Registry-specific callback adapters have been deleted. Future stdlib callback
+execution should come from monomorphized dependency source using the same
+closure ABI as project code.
 
 ### Collections, Dynamic, Text, And Binary
 

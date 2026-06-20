@@ -1117,11 +1117,11 @@ impl<'a> StructuredEmitter<'a> {
                 self.expression(&call.arguments[0].value, out)?;
                 self.call_runtime_helper("__string_concat_list", [ValueType::I32], [ValueType::I32], out);
             }
-            "__regulus_int_to_string" | "__stdlib_gleam_int_to_string" => {
+            "__regulus_int_to_string" => {
                 self.expression(&call.arguments[0].value, out)?;
                 self.call_runtime_helper("__int_to_string", [ValueType::I64], [ValueType::I32], out);
             }
-            "__regulus_float_to_string" | "__stdlib_gleam_float_to_string" => {
+            "__regulus_float_to_string" => {
                 self.expression(&call.arguments[0].value, out)?;
                 self.call_runtime_helper("__float_to_string", [ValueType::F64], [ValueType::I32], out);
             }
@@ -1178,14 +1178,6 @@ impl<'a> StructuredEmitter<'a> {
                     out,
                 );
             }
-            "__stdlib_gleam_bool_compare" => {
-                let scratch = self.required_local(self.scratch_local, "scratch")?;
-                self.expression(&call.arguments[0].value, out)?;
-                self.expression(&call.arguments[1].value, out)?;
-                out.push(Instruction::I32Sub);
-                out.push(Instruction::LocalSet { local: scratch, type_: ValueType::I32 });
-                self.order_from_compare_local(scratch, out);
-            }
             "__stdlib_gleam_dict_new" => {
                 self.call_runtime_helper("__dict_new", [], [ValueType::I32], out);
             }
@@ -1201,9 +1193,6 @@ impl<'a> StructuredEmitter<'a> {
             "__stdlib_gleam_dict_get" => self.dict_get(call, out)?,
             "__stdlib_gleam_dict_has_key" => self.dict_has_key(call, out)?,
             "__stdlib_gleam_dict_delete" => self.dict_delete(call, out)?,
-            "__stdlib_gleam_function_constant" => {
-                self.expression(&call.arguments[0].value, out)?;
-            }
             "__stdlib_gleam_dynamic_int" => self.dynamic_i64(call, 1, out)?,
             "__stdlib_gleam_dynamic_float" => self.dynamic_float(call, out)?,
             "__stdlib_gleam_dynamic_bool" => self.dynamic_i32(call, 3, out)?,
@@ -1439,44 +1428,6 @@ impl<'a> StructuredEmitter<'a> {
     ) {
         self.runtime_helper_roots.insert(name.into());
         out.push(Instruction::CallName { name: name.into(), type_: FunctionType::new(params, results) });
-    }
-
-    fn order_from_compare_local(&mut self, local: LocalId, out: &mut Vec<Instruction>) {
-        let lt_ptr = self.push_static(runtime::custom_object(
-            self.config,
-            self.next_static_offset,
-            super::constructor_tag("Lt"),
-            &[],
-        ));
-        let eq_ptr = self.push_static(runtime::custom_object(
-            self.config,
-            self.next_static_offset,
-            super::constructor_tag("Eq"),
-            &[],
-        ));
-        let gt_ptr = self.push_static(runtime::custom_object(
-            self.config,
-            self.next_static_offset,
-            super::constructor_tag("Gt"),
-            &[],
-        ));
-        out.push(Instruction::LocalGet { local, type_: ValueType::I32 });
-        out.push(Instruction::I32Const(0));
-        out.push(Instruction::I32LtS);
-        out.push(Instruction::If {
-            type_: BlockType::new([], [ValueType::I32]),
-            then_body: vec![Instruction::I32Const(lt_ptr as i32)],
-            else_body: vec![
-                Instruction::LocalGet { local, type_: ValueType::I32 },
-                Instruction::I32Const(0),
-                Instruction::I32GtS,
-                Instruction::If {
-                    type_: BlockType::new([], [ValueType::I32]),
-                    then_body: vec![Instruction::I32Const(gt_ptr as i32)],
-                    else_body: vec![Instruction::I32Const(eq_ptr as i32)],
-                },
-            ],
-        });
     }
 
     fn dict_insert(&mut self, call: &ir::DirectCall, out: &mut Vec<Instruction>) -> StructuredResult<()> {
@@ -3631,13 +3582,10 @@ fn expression_needs_scratch(expression: &ir::Expression) -> bool {
     match &expression.kind {
         ExpressionKind::IndirectCall(_) | ExpressionKind::RecordUpdate { .. } => true,
         ExpressionKind::List(_) if !expression_is_static_allocatable(expression) => true,
-        ExpressionKind::DirectCall(call) => {
-            call.function == "__stdlib_gleam_bool_compare"
-                || call
-                    .arguments
-                    .iter()
-                    .any(|argument| expression_needs_scratch(&argument.value))
-        }
+        ExpressionKind::DirectCall(call) => call
+            .arguments
+            .iter()
+            .any(|argument| expression_needs_scratch(&argument.value)),
         ExpressionKind::Branch(branch) => {
             branch.subjects.iter().any(expression_needs_scratch)
                 || branch.clauses.iter().any(|clause| {

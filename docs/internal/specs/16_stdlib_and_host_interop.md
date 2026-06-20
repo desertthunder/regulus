@@ -73,6 +73,36 @@ Blocker reports should be grouped by package module and should point to the
 first missing compiler capability. The report is a migration tool for deleting
 registry entries, not a justification for more registry behavior.
 
+## Monomorphized Dependency Emission
+
+Dependency source may define public generic functions that are imported by
+project code. Regulus should not export those generic dependency declarations
+through the host ABI. Instead, Wasm emission should start from reachable project
+exports, discover dependency calls, and emit internal concrete specializations.
+
+A specialization is identified by:
+
+- dependency package
+- module
+- function
+- instantiated parameter and return types
+
+For each reachable specialization, the compiler substitutes generic type
+variables in the dependency body and interface with the concrete call types,
+lowers that concrete body, assigns a deterministic internal backend name, and
+rewrites calls to the specialized name. The name should preserve enough package,
+module, and function identity for debug dumps while avoiding collisions between
+different type instantiations.
+
+Specialized dependency functions are implementation details. They should remain
+internal, even when the upstream dependency function is public. Host ABI
+validation applies to the project export surface and explicit externals, not to
+generic dependency declarations that become internal specializations.
+
+If specialization reaches an unsupported type, closure, native external, or
+host ABI shape, diagnostics should point at the source call or dependency
+function span that forced the unsupported specialization.
+
 ## Target Selection
 
 Upstream stdlib uses target-specific declarations. Regulus should preserve and
