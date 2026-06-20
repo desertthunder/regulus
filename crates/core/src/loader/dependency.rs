@@ -654,6 +654,13 @@ mod tests {
         ] {
             assert!(dump.contains(&format!("gleam_stdlib:{module}.")), "{dump}");
         }
+        for function in [
+            "gleam_stdlib:gleam/bool.negate",
+            "gleam_stdlib:gleam/option.map",
+            "gleam_stdlib:gleam/result.map",
+        ] {
+            assert!(dump.contains(function), "{dump}");
+        }
         assert!(!dump.contains("__stdlib_gleam_order"));
         assert!(!dump.contains("__stdlib_gleam_result"));
         assert!(!dump.contains("__stdlib_gleam_option"));

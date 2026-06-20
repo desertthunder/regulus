@@ -264,7 +264,7 @@ impl StdlibModule {
                         fn_type(vec![Type::generic("a")], Type::generic("b")),
                     ],
                     result(Type::generic("b"), Type::generic("e")),
-                    runtime_primitive_retention(),
+                    upstream_source_retention(),
                 ),
             ],
             &[result_type],
@@ -299,7 +299,7 @@ impl StdlibModule {
                         fn_type(vec![Type::generic("a")], Type::generic("b")),
                     ],
                     option(Type::generic("b")),
-                    runtime_primitive_retention(),
+                    upstream_source_retention(),
                 ),
             ],
             &[option_type],
@@ -389,7 +389,7 @@ impl StdlibModule {
                     Type::String,
                     runtime_primitive_retention(),
                 ),
-                function("negate", vec![Type::Bool], Type::Bool, runtime_primitive_retention()),
+                function("negate", vec![Type::Bool], Type::Bool, upstream_source_retention()),
                 function(
                     "compare",
                     vec![Type::Bool, Type::Bool],
@@ -813,6 +813,14 @@ fn runtime_primitive_retention() -> RegistryRetention {
         category: RetentionCategory::RuntimePrimitive,
         gap: RetentionGap::RuntimePrimitive,
         deletion_condition: "move this primitive out of the stdlib registry or replace the library behavior with compiled upstream source",
+    }
+}
+
+fn upstream_source_retention() -> RegistryRetention {
+    RegistryRetention {
+        category: RetentionCategory::UpstreamSource,
+        gap: RetentionGap::SourceLanguageFeature,
+        deletion_condition: "delete this retained interface when the upstream function is loaded from package source by default",
     }
 }
 

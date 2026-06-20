@@ -127,13 +127,29 @@ Retained registry entries record their blocker group and deletion condition in
 - [x] Implement Wasmtime and browser IO host calls where supported.
 - [x] Reject unavailable host calls and unsupported ABI shapes before byte
       emission.
-- [ ] Add a runtime helper inventory grouped by allocation, managed values,
-      closures, equality, debug, dynamic values, native handles, package asset
-      shims, and host adapters.
-- [ ] Replace any helper that implements library-level decoder, URI, routing,
-      or collection behavior with compiled upstream source.
+- [x] Inventory every current `runtime::stdlib_runtime_primitive` entry by
+      owner, blocker, and deletion condition.
+- [x] Mark entries that are true compiler/runtime primitives and keep only
+      those in runtime or ABI tables.
+- [x] Mark library-level entries that must be replaced by compiled upstream
+      source.
+- [x] Delete the first unblocked source-backed runtime dispatch entries:
+      `gleam/bool.negate`, `gleam/option.map`, and `gleam/result.map`.
+- [ ] For remaining library-level entries, add an upstream source proof before
+      deleting the runtime dispatch arm. Checklist: compile the upstream
+      function, add a behavior fixture, assert the linked dump uses
+      `gleam_stdlib:...`, then assert it no longer uses
+      `__stdlib_gleam_*`.
+- [ ] Delete runtime dispatch for `gleam/bool`, `gleam/function`,
+      `gleam/option.map`, `gleam/result.map`, and pure `gleam/list`
+      functions once source proofs cover them.
+- [ ] Keep host adapters such as `gleam/io.print` and `gleam/io.println` in
+      ABI tables, not the stdlib registry.
 - [ ] Add unsupported-feature diagnostics for runtime primitives requested by
       compiled library code but not implemented.
+
+The current primitive inventory is maintained in
+[`16_runtime_primitive_inventory.md`](../specs/16_runtime_primitive_inventory.md).
 
 ### Host ABI And Externals
 

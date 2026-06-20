@@ -1100,7 +1100,7 @@ impl<'a> StructuredEmitter<'a> {
                     _ => unreachable!(),
                 });
             }
-            "__op_not" | "__stdlib_gleam_bool_negate" => {
+            "__op_not" => {
                 self.expression(&call.arguments[0].value, out)?;
                 out.push(Instruction::I32Eqz);
             }
