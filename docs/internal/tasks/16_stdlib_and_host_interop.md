@@ -35,13 +35,15 @@ enough that Regulus does not reimplement standard-library behavior.
 - [x] Compile pure portions of `gleam/order`, `gleam/result`, `gleam/option`,
       `gleam/list`, `gleam/int`, `gleam/float`, `gleam/bool`, and
       `gleam/function`.
-- [ ] Keep any temporary registry entry only when the blocker report shows a
+- [x] Keep any temporary registry entry only when the blocker report shows a
       real compiler, runtime, target, package asset, or ABI gap.
 - [ ] Delete the registry once all remaining behavior is represented by package
       source, package metadata, validated assets, or runtime primitives.
 
 Current blocker groups are snapshotted in
 `loader::dependency::tests::snapshots_first_compile_blocker_for_each_upstream_stdlib_module`.
+Retained registry entries record their blocker group and deletion condition in
+`StdlibModule.retention` and `StdlibMember.retention`.
 
 - Source language feature: full `gleam/order` still hits current
   exhaustiveness handling for multi-constructor branches.
@@ -70,9 +72,9 @@ Current blocker groups are snapshotted in
       module interface schemes.
 - [x] Add diagnostics for unsupported stdlib modules, functions, types, and
       target combinations.
-- [ ] Mark every registry entry as temporary interface, upstream source,
+- [x] Mark every registry entry as temporary interface, upstream source,
       package asset, runtime primitive, or target host adapter.
-- [ ] Record the deletion condition for every temporary entry.
+- [x] Record the deletion condition for every temporary entry.
 - [ ] Move compiler-owned primitives out of the stdlib registry and into
       normal runtime, external, or ABI tables.
 - [ ] Reject adding new registry behavior unless it has a removal condition.

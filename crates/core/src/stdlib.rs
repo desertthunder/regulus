@@ -22,16 +22,44 @@ pub enum MemberStrategy {
     PreferCompiledSource,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RetentionCategory {
+    TemporaryInterface,
+    UpstreamSource,
+    PackageAsset,
+    RuntimePrimitive,
+    TargetHostAdapter,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RetentionGap {
+    SourceLanguageFeature,
+    TargetFiltering,
+    PackageMetadata,
+    PackageAsset,
+    RuntimePrimitive,
+    HostAbi,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RegistryRetention {
+    pub category: RetentionCategory,
+    pub gap: RetentionGap,
+    pub deletion_condition: &'static str,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StdlibMember {
     pub name: &'static str,
     pub strategy: MemberStrategy,
+    pub retention: RegistryRetention,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StdlibModule {
     pub name: &'static str,
     pub strategy: ModuleStrategy,
+    pub retention: RegistryRetention,
     pub interface: ModuleInterface,
     pub members: Vec<StdlibMember>,
 }
@@ -89,15 +117,15 @@ fn stdlib_modules() -> Vec<StdlibModule> {
         StdlibModule::gleam_order(),
         StdlibModule::gleam_bit_array(),
         StdlibModule::gleam_bool(),
-        StdlibModule::remaining("gleam/bytes_tree"),
+        StdlibModule::remaining("gleam/bytes_tree", RetentionGap::PackageMetadata),
         StdlibModule::gleam_dict(),
         StdlibModule::gleam_dynamic(),
         StdlibModule::gleam_dynamic_decode(),
         StdlibModule::gleam_float(),
         StdlibModule::gleam_function(),
-        StdlibModule::remaining("gleam/set"),
-        StdlibModule::remaining("gleam/string_tree"),
-        StdlibModule::remaining("gleam/uri"),
+        StdlibModule::remaining("gleam/set", RetentionGap::TargetFiltering),
+        StdlibModule::remaining("gleam/string_tree", RetentionGap::PackageAsset),
+        StdlibModule::remaining("gleam/uri", RetentionGap::PackageMetadata),
     ]
 }
 
@@ -106,6 +134,7 @@ impl StdlibModule {
         Self::new(
             "gleam/io",
             ModuleStrategy::Hybrid,
+            module_retention(RetentionGap::HostAbi),
             &[
                 function("println", vec![Type::String], Type::Nil, MemberStrategy::HostImport),
                 function("print", vec![Type::String], Type::Nil, MemberStrategy::HostImport),
@@ -124,6 +153,7 @@ impl StdlibModule {
         Self::new(
             "gleam/int",
             ModuleStrategy::Hybrid,
+            module_retention(RetentionGap::PackageMetadata),
             &[
                 function("to_string", vec![Type::Int], Type::String, MemberStrategy::Intrinsic),
                 function(
@@ -141,6 +171,7 @@ impl StdlibModule {
         Self::new(
             "gleam/string",
             ModuleStrategy::Hybrid,
+            module_retention(RetentionGap::PackageMetadata),
             &[
                 function(
                     "append",
@@ -165,6 +196,7 @@ impl StdlibModule {
         Self::new(
             "gleam/list",
             ModuleStrategy::Hybrid,
+            module_retention(RetentionGap::PackageMetadata),
             &[
                 function(
                     "length",
@@ -223,6 +255,7 @@ impl StdlibModule {
         Self::new(
             "gleam/result",
             ModuleStrategy::Hybrid,
+            module_retention(RetentionGap::PackageMetadata),
             &[
                 constructor_member("Ok"),
                 constructor_member("Error"),
@@ -257,6 +290,7 @@ impl StdlibModule {
         Self::new(
             "gleam/option",
             ModuleStrategy::Hybrid,
+            module_retention(RetentionGap::PackageAsset),
             &[
                 constructor_member("Some"),
                 constructor_member("None"),
@@ -288,6 +322,7 @@ impl StdlibModule {
         Self::new(
             "gleam/order",
             ModuleStrategy::Hybrid,
+            module_retention(RetentionGap::SourceLanguageFeature),
             &[
                 constructor_member("Lt"),
                 constructor_member("Eq"),
@@ -301,6 +336,7 @@ impl StdlibModule {
         Self::new(
             "gleam/bit_array",
             ModuleStrategy::Hybrid,
+            module_retention(RetentionGap::TargetFiltering),
             &[
                 function(
                     "append",
@@ -332,6 +368,7 @@ impl StdlibModule {
         Self::new(
             "gleam/bool",
             ModuleStrategy::Hybrid,
+            module_retention(RetentionGap::SourceLanguageFeature),
             &[
                 function("to_string", vec![Type::Bool], Type::String, MemberStrategy::Intrinsic),
                 function("negate", vec![Type::Bool], Type::Bool, MemberStrategy::Intrinsic),
@@ -352,6 +389,7 @@ impl StdlibModule {
         Self::new(
             "gleam/dict",
             ModuleStrategy::Hybrid,
+            module_retention(RetentionGap::PackageMetadata),
             &[
                 function("new", vec![], dict_kv.clone(), MemberStrategy::Intrinsic),
                 function("size", vec![dict_kv.clone()], Type::Int, MemberStrategy::Intrinsic),
@@ -390,6 +428,7 @@ impl StdlibModule {
         Self::new(
             "gleam/dynamic",
             ModuleStrategy::Hybrid,
+            module_retention(RetentionGap::PackageAsset),
             &[
                 function("array", vec![list(dynamic())], dynamic(), MemberStrategy::Intrinsic),
                 function("bit_array", vec![Type::BitArray], dynamic(), MemberStrategy::Intrinsic),
@@ -430,6 +469,7 @@ impl StdlibModule {
         Self::new(
             "gleam/dynamic/decode",
             ModuleStrategy::Hybrid,
+            module_retention(RetentionGap::PackageMetadata),
             &[
                 value("bit_array", decoder(Type::BitArray), MemberStrategy::Intrinsic),
                 value("bool", decoder(Type::Bool), MemberStrategy::Intrinsic),
@@ -589,6 +629,7 @@ impl StdlibModule {
         Self::new(
             "gleam/float",
             ModuleStrategy::Hybrid,
+            module_retention(RetentionGap::PackageMetadata),
             &[
                 function(
                     "compare",
@@ -619,6 +660,7 @@ impl StdlibModule {
         Self::new(
             "gleam/function",
             ModuleStrategy::Hybrid,
+            module_retention(RetentionGap::SourceLanguageFeature),
             &[
                 function(
                     "identity",
@@ -655,18 +697,33 @@ impl StdlibModule {
         )
     }
 
-    fn remaining(name: &'static str) -> Self {
-        Self::new(name, ModuleStrategy::PreferCompiledSource, &[], &[])
+    fn remaining(name: &'static str, gap: RetentionGap) -> Self {
+        Self::new(
+            name,
+            ModuleStrategy::PreferCompiledSource,
+            RegistryRetention {
+                category: RetentionCategory::UpstreamSource,
+                gap,
+                deletion_condition: "delete this placeholder when the upstream module compiles from package source",
+            },
+            &[],
+            &[],
+        )
     }
 
     fn new(
-        name: &'static str, strategy: ModuleStrategy, members: &[StdlibMemberSpec], types: &[TypeDeclaration],
+        name: &'static str, strategy: ModuleStrategy, retention: RegistryRetention, members: &[StdlibMemberSpec],
+        types: &[TypeDeclaration],
     ) -> Self {
         let mut interface = ModuleInterface::default();
         let mut member_entries = Vec::new();
 
         for member in members {
-            member_entries.push(StdlibMember { name: member.name, strategy: member.strategy });
+            member_entries.push(StdlibMember {
+                name: member.name,
+                strategy: member.strategy,
+                retention: member.retention,
+            });
             if let Some(type_) = &member.type_ {
                 interface.functions.insert(member.name.into(), type_.clone());
             }
@@ -681,7 +738,7 @@ impl StdlibModule {
             }
         }
 
-        Self { name, strategy, interface, members: member_entries }
+        Self { name, strategy, retention, interface, members: member_entries }
     }
 }
 
@@ -689,19 +746,76 @@ impl StdlibModule {
 struct StdlibMemberSpec {
     name: &'static str,
     strategy: MemberStrategy,
+    retention: RegistryRetention,
     type_: Option<Type>,
 }
 
 fn function(name: &'static str, params: Vec<Type>, return_type: Type, strategy: MemberStrategy) -> StdlibMemberSpec {
-    StdlibMemberSpec { name, strategy, type_: Some(fn_type(params, return_type)) }
+    StdlibMemberSpec {
+        name,
+        strategy,
+        retention: member_retention(strategy),
+        type_: Some(fn_type(params, return_type)),
+    }
 }
 
 fn value(name: &'static str, type_: Type, strategy: MemberStrategy) -> StdlibMemberSpec {
-    StdlibMemberSpec { name, strategy, type_: Some(type_) }
+    StdlibMemberSpec { name, strategy, retention: member_retention(strategy), type_: Some(type_) }
 }
 
 fn constructor_member(name: &'static str) -> StdlibMemberSpec {
-    StdlibMemberSpec { name, strategy: MemberStrategy::ManagedConstructor, type_: None }
+    StdlibMemberSpec {
+        name,
+        strategy: MemberStrategy::ManagedConstructor,
+        retention: member_retention(MemberStrategy::ManagedConstructor),
+        type_: None,
+    }
+}
+
+fn module_retention(gap: RetentionGap) -> RegistryRetention {
+    let category = match gap {
+        RetentionGap::PackageAsset => RetentionCategory::PackageAsset,
+        RetentionGap::RuntimePrimitive => RetentionCategory::RuntimePrimitive,
+        RetentionGap::HostAbi => RetentionCategory::TargetHostAdapter,
+        RetentionGap::SourceLanguageFeature | RetentionGap::TargetFiltering | RetentionGap::PackageMetadata => {
+            RetentionCategory::TemporaryInterface
+        }
+    };
+    RegistryRetention {
+        category,
+        gap,
+        deletion_condition: "delete this module entry when its interface comes from package source, package metadata, validated assets, or runtime primitive tables",
+    }
+}
+
+fn member_retention(strategy: MemberStrategy) -> RegistryRetention {
+    match strategy {
+        MemberStrategy::Intrinsic => RegistryRetention {
+            category: RetentionCategory::RuntimePrimitive,
+            gap: RetentionGap::RuntimePrimitive,
+            deletion_condition: "move this primitive out of the stdlib registry or replace the library behavior with compiled upstream source",
+        },
+        MemberStrategy::HostImport => RegistryRetention {
+            category: RetentionCategory::TargetHostAdapter,
+            gap: RetentionGap::HostAbi,
+            deletion_condition: "move this host adapter out of the stdlib registry and into target ABI tables",
+        },
+        MemberStrategy::ManagedConstructor => RegistryRetention {
+            category: RetentionCategory::RuntimePrimitive,
+            gap: RetentionGap::RuntimePrimitive,
+            deletion_condition: "delete this constructor entry when custom type constructors come from package source or prelude metadata",
+        },
+        MemberStrategy::InterfaceOnly => RegistryRetention {
+            category: RetentionCategory::TemporaryInterface,
+            gap: RetentionGap::PackageMetadata,
+            deletion_condition: "delete this interface-only entry when upstream source or package metadata provides the interface",
+        },
+        MemberStrategy::PreferCompiledSource => RegistryRetention {
+            category: RetentionCategory::UpstreamSource,
+            gap: RetentionGap::SourceLanguageFeature,
+            deletion_condition: "delete this entry when the upstream member compiles from package source",
+        },
+    }
 }
 
 fn type_decl(name: &str, parameters: Vec<&str>, opaque: bool, constructors: Vec<ConstructorInfo>) -> TypeDeclaration {
@@ -789,5 +903,53 @@ mod tests {
         let module = registry.module("gleam/bytes_tree").expect("bytes_tree module");
 
         assert_eq!(module.strategy, ModuleStrategy::PreferCompiledSource);
+    }
+
+    #[test]
+    fn every_registry_entry_records_retention_reason() {
+        let registry = StdlibRegistry::new();
+
+        for module in registry.modules() {
+            assert!(
+                !module.retention.deletion_condition.is_empty(),
+                "{} should record why its registry entry may remain",
+                module.name
+            );
+            for member in &module.members {
+                assert!(
+                    !member.retention.deletion_condition.is_empty(),
+                    "{}.{} should record why its registry entry may remain",
+                    module.name,
+                    member.name
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn registry_retention_reasons_track_current_blocker_groups() {
+        let registry = StdlibRegistry::new();
+
+        let order = registry.module("gleam/order").expect("order module");
+        assert_eq!(order.retention.category, RetentionCategory::TemporaryInterface);
+        assert_eq!(order.retention.gap, RetentionGap::SourceLanguageFeature);
+
+        let string_tree = registry.module("gleam/string_tree").expect("string_tree module");
+        assert_eq!(string_tree.retention.category, RetentionCategory::UpstreamSource);
+        assert_eq!(string_tree.retention.gap, RetentionGap::PackageAsset);
+
+        let option = registry.module("gleam/option").expect("option module");
+        assert_eq!(option.retention.category, RetentionCategory::PackageAsset);
+        assert_eq!(option.retention.gap, RetentionGap::PackageAsset);
+
+        let io = registry.module("gleam/io").expect("io module");
+        assert_eq!(io.retention.category, RetentionCategory::TargetHostAdapter);
+        assert_eq!(io.retention.gap, RetentionGap::HostAbi);
+        assert_eq!(
+            registry
+                .member_strategy("gleam/io", "println")
+                .expect("println strategy"),
+            MemberStrategy::HostImport
+        );
     }
 }
