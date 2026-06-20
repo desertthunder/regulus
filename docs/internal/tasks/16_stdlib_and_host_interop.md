@@ -82,14 +82,14 @@ Retained registry entries record their blocker group and deletion condition in
 
 - [x] Load or model dependency package metadata needed for stdlib modules.
 - [x] Load external module interfaces from dependency metadata where available.
-- [ ] Load stdlib source and package assets from the same package root.
-- [ ] Validate stdlib-relative JS external modules such as
+- [x] Load stdlib source and package assets from the same package root.
+- [x] Validate stdlib-relative JS external modules such as
       `../gleam_stdlib.mjs` and `../dict.mjs` for the stdlib package only.
-- [ ] Preserve upstream external module and function names in diagnostics and
+- [x] Preserve upstream external module and function names in diagnostics and
       JS metadata, even when a Regulus helper is used internally.
-- [ ] Reject arbitrary user relative JS imports unless a separate package asset
+- [x] Reject arbitrary user relative JS imports unless a separate package asset
       policy defines them.
-- [ ] Add fixtures for upstream JS externals that exercise package asset
+- [x] Add fixtures for upstream JS externals that exercise package asset
       resolution.
 
 ### Target Selection

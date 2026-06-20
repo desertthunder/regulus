@@ -211,6 +211,7 @@ impl Lowerer {
         let declarations = ast.declarations.iter().map(DeclarationMetadata::from).collect();
         let type_declarations = self.lower_type_metadata();
         let references = self.lower_references();
+        let js_externals = self.lower_js_external_metadata(&ast);
         let mut exports = self.lower_exports();
         let mut constants = Vec::new();
         let mut init = ModuleInit::default();
@@ -267,6 +268,7 @@ impl Lowerer {
                 constants,
                 init,
                 references,
+                js_externals,
                 exports,
                 functions,
                 linked_names: Vec::new(),
@@ -330,11 +332,41 @@ impl Lowerer {
 
     fn validate_external_function_abis(&mut self) {
         for declaration in self.module.resolved.ast.declarations.clone() {
+            self.validate_relative_js_external_policy_in_declaration(&declaration);
             self.validate_external_function_abi_in_declaration(&declaration);
         }
         for (name, import) in &self.imported_external_imports {
             self.diagnostics
                 .extend(validate_external_info_abi(name, &import.external, &import.type_));
+        }
+    }
+
+    fn validate_relative_js_external_policy_in_declaration(&mut self, declaration: &ast::Declaration) {
+        match declaration {
+            ast::Declaration::ExternalFunction(function) => {
+                let module = unquote(&function.body.module.source);
+                let is_stdlib = self.module.package_name.as_deref() == Some("gleam_stdlib");
+                if is_stdlib || !is_relative_js_external_module(&module) {
+                    return;
+                }
+                self.diagnostics.push(
+                    Diagnostic::spanned(
+                        DiagnosticCode::LoweringError,
+                        format!("relative JS external module `{module}` is not allowed for this package"),
+                        function.body.module.span,
+                        "unsupported relative JS external here",
+                    )
+                    .with_note(
+                        "package-relative JavaScript externals are currently validated only for `gleam_stdlib` package assets",
+                    ),
+                );
+            }
+            ast::Declaration::TargetGroup(group) => {
+                for declaration in &group.declarations {
+                    self.validate_relative_js_external_policy_in_declaration(declaration);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -1517,6 +1549,49 @@ impl Lowerer {
         imports
     }
 
+    fn lower_js_external_metadata(&self, ast: &ast::Module) -> Vec<JsExternalMetadata> {
+        let mut metadata = Vec::new();
+        for declaration in &ast.declarations {
+            self.collect_js_external_metadata(declaration, &mut metadata);
+        }
+        metadata
+    }
+
+    fn collect_js_external_metadata(&self, declaration: &ast::Declaration, metadata: &mut Vec<JsExternalMetadata>) {
+        match declaration {
+            ast::Declaration::ExternalFunction(function) => {
+                let module = unquote(&function.body.module.source);
+                let name = unquote(&function.body.function.source);
+                let Some((module, name)) = regulus_native_upstream_js_external(
+                    self.module.package_name.as_deref(),
+                    &function.name.text,
+                    &module,
+                    &name,
+                ) else {
+                    return;
+                };
+                let Some(Type::Function { params, return_type }) =
+                    self.function_types.get(&function.name.text).cloned()
+                else {
+                    return;
+                };
+                metadata.push(JsExternalMetadata {
+                    module: module.into(),
+                    name: name.into(),
+                    params,
+                    return_type: *return_type,
+                    span: function.span,
+                });
+            }
+            ast::Declaration::TargetGroup(group) => {
+                for declaration in &group.declarations {
+                    self.collect_js_external_metadata(declaration, metadata);
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn lower_external_host_import(&self, function: &ast::ExternalFunction) -> Option<Function> {
         if is_regulus_native_external(
             self.module.package_name.as_deref(),
@@ -1749,13 +1824,28 @@ fn collect_external_import(declaration: &ast::Declaration, imports: &mut HashMap
     }
 }
 
+fn is_relative_js_external_module(module: &str) -> bool {
+    module.starts_with("../") || module.starts_with("./")
+}
+
 fn is_regulus_native_external(package: Option<&str>, local_name: &str, module: &str, function: &str) -> bool {
-    package == Some("gleam_stdlib")
+    regulus_native_upstream_js_external(package, local_name, module, function).is_some()
+}
+
+fn regulus_native_upstream_js_external(
+    package: Option<&str>, local_name: &str, module: &str, function: &str,
+) -> Option<(&'static str, &'static str)> {
+    (package == Some("gleam_stdlib")
         && module == "__regulus_native"
         && matches!(
             (local_name, function),
             ("__regulus_int_to_string", "int_to_string") | ("__regulus_float_to_string", "float_to_string")
-        )
+        ))
+    .then(|| match local_name {
+        "__regulus_int_to_string" => ("../gleam_stdlib.mjs", "to_string"),
+        "__regulus_float_to_string" => ("../gleam_stdlib.mjs", "float_to_string"),
+        _ => unreachable!(),
+    })
 }
 
 #[derive(Debug, Clone)]

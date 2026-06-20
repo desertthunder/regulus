@@ -82,6 +82,7 @@ pub struct Module {
     pub constants: Vec<Constant>,
     pub init: ModuleInit,
     pub references: Vec<Reference>,
+    pub js_externals: Vec<JsExternalMetadata>,
     pub exports: Vec<Export>,
     pub functions: Vec<Function>,
     /// Source-to-generated names assigned by the project linker.
@@ -346,6 +347,15 @@ pub enum InitStep {
 pub struct Reference {
     pub name: String,
     pub target: ReferenceTargetName,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JsExternalMetadata {
+    pub module: String,
+    pub name: String,
+    pub params: Vec<Type>,
+    pub return_type: Type,
     pub span: Span,
 }
 
@@ -1182,6 +1192,7 @@ fn link_modules(modules: Vec<Module>) -> Result<Module, Diagnostics> {
         constants: Vec::new(),
         init: ModuleInit { steps: Vec::new() },
         references: Vec::new(),
+        js_externals: Vec::new(),
         exports: Vec::new(),
         functions: Vec::new(),
         linked_names: Vec::new(),
@@ -1203,6 +1214,7 @@ fn link_modules(modules: Vec<Module>) -> Result<Module, Diagnostics> {
         linked.constants.extend(module.constants);
         linked.init.steps.extend(module.init.steps);
         linked.references.extend(module.references);
+        linked.js_externals.extend(module.js_externals);
         linked.exports.extend(module.exports);
         linked.functions.extend(module.functions);
     }
@@ -1923,6 +1935,7 @@ pub fn main(value: String) {{
                         source_root: SourceRoot::Src,
                     }],
                     sources: vec![module_source],
+                    assets: Vec::new(),
                 }],
                 modules: vec![ModuleInfo {
                     name: "app".to_string(),
@@ -2173,6 +2186,7 @@ pub fn main(input: String) -> String {
             constants: Vec::new(),
             init: ModuleInit::default(),
             references: Vec::new(),
+            js_externals: Vec::new(),
             exports: Vec::new(),
             functions: vec![
                 Function {

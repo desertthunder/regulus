@@ -57,6 +57,7 @@ fn ir_module(functions: Vec<ir::Function>, span: Span) -> ir::Module {
         constants: Vec::new(),
         init: ir::ModuleInit::default(),
         references: Vec::new(),
+        js_externals: Vec::new(),
         exports: Vec::new(),
         functions,
         linked_names: Vec::new(),
@@ -930,6 +931,30 @@ pub fn main() -> String { load("weather") }"#,
         diagnostic
             .message
             .contains("imports host module `browser`, but target `wasmtime` expects `env`")
+    }));
+}
+
+#[test]
+fn rejects_user_relative_js_external_modules() {
+    let diagnostics = compile_wasm_target(
+        r#"@external(javascript, "../app.mjs", "load")
+pub fn load(key: String) -> String
+
+pub fn main() -> String { load("weather") }"#,
+        CompileTarget::Browser,
+    )
+    .expect_err("relative JS imports should be rejected for user packages");
+
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic
+            .message
+            .contains("relative JS external module `../app.mjs` is not allowed for this package")
+    }));
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic
+            .labels
+            .iter()
+            .any(|label| label.message.as_deref() == Some("unsupported relative JS external here"))
     }));
 }
 

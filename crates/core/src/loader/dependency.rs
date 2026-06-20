@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::{collections::HashMap, fs};
 
 use serde::Deserialize;
@@ -28,6 +28,13 @@ pub struct DependencySourcePackage {
     pub package: DependencyPackage,
     pub modules: Vec<ModuleInfo>,
     pub sources: Vec<SourceFile>,
+    pub assets: Vec<DependencyPackageAsset>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DependencyPackageAsset {
+    pub path: PathBuf,
+    pub relative_path: PathBuf,
 }
 
 #[derive(Debug, Deserialize)]
@@ -180,7 +187,12 @@ fn load_supported_stdlib_sources(
     }
 
     if diagnostics.is_empty() {
-        Ok(DependencySourcePackage { package: package.clone(), modules, sources })
+        Ok(DependencySourcePackage {
+            package: package.clone(),
+            modules,
+            sources,
+            assets: collect_stdlib_package_assets(package)?,
+        })
     } else {
         Err(diagnostics)
     }
@@ -393,6 +405,9 @@ fn load_package_sources(
         let name = module_name_from_path(&src_root, &path);
         match fs::read_to_string(&path) {
             Ok(text) => {
+                if package.name == "gleam_stdlib" {
+                    validate_stdlib_js_assets(package, &path, source_id, &text, &mut diagnostics);
+                }
                 modules.push(ModuleInfo { name, path: path.clone(), source_id, source_root: SourceRoot::Src });
                 sources.push(SourceFile::with_path(source_id, &path, text));
             }
@@ -404,10 +419,159 @@ fn load_package_sources(
     }
 
     if diagnostics.is_empty() {
-        Ok(DependencySourcePackage { package: package.clone(), modules, sources })
+        Ok(DependencySourcePackage {
+            package: package.clone(),
+            modules,
+            sources,
+            assets: collect_stdlib_package_assets(package)?,
+        })
     } else {
         Err(diagnostics)
     }
+}
+
+fn collect_stdlib_package_assets(package: &DependencyPackage) -> Result<Vec<DependencyPackageAsset>, Diagnostics> {
+    if package.name != "gleam_stdlib" {
+        return Ok(Vec::new());
+    }
+    let src_root = package.root.join("src");
+    let mut paths = Vec::new();
+    collect_package_asset_files(&src_root, &mut paths)?;
+    paths.sort();
+    Ok(paths
+        .into_iter()
+        .map(|path| DependencyPackageAsset {
+            relative_path: path.strip_prefix(&package.root).unwrap_or(&path).to_path_buf(),
+            path,
+        })
+        .collect())
+}
+
+fn collect_package_asset_files(dir: &Path, paths: &mut Vec<PathBuf>) -> Result<(), Diagnostics> {
+    if !dir.exists() {
+        return Ok(());
+    }
+    let read_dir = fs::read_dir(dir).map_err(|error| {
+        vec![Diagnostic::new(
+            DiagnosticCode::ProjectError,
+            format!("could not read dependency asset directory {}: {error}", dir.display()),
+        )]
+    })?;
+    for entry in read_dir {
+        let entry = entry.map_err(|error| {
+            vec![Diagnostic::new(
+                DiagnosticCode::ProjectError,
+                format!("could not read dependency asset directory entry: {error}"),
+            )]
+        })?;
+        let path = entry.path();
+        if path.is_dir() {
+            collect_package_asset_files(&path, paths)?;
+        } else if path.extension().is_some_and(|extension| extension == "mjs") {
+            paths.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn validate_stdlib_js_assets(
+    package: &DependencyPackage, source_path: &Path, source_id: SourceFileId, text: &str, diagnostics: &mut Diagnostics,
+) {
+    let source = SourceFile::with_path(source_id, source_path, text.to_string());
+    let Ok(cst) = parse::parse(source) else {
+        return;
+    };
+    let Ok(module) = ast::build(&cst) else {
+        return;
+    };
+
+    for declaration in &module.declarations {
+        validate_stdlib_js_assets_in_declaration(package, source_path, declaration, diagnostics);
+    }
+}
+
+fn validate_stdlib_js_assets_in_declaration(
+    package: &DependencyPackage, source_path: &Path, declaration: &ast::Declaration, diagnostics: &mut Diagnostics,
+) {
+    match declaration {
+        ast::Declaration::ExternalFunction(function) => {
+            let is_javascript = function
+                .body
+                .target
+                .as_ref()
+                .is_some_and(|target| target.text == "javascript");
+            if !is_javascript {
+                return;
+            }
+            let module = crate::shared::unquote(&function.body.module.source);
+            if !module.starts_with("../") {
+                return;
+            }
+            if !module.ends_with(".mjs") {
+                diagnostics.push(
+                    Diagnostic::spanned(
+                        DiagnosticCode::ProjectError,
+                        format!(
+                            "stdlib JS external module `{module}` is not a `.mjs` package asset"
+                        ),
+                        function.body.module.span,
+                        "invalid stdlib JS asset here",
+                    )
+                    .with_note("package-relative JavaScript externals are currently allowed only for `gleam_stdlib` `.mjs` assets"),
+                );
+                return;
+            }
+
+            let Some(parent) = source_path.parent() else {
+                return;
+            };
+            let asset_path = normalize_path(parent.join(&module));
+            let package_root = normalize_path(&package.root);
+            if !asset_path.starts_with(&package_root) {
+                diagnostics.push(
+                    Diagnostic::spanned(
+                        DiagnosticCode::ProjectError,
+                        format!("stdlib JS external module `{module}` escapes the package root"),
+                        function.body.module.span,
+                        "invalid stdlib JS asset here",
+                    )
+                    .with_note("stdlib package assets must resolve inside the loaded `gleam_stdlib` package root"),
+                );
+                return;
+            }
+            if !asset_path.is_file() {
+                diagnostics.push(
+                    Diagnostic::spanned(
+                        DiagnosticCode::ProjectError,
+                        format!("stdlib JS external module `{module}` does not resolve to a package asset"),
+                        function.body.module.span,
+                        "missing stdlib JS asset here",
+                    )
+                    .with_note(format!("expected package asset at {}", asset_path.display())),
+                );
+            }
+        }
+        ast::Declaration::TargetGroup(group) => {
+            for declaration in &group.declarations {
+                validate_stdlib_js_assets_in_declaration(package, source_path, declaration, diagnostics);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn normalize_path(path: impl AsRef<Path>) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.as_ref().components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            _ => normalized.push(component.as_os_str()),
+        }
+    }
+    normalized
 }
 
 fn dependency_root(root: &Path, name: &str, dependency: &DependencyToml) -> Option<PathBuf> {
@@ -592,6 +756,14 @@ mod tests {
                 .collect::<Vec<_>>(),
             SUPPORTED_STDLIB_SOURCE_MODULES,
         );
+        assert_eq!(
+            sources[0]
+                .assets
+                .iter()
+                .map(|asset| asset.relative_path.to_string_lossy().to_string())
+                .collect::<Vec<_>>(),
+            vec!["src/dict.mjs", "src/gleam_stdlib.mjs"],
+        );
     }
 
     #[test]
@@ -675,6 +847,83 @@ mod tests {
             ],
         );
         assert_eq!(package_sources.sources.len(), 19);
+        assert_eq!(
+            package_sources
+                .assets
+                .iter()
+                .map(|asset| asset.relative_path.to_string_lossy().to_string())
+                .collect::<Vec<_>>(),
+            vec!["src/dict.mjs", "src/gleam_stdlib.mjs"],
+        );
+    }
+
+    #[test]
+    fn validates_upstream_stdlib_relative_js_assets() {
+        let root = published_stdlib_fixture_root();
+        let package = DependencyPackage {
+            name: "gleam_stdlib".to_string(),
+            version: Some("1.0.3".to_string()),
+            root,
+            source: DependencySource::Hex,
+        };
+
+        let package_sources = load_package_sources(&package, 0).expect("load stdlib source package");
+
+        assert!(package_sources.sources.iter().any(|source| {
+            source
+                .text
+                .contains(r#"@external(javascript, "../gleam_stdlib.mjs", "to_string")"#)
+        }));
+        assert!(
+            package_sources
+                .sources
+                .iter()
+                .any(|source| { source.text.contains(r#"@external(javascript, "../dict.mjs", "make")"#) })
+        );
+        assert!(package_sources.assets.iter().any(|asset| {
+            asset.relative_path == PathBuf::from("src/gleam_stdlib.mjs")
+                && asset.path == package_sources.package.root.join("src/gleam_stdlib.mjs")
+        }));
+        assert!(package_sources.assets.iter().any(|asset| {
+            asset.relative_path == PathBuf::from("src/dict.mjs")
+                && asset.path == package_sources.package.root.join("src/dict.mjs")
+        }));
+    }
+
+    #[test]
+    fn reports_missing_upstream_stdlib_relative_js_asset() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let root = temp.path().join("gleam_stdlib");
+        write(
+            &root.join("src/gleam/bad.gleam"),
+            r#"@external(javascript, "../missing.mjs", "run")
+pub fn run() -> Int
+"#,
+        );
+        let package = DependencyPackage {
+            name: "gleam_stdlib".to_string(),
+            version: Some("1.0.3".to_string()),
+            root,
+            source: DependencySource::Path,
+        };
+
+        let diagnostics = load_package_sources(&package, 0).expect_err("missing asset should fail");
+
+        assert_eq!(
+            diagnostics[0].message,
+            "stdlib JS external module `../missing.mjs` does not resolve to a package asset"
+        );
+        assert!(diagnostics[0].labels.iter().any(|label| {
+            label.message.as_deref() == Some("missing stdlib JS asset here")
+                && label.span.start == 22
+                && label.span.end == 38
+        }));
+        assert!(
+            diagnostics[0]
+                .notes
+                .iter()
+                .any(|note| note.ends_with("gleam_stdlib/src/missing.mjs"))
+        );
     }
 
     #[test]
@@ -941,6 +1190,18 @@ mod tests {
         assert!(!dump.contains("__stdlib_gleam_float"));
         assert!(!dump.contains("__stdlib_gleam_bool"));
         assert!(!dump.contains("__stdlib_gleam_function"));
+        assert!(
+            lowered
+                .js_externals
+                .iter()
+                .any(|external| { external.module == "../gleam_stdlib.mjs" && external.name == "to_string" })
+        );
+        assert!(
+            lowered
+                .js_externals
+                .iter()
+                .any(|external| { external.module == "../gleam_stdlib.mjs" && external.name == "float_to_string" })
+        );
     }
 
     #[test]
@@ -1140,6 +1401,7 @@ pub fn result_mapped() -> Int {
             package,
             modules: vec![module.clone()],
             sources: vec![package_sources.sources[index].clone()],
+            assets: package_sources.assets,
         }
     }
 
@@ -1167,7 +1429,7 @@ pub fn result_mapped() -> Int {
                 pure_stdlib_module_source(module),
             ));
         }
-        DependencySourcePackage { package, modules: module_infos, sources }
+        DependencySourcePackage { package, modules: module_infos, sources, assets: Vec::new() }
     }
 
     fn pure_stdlib_module_source(module: &str) -> String {

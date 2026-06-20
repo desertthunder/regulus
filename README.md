@@ -29,16 +29,16 @@ that each layer can be tested and explained.
 
 ### At a glance
 
-| Area                            | Status                          |
-| ------------------------------- | ------------------------------- |
-| Single-file Gleam to Wasm       | Supported                       |
-| Type checking                   | Broad subset                    |
-| Managed runtime values          | Partial                         |
-| Standard library                | Selected modules and intrinsics |
-| Whole-project linked output     | Supported subset                |
-| Dependency source loading       | Selected Hex and path packages  |
-| Browser, bundler, and Node.js   | Supported adapter subset        |
-| WASI ABI                        | Incomplete                      |
+| Area                          | Status                          |
+| ----------------------------- | ------------------------------- |
+| Single-file Gleam to Wasm     | Supported                       |
+| Type checking                 | Broad subset                    |
+| Managed runtime values        | Partial                         |
+| Standard library              | Selected modules and intrinsics |
+| Whole-project linked output   | Supported subset                |
+| Dependency source loading     | Selected Hex and path packages  |
+| Browser, bundler, and Node.js | Supported adapter subset        |
+| WASI ABI                      | Incomplete                      |
 
 ### Working today
 

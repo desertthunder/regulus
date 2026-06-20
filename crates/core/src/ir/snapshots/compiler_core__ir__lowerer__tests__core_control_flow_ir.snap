@@ -382,6 +382,7 @@ Module {
             },
         },
     ],
+    js_externals: [],
     exports: [],
     functions: [
         Function {

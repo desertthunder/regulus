@@ -20,12 +20,13 @@ pub fn js_adapter_for_module(wasm_file: &str, module: &ir::Module) -> String {
 fn js_adapter_with_metadata(wasm_file: &str, metadata: Option<&str>) -> String {
     JS_ADAPTER.replace("__WASM_FILE__", wasm_file).replace(
         "__REGULUS_JS_ABI_METADATA__",
-        metadata.unwrap_or("{\"imports\":{},\"exports\":{}}"),
+        metadata.unwrap_or("{\"imports\":{},\"externals\":{},\"exports\":{}}"),
     )
 }
 
 fn js_abi_metadata(module: &ir::Module) -> String {
     let mut imports = Vec::new();
+    let mut externals = Vec::new();
     let mut exports = Vec::new();
 
     for function in &module.functions {
@@ -33,6 +34,15 @@ fn js_abi_metadata(module: &ir::Module) -> String {
             && let Some(shape) = function_shape_json(module, &function.params, &function.return_type, false)
         {
             imports.push(format!("{}:{shape}", json_string(&format!("{import_module}.{name}"))));
+        }
+    }
+
+    for external in &module.js_externals {
+        if let Some(shape) = external_shape_json(module, external) {
+            externals.push(format!(
+                "{}:{shape}",
+                json_string(&format!("{}.{}", external.module, external.name))
+            ));
         }
     }
 
@@ -54,12 +64,24 @@ fn js_abi_metadata(module: &ir::Module) -> String {
     }
 
     imports.sort();
+    externals.sort();
     exports.sort();
     format!(
-        "{{\"imports\":{{{}}},\"exports\":{{{}}}}}",
+        "{{\"imports\":{{{}}},\"externals\":{{{}}},\"exports\":{{{}}}}}",
         imports.join(","),
+        externals.join(","),
         exports.join(",")
     )
+}
+
+fn external_shape_json(module: &ir::Module, external: &ir::JsExternalMetadata) -> Option<String> {
+    let params = external
+        .params
+        .iter()
+        .map(|type_| simple_js_abi_type(module, type_).map(json_string))
+        .collect::<Option<Vec<_>>>()?;
+    let result = return_shape_json(module, &external.return_type, false)?;
+    Some(format!("{{\"params\":[{}],\"result\":{result}}}", params.join(",")))
 }
 
 fn function_shape_json(
@@ -240,4 +262,40 @@ fn json_string(value: &str) -> String {
     }
     out.push('"');
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::source::{SourceFileId, Span};
+
+    #[test]
+    fn js_metadata_preserves_upstream_externals_for_internal_helpers() {
+        let span = Span::new(SourceFileId(1), 0, 3);
+        let module = ir::Module {
+            span,
+            identity: None,
+            imports: Vec::new(),
+            declarations: Vec::new(),
+            type_declarations: Vec::new(),
+            constants: Vec::new(),
+            init: ir::ModuleInit::default(),
+            references: Vec::new(),
+            js_externals: vec![ir::JsExternalMetadata {
+                module: "../gleam_stdlib.mjs".into(),
+                name: "to_string".into(),
+                params: vec![Type::Int],
+                return_type: Type::String,
+                span,
+            }],
+            exports: Vec::new(),
+            functions: Vec::new(),
+            linked_names: Vec::new(),
+        };
+
+        let metadata = js_abi_metadata(&module);
+
+        assert!(metadata.contains(r#""../gleam_stdlib.mjs.to_string":{"params":["Int"],"result":"String"}"#));
+        assert!(metadata.contains(r#""imports":{}"#));
+    }
 }
