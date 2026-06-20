@@ -5,6 +5,35 @@ use crate::shared::unquote;
 use crate::types::{ExternalFunctionInfo, Type};
 use crate::{ast, source::Span};
 
+pub const STDLIB_IO_HOST_MODULE: &str = "__regulus_stdlib_io";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StdlibHostAdapter {
+    pub import_module: &'static str,
+    pub import_name: &'static str,
+}
+
+const STDLIB_HOST_ADAPTERS: &[(&str, &str, StdlibHostAdapter)] = &[
+    (
+        "gleam/io",
+        "print",
+        StdlibHostAdapter { import_module: STDLIB_IO_HOST_MODULE, import_name: "print" },
+    ),
+    (
+        "gleam/io",
+        "println",
+        StdlibHostAdapter { import_module: STDLIB_IO_HOST_MODULE, import_name: "println" },
+    ),
+];
+
+pub fn stdlib_host_adapter(module: &str, member: &str) -> Option<StdlibHostAdapter> {
+    STDLIB_HOST_ADAPTERS
+        .iter()
+        .find_map(|(adapter_module, adapter_member, adapter)| {
+            (*adapter_module == module && *adapter_member == member).then_some(*adapter)
+        })
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AbiPosition {
     Parameter { index: usize },
@@ -174,5 +203,19 @@ fn is_supported_extern_abi_value(type_: &Type, nil_allowed: bool) -> bool {
                 && is_supported_extern_abi_value(return_type, true)
         }
         Type::Int | Type::Float | Type::String | Type::BitArray | Type::Bool => true,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn records_stdlib_host_adapters_in_abi_table() {
+        assert_eq!(
+            stdlib_host_adapter("gleam/io", "println"),
+            Some(StdlibHostAdapter { import_module: STDLIB_IO_HOST_MODULE, import_name: "println" })
+        );
+        assert_eq!(stdlib_host_adapter("gleam/int", "to_string"), None);
     }
 }

@@ -12,7 +12,7 @@ use crate::{
     },
     resolve::{Namespace, ReferenceTarget, SymbolKind},
     source::Span,
-    stdlib,
+    stdlib::StdlibRegistry,
     types::{Type, TypedModule, TypedProject},
 };
 
@@ -478,17 +478,6 @@ pub enum CallBoundary {
     ModuleExport,
     ModuleImport { module: String, name: String },
     HostImport { module: String, name: String },
-}
-
-impl CallBoundary {
-    pub fn stdlib(strategy: stdlib::MemberStrategy, member: &str) -> Self {
-        match strategy {
-            stdlib::MemberStrategy::HostImport => {
-                Self::HostImport { module: stdlib::STDLIB_IO_HOST_MODULE.into(), name: member.into() }
-            }
-            _ => Self::Internal,
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -978,7 +967,7 @@ fn unsupported_dependency_member_diagnostics(project: &TypedProject) -> Diagnost
         .iter()
         .filter_map(|module| module.module_name.as_deref())
         .collect::<HashSet<_>>();
-    let stdlib_modules = stdlib::StdlibRegistry::new()
+    let stdlib_modules = StdlibRegistry::new()
         .modules()
         .map(|module| module.name)
         .collect::<HashSet<_>>();

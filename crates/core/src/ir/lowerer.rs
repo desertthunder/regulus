@@ -1,13 +1,13 @@
 use std::collections::{HashMap, HashSet};
 
 use super::*;
-use crate::abi::{validate_extern_function_abi, validate_external_info_abi};
+use crate::abi::{StdlibHostAdapter, stdlib_host_adapter, validate_extern_function_abi, validate_external_info_abi};
 use crate::ast::{self, Pattern, Statement};
 use crate::diagnostic::{Diagnostic, DiagnosticCode, Diagnostics, Label};
 use crate::labels::{FunctionLabelMap, call_argument_order, function_label_map, use_callback_placement};
 use crate::resolve::ReferenceTarget;
 use crate::shared::unquote;
-use crate::stdlib::{MemberStrategy, StdlibRegistry};
+use crate::stdlib::StdlibRegistry;
 use crate::types::{ConstructorInfo, ExternalFunctionInfo, FieldInfo, InterfaceEntry, TypedModule};
 use bit_slices::{ast_bit_array_literal, bit_array_literal, bit_string_pattern_segments};
 
@@ -606,7 +606,7 @@ impl Lowerer {
             }
             ast::Expression::FieldAccess(field_access) => {
                 if let Some(stdlib_value) = stdlib_call(&self.module.resolved.ast, expression)
-                    && stdlib_value.strategy == MemberStrategy::Intrinsic
+                    && stdlib_value.implementation == Some(StdlibImplementation::RuntimePrimitive)
                     && !matches!(stdlib_value.type_, Type::Function { .. })
                 {
                     let type_ = self
@@ -1208,10 +1208,7 @@ impl Lowerer {
                 return Some(expression);
             }
 
-            if !matches!(
-                stdlib_call.strategy,
-                MemberStrategy::Intrinsic | MemberStrategy::HostImport
-            ) {
+            if stdlib_call.implementation.is_none() {
                 self.diagnostics.push(
                     Diagnostic::new(
                         DiagnosticCode::LoweringError,
@@ -1228,6 +1225,13 @@ impl Lowerer {
             let Type::Function { return_type, .. } = function_type.clone() else {
                 return None;
             };
+            let boundary = match stdlib_call.implementation {
+                Some(StdlibImplementation::RuntimePrimitive) => CallBoundary::Internal,
+                Some(StdlibImplementation::HostAdapter(adapter)) => {
+                    CallBoundary::HostImport { module: adapter.import_module.into(), name: adapter.import_name.into() }
+                }
+                None => return None,
+            };
             let type_ = self.typed_expression_type(call.span).unwrap_or(*return_type);
             return Some(Expression {
                 type_,
@@ -1235,10 +1239,7 @@ impl Lowerer {
                 kind: ExpressionKind::DirectCall(DirectCall {
                     function: stdlib_lowered_name(&stdlib_call.module, &stdlib_call.member),
                     arguments: self.lower_ordered_call_arguments(context, call)?,
-                    abi: call_abi(
-                        &function_type,
-                        CallBoundary::stdlib(stdlib_call.strategy, &stdlib_call.member),
-                    ),
+                    abi: call_abi(&function_type, boundary),
                 }),
             });
         }
@@ -2195,9 +2196,10 @@ impl Lowerer {
                 continue;
             };
             for member in module.members {
-                if member.strategy != MemberStrategy::HostImport
-                    || !used_host_calls.contains(&(module.name.into(), member.name.into()))
-                {
+                let Some(adapter) = stdlib_host_adapter(module.name, member.name) else {
+                    continue;
+                };
+                if !used_host_calls.contains(&(module.name.into(), member.name.into())) {
                     continue;
                 }
                 let Some(type_) = module.interface.functions.get(member.name).cloned() else {
@@ -2223,7 +2225,13 @@ impl Lowerer {
                     params: locals.clone(),
                     locals,
                     return_type: *return_type,
-                    abi: call_abi(&type_, CallBoundary::stdlib(member.strategy, member.name)),
+                    abi: call_abi(
+                        &type_,
+                        CallBoundary::HostImport {
+                            module: adapter.import_module.into(),
+                            name: adapter.import_name.into(),
+                        },
+                    ),
                     body: Block {
                         instructions: Vec::new(),
                         result: Box::new(self.nil_expression(import.span)),
@@ -2307,8 +2315,14 @@ fn collect_external_import(declaration: &ast::Declaration, imports: &mut HashMap
 struct StdlibCall {
     module: String,
     member: String,
-    strategy: MemberStrategy,
+    implementation: Option<StdlibImplementation>,
     type_: Type,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StdlibImplementation {
+    RuntimePrimitive,
+    HostAdapter(StdlibHostAdapter),
 }
 
 fn stdlib_call(module: &ast::Module, function: &ast::Expression) -> Option<StdlibCall> {
@@ -2337,9 +2351,16 @@ fn stdlib_call(module: &ast::Module, function: &ast::Expression) -> Option<Stdli
         _ => return None,
     };
     let module = registry.module(&module_name)?;
-    let strategy = registry.member_strategy(&module_name, &member_name)?;
     let type_ = module.interface.functions.get(&member_name)?.clone();
-    Some(StdlibCall { module: module_name, member: member_name, strategy, type_ })
+    let implementation = stdlib_member_implementation(&module_name, &member_name);
+    Some(StdlibCall { module: module_name, member: member_name, implementation, type_ })
+}
+
+fn stdlib_member_implementation(module: &str, member: &str) -> Option<StdlibImplementation> {
+    if crate::runtime::stdlib_runtime_primitive(module, member).is_some() {
+        return Some(StdlibImplementation::RuntimePrimitive);
+    }
+    stdlib_host_adapter(module, member).map(StdlibImplementation::HostAdapter)
 }
 
 fn stdlib_lowered_name(module: &str, member: &str) -> String {
@@ -2491,7 +2512,7 @@ fn collect_stdlib_host_calls_in_expression(
 ) {
     if let ast::Expression::Call(call) = expression
         && let Some(stdlib_call) = stdlib_call(module, &call.function)
-        && stdlib_call.strategy == MemberStrategy::HostImport
+        && matches!(stdlib_call.implementation, Some(StdlibImplementation::HostAdapter(_)))
     {
         calls.insert((stdlib_call.module, stdlib_call.member));
     }

@@ -1,6 +1,82 @@
 use crate::ClosureConstants;
 use crate::wasm::{RuntimeHelperFragment, fragments, runtime_helper_fragments_from_block};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StdlibRuntimePrimitive {
+    pub module: &'static str,
+    pub member: &'static str,
+}
+
+const STDLIB_RUNTIME_PRIMITIVES: &[StdlibRuntimePrimitive] = &[
+    primitive("gleam/bit_array", "append"),
+    primitive("gleam/bit_array", "bit_size"),
+    primitive("gleam/bit_array", "byte_size"),
+    primitive("gleam/bit_array", "concat"),
+    primitive("gleam/bit_array", "is_empty"),
+    primitive("gleam/bit_array", "starts_with"),
+    primitive("gleam/bool", "compare"),
+    primitive("gleam/bool", "negate"),
+    primitive("gleam/bool", "to_string"),
+    primitive("gleam/dict", "delete"),
+    primitive("gleam/dict", "get"),
+    primitive("gleam/dict", "has_key"),
+    primitive("gleam/dict", "insert"),
+    primitive("gleam/dict", "is_empty"),
+    primitive("gleam/dict", "new"),
+    primitive("gleam/dict", "size"),
+    primitive("gleam/dynamic", "array"),
+    primitive("gleam/dynamic", "bit_array"),
+    primitive("gleam/dynamic", "bool"),
+    primitive("gleam/dynamic", "classify"),
+    primitive("gleam/dynamic", "float"),
+    primitive("gleam/dynamic", "int"),
+    primitive("gleam/dynamic", "list"),
+    primitive("gleam/dynamic", "nil"),
+    primitive("gleam/dynamic", "properties"),
+    primitive("gleam/dynamic", "string"),
+    primitive("gleam/dynamic/decode", "bit_array"),
+    primitive("gleam/dynamic/decode", "bool"),
+    primitive("gleam/dynamic/decode", "dynamic"),
+    primitive("gleam/dynamic/decode", "float"),
+    primitive("gleam/dynamic/decode", "int"),
+    primitive("gleam/dynamic/decode", "list"),
+    primitive("gleam/dynamic/decode", "optional"),
+    primitive("gleam/dynamic/decode", "run"),
+    primitive("gleam/dynamic/decode", "string"),
+    primitive("gleam/float", "compare"),
+    primitive("gleam/float", "max"),
+    primitive("gleam/float", "min"),
+    primitive("gleam/float", "negate"),
+    primitive("gleam/float", "to_string"),
+    primitive("gleam/function", "compose"),
+    primitive("gleam/function", "constant"),
+    primitive("gleam/function", "flip"),
+    primitive("gleam/function", "identity"),
+    primitive("gleam/int", "to_string"),
+    primitive("gleam/io", "debug"),
+    primitive("gleam/list", "fold"),
+    primitive("gleam/list", "length"),
+    primitive("gleam/list", "map"),
+    primitive("gleam/list", "reverse"),
+    primitive("gleam/option", "map"),
+    primitive("gleam/result", "map"),
+    primitive("gleam/string", "append"),
+    primitive("gleam/string", "concat"),
+    primitive("gleam/string", "is_empty"),
+    primitive("gleam/string", "length"),
+];
+
+const fn primitive(module: &'static str, member: &'static str) -> StdlibRuntimePrimitive {
+    StdlibRuntimePrimitive { module, member }
+}
+
+pub fn stdlib_runtime_primitive(module: &str, member: &str) -> Option<StdlibRuntimePrimitive> {
+    STDLIB_RUNTIME_PRIMITIVES
+        .iter()
+        .copied()
+        .find(|primitive| primitive.module == module && primitive.member == member)
+}
+
 pub const WASM_PAGE_SIZE: u32 = 65_536;
 pub const DEFAULT_MEMORY_MAX_PAGES: u32 = 256;
 
@@ -509,6 +585,19 @@ fn bit_array_set_bit(data: &mut [u8], index: u32, bit: u8) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn records_stdlib_runtime_primitives_in_runtime_table() {
+        assert_eq!(
+            stdlib_runtime_primitive("gleam/int", "to_string"),
+            Some(StdlibRuntimePrimitive { module: "gleam/int", member: "to_string" })
+        );
+        assert_eq!(
+            stdlib_runtime_primitive("gleam/list", "map"),
+            Some(StdlibRuntimePrimitive { module: "gleam/list", member: "map" })
+        );
+        assert_eq!(stdlib_runtime_primitive("gleam/io", "println"), None);
+    }
 
     #[test]
     fn converts_object_tags_to_and_from_u32() {

@@ -75,7 +75,7 @@ Retained registry entries record their blocker group and deletion condition in
 - [x] Mark every registry entry as temporary interface, upstream source,
       package asset, runtime primitive, or target host adapter.
 - [x] Record the deletion condition for every temporary entry.
-- [ ] Move compiler-owned primitives out of the stdlib registry and into
+- [x] Move compiler-owned primitives out of the stdlib registry and into
       normal runtime, external, or ABI tables.
 - [ ] Reject adding new registry behavior unless it has a removal condition.
 

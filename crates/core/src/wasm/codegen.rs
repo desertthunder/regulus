@@ -12,7 +12,7 @@ use crate::ast::LiteralKind;
 use crate::diagnostic::{Diagnostic, DiagnosticCode, Diagnostics, Label};
 use crate::ir::{self, ExpressionKind};
 use crate::source::Span;
-use crate::{ClosureConstants, runtime, stdlib::STDLIB_IO_HOST_MODULE, types::Type};
+use crate::{ClosureConstants, abi::STDLIB_IO_HOST_MODULE, runtime, types::Type};
 
 #[derive(Debug, Clone, Copy)]
 enum JsAbiBoundary<'a> {

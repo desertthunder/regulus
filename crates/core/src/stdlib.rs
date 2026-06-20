@@ -3,22 +3,11 @@ use std::collections::HashMap;
 use crate::source::{SourceFileId, Span};
 use crate::types::{ConstructorInfo, FieldInfo, ModuleInterface, Type, TypeDeclaration};
 
-pub const STDLIB_IO_HOST_MODULE: &str = "__regulus_stdlib_io";
-
 const STDLIB_SPAN: Span = Span { file_id: SourceFileId(u32::MAX), start: 0, end: 0 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModuleStrategy {
     Hybrid,
-    PreferCompiledSource,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MemberStrategy {
-    Intrinsic,
-    HostImport,
-    ManagedConstructor,
-    InterfaceOnly,
     PreferCompiledSource,
 }
 
@@ -51,7 +40,6 @@ pub struct RegistryRetention {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StdlibMember {
     pub name: &'static str,
-    pub strategy: MemberStrategy,
     pub retention: RegistryRetention,
 }
 
@@ -87,12 +75,12 @@ impl StdlibRegistry {
         self.module(name).map(|module| &module.interface)
     }
 
-    pub fn member_strategy(&self, module: &str, member: &str) -> Option<MemberStrategy> {
+    pub fn member_retention(&self, module: &str, member: &str) -> Option<RegistryRetention> {
         self.module(module)?
             .members
             .iter()
             .find(|entry| entry.name == member)
-            .map(|entry| entry.strategy)
+            .map(|entry| entry.retention)
     }
 
     pub fn modules(&self) -> impl Iterator<Item = &StdlibModule> {
@@ -136,13 +124,13 @@ impl StdlibModule {
             ModuleStrategy::Hybrid,
             module_retention(RetentionGap::HostAbi),
             &[
-                function("println", vec![Type::String], Type::Nil, MemberStrategy::HostImport),
-                function("print", vec![Type::String], Type::Nil, MemberStrategy::HostImport),
+                function("println", vec![Type::String], Type::Nil, host_adapter_retention()),
+                function("print", vec![Type::String], Type::Nil, host_adapter_retention()),
                 function(
                     "debug",
                     vec![Type::generic("a")],
                     Type::generic("a"),
-                    MemberStrategy::Intrinsic,
+                    runtime_primitive_retention(),
                 ),
             ],
             &[],
@@ -155,12 +143,17 @@ impl StdlibModule {
             ModuleStrategy::Hybrid,
             module_retention(RetentionGap::PackageMetadata),
             &[
-                function("to_string", vec![Type::Int], Type::String, MemberStrategy::Intrinsic),
+                function(
+                    "to_string",
+                    vec![Type::Int],
+                    Type::String,
+                    runtime_primitive_retention(),
+                ),
                 function(
                     "parse",
                     vec![Type::String],
                     result(Type::Int, Type::Nil),
-                    MemberStrategy::InterfaceOnly,
+                    temporary_interface_retention(),
                 ),
             ],
             &[],
@@ -177,16 +170,21 @@ impl StdlibModule {
                     "append",
                     vec![Type::String, Type::String],
                     Type::String,
-                    MemberStrategy::Intrinsic,
+                    runtime_primitive_retention(),
                 ),
                 function(
                     "concat",
                     vec![Type::List(Box::new(Type::String))],
                     Type::String,
-                    MemberStrategy::Intrinsic,
+                    runtime_primitive_retention(),
                 ),
-                function("length", vec![Type::String], Type::Int, MemberStrategy::Intrinsic),
-                function("is_empty", vec![Type::String], Type::Bool, MemberStrategy::Intrinsic),
+                function("length", vec![Type::String], Type::Int, runtime_primitive_retention()),
+                function(
+                    "is_empty",
+                    vec![Type::String],
+                    Type::Bool,
+                    runtime_primitive_retention(),
+                ),
             ],
             &[],
         )
@@ -202,13 +200,13 @@ impl StdlibModule {
                     "length",
                     vec![Type::List(Box::new(Type::generic("a")))],
                     Type::Int,
-                    MemberStrategy::Intrinsic,
+                    runtime_primitive_retention(),
                 ),
                 function(
                     "reverse",
                     vec![Type::List(Box::new(Type::generic("a")))],
                     list(Type::generic("a")),
-                    MemberStrategy::Intrinsic,
+                    runtime_primitive_retention(),
                 ),
                 function(
                     "map",
@@ -217,7 +215,7 @@ impl StdlibModule {
                         fn_type(vec![Type::generic("a")], Type::generic("b")),
                     ],
                     list(Type::generic("b")),
-                    MemberStrategy::Intrinsic,
+                    runtime_primitive_retention(),
                 ),
                 function(
                     "fold",
@@ -227,7 +225,7 @@ impl StdlibModule {
                         fn_type(vec![Type::generic("b"), Type::generic("a")], Type::generic("b")),
                     ],
                     Type::generic("b"),
-                    MemberStrategy::Intrinsic,
+                    runtime_primitive_retention(),
                 ),
             ],
             &[],
@@ -266,7 +264,7 @@ impl StdlibModule {
                         fn_type(vec![Type::generic("a")], Type::generic("b")),
                     ],
                     result(Type::generic("b"), Type::generic("e")),
-                    MemberStrategy::Intrinsic,
+                    runtime_primitive_retention(),
                 ),
             ],
             &[result_type],
@@ -301,7 +299,7 @@ impl StdlibModule {
                         fn_type(vec![Type::generic("a")], Type::generic("b")),
                     ],
                     option(Type::generic("b")),
-                    MemberStrategy::Intrinsic,
+                    runtime_primitive_retention(),
                 ),
             ],
             &[option_type],
@@ -342,22 +340,37 @@ impl StdlibModule {
                     "append",
                     vec![Type::BitArray, Type::BitArray],
                     Type::BitArray,
-                    MemberStrategy::Intrinsic,
+                    runtime_primitive_retention(),
                 ),
                 function(
                     "concat",
                     vec![Type::List(Box::new(Type::BitArray))],
                     Type::BitArray,
-                    MemberStrategy::Intrinsic,
+                    runtime_primitive_retention(),
                 ),
-                function("bit_size", vec![Type::BitArray], Type::Int, MemberStrategy::Intrinsic),
-                function("byte_size", vec![Type::BitArray], Type::Int, MemberStrategy::Intrinsic),
-                function("is_empty", vec![Type::BitArray], Type::Bool, MemberStrategy::Intrinsic),
+                function(
+                    "bit_size",
+                    vec![Type::BitArray],
+                    Type::Int,
+                    runtime_primitive_retention(),
+                ),
+                function(
+                    "byte_size",
+                    vec![Type::BitArray],
+                    Type::Int,
+                    runtime_primitive_retention(),
+                ),
+                function(
+                    "is_empty",
+                    vec![Type::BitArray],
+                    Type::Bool,
+                    runtime_primitive_retention(),
+                ),
                 function(
                     "starts_with",
                     vec![Type::BitArray, Type::BitArray],
                     Type::Bool,
-                    MemberStrategy::Intrinsic,
+                    runtime_primitive_retention(),
                 ),
             ],
             &[],
@@ -370,13 +383,18 @@ impl StdlibModule {
             ModuleStrategy::Hybrid,
             module_retention(RetentionGap::SourceLanguageFeature),
             &[
-                function("to_string", vec![Type::Bool], Type::String, MemberStrategy::Intrinsic),
-                function("negate", vec![Type::Bool], Type::Bool, MemberStrategy::Intrinsic),
+                function(
+                    "to_string",
+                    vec![Type::Bool],
+                    Type::String,
+                    runtime_primitive_retention(),
+                ),
+                function("negate", vec![Type::Bool], Type::Bool, runtime_primitive_retention()),
                 function(
                     "compare",
                     vec![Type::Bool, Type::Bool],
                     Type::custom("Order", vec![]),
-                    MemberStrategy::Intrinsic,
+                    runtime_primitive_retention(),
                 ),
             ],
             &[],
@@ -391,32 +409,37 @@ impl StdlibModule {
             ModuleStrategy::Hybrid,
             module_retention(RetentionGap::PackageMetadata),
             &[
-                function("new", vec![], dict_kv.clone(), MemberStrategy::Intrinsic),
-                function("size", vec![dict_kv.clone()], Type::Int, MemberStrategy::Intrinsic),
-                function("is_empty", vec![dict_kv.clone()], Type::Bool, MemberStrategy::Intrinsic),
+                function("new", vec![], dict_kv.clone(), runtime_primitive_retention()),
+                function("size", vec![dict_kv.clone()], Type::Int, runtime_primitive_retention()),
+                function(
+                    "is_empty",
+                    vec![dict_kv.clone()],
+                    Type::Bool,
+                    runtime_primitive_retention(),
+                ),
                 function(
                     "insert",
                     vec![dict_kv.clone(), Type::generic("k"), Type::generic("v")],
                     dict_kv.clone(),
-                    MemberStrategy::Intrinsic,
+                    runtime_primitive_retention(),
                 ),
                 function(
                     "get",
                     vec![dict_kv.clone(), Type::generic("k")],
                     option(Type::generic("v")),
-                    MemberStrategy::Intrinsic,
+                    runtime_primitive_retention(),
                 ),
                 function(
                     "has_key",
                     vec![dict_kv.clone(), Type::generic("k")],
                     Type::Bool,
-                    MemberStrategy::Intrinsic,
+                    runtime_primitive_retention(),
                 ),
                 function(
                     "delete",
                     vec![dict_kv.clone(), Type::generic("k")],
                     dict_kv,
-                    MemberStrategy::Intrinsic,
+                    runtime_primitive_retention(),
                 ),
             ],
             &[dict_type],
@@ -430,21 +453,26 @@ impl StdlibModule {
             ModuleStrategy::Hybrid,
             module_retention(RetentionGap::PackageAsset),
             &[
-                function("array", vec![list(dynamic())], dynamic(), MemberStrategy::Intrinsic),
-                function("bit_array", vec![Type::BitArray], dynamic(), MemberStrategy::Intrinsic),
-                function("bool", vec![Type::Bool], dynamic(), MemberStrategy::Intrinsic),
-                function("classify", vec![dynamic()], Type::String, MemberStrategy::Intrinsic),
-                function("float", vec![Type::Float], dynamic(), MemberStrategy::Intrinsic),
-                function("int", vec![Type::Int], dynamic(), MemberStrategy::Intrinsic),
-                function("list", vec![list(dynamic())], dynamic(), MemberStrategy::Intrinsic),
-                function("nil", vec![], dynamic(), MemberStrategy::Intrinsic),
+                function("array", vec![list(dynamic())], dynamic(), runtime_primitive_retention()),
+                function(
+                    "bit_array",
+                    vec![Type::BitArray],
+                    dynamic(),
+                    runtime_primitive_retention(),
+                ),
+                function("bool", vec![Type::Bool], dynamic(), runtime_primitive_retention()),
+                function("classify", vec![dynamic()], Type::String, runtime_primitive_retention()),
+                function("float", vec![Type::Float], dynamic(), runtime_primitive_retention()),
+                function("int", vec![Type::Int], dynamic(), runtime_primitive_retention()),
+                function("list", vec![list(dynamic())], dynamic(), runtime_primitive_retention()),
+                function("nil", vec![], dynamic(), runtime_primitive_retention()),
                 function(
                     "properties",
                     vec![list(Type::Tuple(vec![dynamic(), dynamic()]))],
                     dynamic(),
-                    MemberStrategy::Intrinsic,
+                    runtime_primitive_retention(),
                 ),
-                function("string", vec![Type::String], dynamic(), MemberStrategy::Intrinsic),
+                function("string", vec![Type::String], dynamic(), runtime_primitive_retention()),
             ],
             &[dynamic_type],
         )
@@ -471,41 +499,41 @@ impl StdlibModule {
             ModuleStrategy::Hybrid,
             module_retention(RetentionGap::PackageMetadata),
             &[
-                value("bit_array", decoder(Type::BitArray), MemberStrategy::Intrinsic),
-                value("bool", decoder(Type::Bool), MemberStrategy::Intrinsic),
-                value("dynamic", decoder(dynamic()), MemberStrategy::Intrinsic),
-                value("float", decoder(Type::Float), MemberStrategy::Intrinsic),
-                value("int", decoder(Type::Int), MemberStrategy::Intrinsic),
-                value("string", decoder(Type::String), MemberStrategy::Intrinsic),
+                value("bit_array", decoder(Type::BitArray), runtime_primitive_retention()),
+                value("bool", decoder(Type::Bool), runtime_primitive_retention()),
+                value("dynamic", decoder(dynamic()), runtime_primitive_retention()),
+                value("float", decoder(Type::Float), runtime_primitive_retention()),
+                value("int", decoder(Type::Int), runtime_primitive_retention()),
+                value("string", decoder(Type::String), runtime_primitive_retention()),
                 function(
                     "run",
                     vec![dynamic(), decoder(Type::generic("t"))],
                     result(Type::generic("t"), list(decode_error())),
-                    MemberStrategy::Intrinsic,
+                    runtime_primitive_retention(),
                 ),
                 function(
                     "list",
                     vec![decoder(Type::generic("a"))],
                     decoder(list(Type::generic("a"))),
-                    MemberStrategy::Intrinsic,
+                    runtime_primitive_retention(),
                 ),
                 function(
                     "optional",
                     vec![decoder(Type::generic("a"))],
                     decoder(option(Type::generic("a"))),
-                    MemberStrategy::Intrinsic,
+                    runtime_primitive_retention(),
                 ),
                 function(
                     "dict",
                     vec![decoder(Type::generic("k")), decoder(Type::generic("v"))],
                     decoder(dict(Type::generic("k"), Type::generic("v"))),
-                    MemberStrategy::InterfaceOnly,
+                    temporary_interface_retention(),
                 ),
                 function(
                     "at",
                     vec![list(Type::generic("segment")), decoder(Type::generic("a"))],
                     decoder(Type::generic("a")),
-                    MemberStrategy::InterfaceOnly,
+                    temporary_interface_retention(),
                 ),
                 function(
                     "optionally_at",
@@ -515,7 +543,7 @@ impl StdlibModule {
                         decoder(Type::generic("a")),
                     ],
                     decoder(Type::generic("a")),
-                    MemberStrategy::InterfaceOnly,
+                    temporary_interface_retention(),
                 ),
                 function(
                     "field",
@@ -525,7 +553,7 @@ impl StdlibModule {
                         fn_type(vec![Type::generic("t")], decoder(Type::generic("final"))),
                     ],
                     decoder(Type::generic("final")),
-                    MemberStrategy::InterfaceOnly,
+                    temporary_interface_retention(),
                 ),
                 function(
                     "optional_field",
@@ -536,7 +564,7 @@ impl StdlibModule {
                         fn_type(vec![Type::generic("t")], decoder(Type::generic("final"))),
                     ],
                     decoder(Type::generic("final")),
-                    MemberStrategy::InterfaceOnly,
+                    temporary_interface_retention(),
                 ),
                 function(
                     "subfield",
@@ -546,19 +574,19 @@ impl StdlibModule {
                         fn_type(vec![Type::generic("t")], decoder(Type::generic("final"))),
                     ],
                     decoder(Type::generic("final")),
-                    MemberStrategy::InterfaceOnly,
+                    temporary_interface_retention(),
                 ),
                 function(
                     "success",
                     vec![Type::generic("t")],
                     decoder(Type::generic("t")),
-                    MemberStrategy::InterfaceOnly,
+                    temporary_interface_retention(),
                 ),
                 function(
                     "failure",
                     vec![Type::generic("a"), Type::String],
                     decoder(Type::generic("a")),
-                    MemberStrategy::InterfaceOnly,
+                    temporary_interface_retention(),
                 ),
                 function(
                     "map",
@@ -567,7 +595,7 @@ impl StdlibModule {
                         fn_type(vec![Type::generic("a")], Type::generic("b")),
                     ],
                     decoder(Type::generic("b")),
-                    MemberStrategy::InterfaceOnly,
+                    temporary_interface_retention(),
                 ),
                 function(
                     "then",
@@ -576,19 +604,19 @@ impl StdlibModule {
                         fn_type(vec![Type::generic("a")], decoder(Type::generic("b"))),
                     ],
                     decoder(Type::generic("b")),
-                    MemberStrategy::InterfaceOnly,
+                    temporary_interface_retention(),
                 ),
                 function(
                     "one_of",
                     vec![decoder(Type::generic("a")), list(decoder(Type::generic("a")))],
                     decoder(Type::generic("a")),
-                    MemberStrategy::InterfaceOnly,
+                    temporary_interface_retention(),
                 ),
                 function(
                     "collapse_errors",
                     vec![decoder(Type::generic("a")), Type::String],
                     decoder(Type::generic("a")),
-                    MemberStrategy::InterfaceOnly,
+                    temporary_interface_retention(),
                 ),
                 function(
                     "map_errors",
@@ -597,13 +625,13 @@ impl StdlibModule {
                         fn_type(vec![list(decode_error())], list(decode_error())),
                     ],
                     decoder(Type::generic("a")),
-                    MemberStrategy::InterfaceOnly,
+                    temporary_interface_retention(),
                 ),
                 function(
                     "recursive",
                     vec![fn_type(vec![], decoder(Type::generic("a")))],
                     decoder(Type::generic("a")),
-                    MemberStrategy::InterfaceOnly,
+                    temporary_interface_retention(),
                 ),
                 function(
                     "new_primitive_decoder",
@@ -612,13 +640,13 @@ impl StdlibModule {
                         fn_type(vec![dynamic()], result(Type::generic("t"), Type::generic("t"))),
                     ],
                     decoder(Type::generic("t")),
-                    MemberStrategy::InterfaceOnly,
+                    temporary_interface_retention(),
                 ),
                 function(
                     "decode_error",
                     vec![Type::String, dynamic()],
                     list(decode_error()),
-                    MemberStrategy::InterfaceOnly,
+                    temporary_interface_retention(),
                 ),
             ],
             &[decoder_type, decode_error_type],
@@ -635,22 +663,27 @@ impl StdlibModule {
                     "compare",
                     vec![Type::Float, Type::Float],
                     Type::custom("Order", vec![]),
-                    MemberStrategy::Intrinsic,
+                    runtime_primitive_retention(),
                 ),
-                function("to_string", vec![Type::Float], Type::String, MemberStrategy::Intrinsic),
+                function(
+                    "to_string",
+                    vec![Type::Float],
+                    Type::String,
+                    runtime_primitive_retention(),
+                ),
                 function(
                     "max",
                     vec![Type::Float, Type::Float],
                     Type::Float,
-                    MemberStrategy::Intrinsic,
+                    runtime_primitive_retention(),
                 ),
                 function(
                     "min",
                     vec![Type::Float, Type::Float],
                     Type::Float,
-                    MemberStrategy::Intrinsic,
+                    runtime_primitive_retention(),
                 ),
-                function("negate", vec![Type::Float], Type::Float, MemberStrategy::Intrinsic),
+                function("negate", vec![Type::Float], Type::Float, runtime_primitive_retention()),
             ],
             &[],
         )
@@ -666,13 +699,13 @@ impl StdlibModule {
                     "identity",
                     vec![Type::generic("a")],
                     Type::generic("a"),
-                    MemberStrategy::Intrinsic,
+                    runtime_primitive_retention(),
                 ),
                 function(
                     "constant",
                     vec![Type::generic("a"), Type::generic("b")],
                     Type::generic("a"),
-                    MemberStrategy::Intrinsic,
+                    runtime_primitive_retention(),
                 ),
                 function(
                     "compose",
@@ -681,7 +714,7 @@ impl StdlibModule {
                         fn_type(vec![Type::generic("a")], Type::generic("b")),
                     ],
                     fn_type(vec![Type::generic("a")], Type::generic("c")),
-                    MemberStrategy::Intrinsic,
+                    runtime_primitive_retention(),
                 ),
                 function(
                     "flip",
@@ -690,7 +723,7 @@ impl StdlibModule {
                         Type::generic("c"),
                     )],
                     fn_type(vec![Type::generic("b"), Type::generic("a")], Type::generic("c")),
-                    MemberStrategy::Intrinsic,
+                    runtime_primitive_retention(),
                 ),
             ],
             &[],
@@ -719,11 +752,7 @@ impl StdlibModule {
         let mut member_entries = Vec::new();
 
         for member in members {
-            member_entries.push(StdlibMember {
-                name: member.name,
-                strategy: member.strategy,
-                retention: member.retention,
-            });
+            member_entries.push(StdlibMember { name: member.name, retention: member.retention });
             if let Some(type_) = &member.type_ {
                 interface.functions.insert(member.name.into(), type_.clone());
             }
@@ -745,31 +774,22 @@ impl StdlibModule {
 #[derive(Debug, Clone)]
 struct StdlibMemberSpec {
     name: &'static str,
-    strategy: MemberStrategy,
     retention: RegistryRetention,
     type_: Option<Type>,
 }
 
-fn function(name: &'static str, params: Vec<Type>, return_type: Type, strategy: MemberStrategy) -> StdlibMemberSpec {
-    StdlibMemberSpec {
-        name,
-        strategy,
-        retention: member_retention(strategy),
-        type_: Some(fn_type(params, return_type)),
-    }
+fn function(
+    name: &'static str, params: Vec<Type>, return_type: Type, retention: RegistryRetention,
+) -> StdlibMemberSpec {
+    StdlibMemberSpec { name, retention, type_: Some(fn_type(params, return_type)) }
 }
 
-fn value(name: &'static str, type_: Type, strategy: MemberStrategy) -> StdlibMemberSpec {
-    StdlibMemberSpec { name, strategy, retention: member_retention(strategy), type_: Some(type_) }
+fn value(name: &'static str, type_: Type, retention: RegistryRetention) -> StdlibMemberSpec {
+    StdlibMemberSpec { name, retention, type_: Some(type_) }
 }
 
 fn constructor_member(name: &'static str) -> StdlibMemberSpec {
-    StdlibMemberSpec {
-        name,
-        strategy: MemberStrategy::ManagedConstructor,
-        retention: member_retention(MemberStrategy::ManagedConstructor),
-        type_: None,
-    }
+    StdlibMemberSpec { name, retention: constructor_interface_retention(), type_: None }
 }
 
 fn module_retention(gap: RetentionGap) -> RegistryRetention {
@@ -788,33 +808,35 @@ fn module_retention(gap: RetentionGap) -> RegistryRetention {
     }
 }
 
-fn member_retention(strategy: MemberStrategy) -> RegistryRetention {
-    match strategy {
-        MemberStrategy::Intrinsic => RegistryRetention {
-            category: RetentionCategory::RuntimePrimitive,
-            gap: RetentionGap::RuntimePrimitive,
-            deletion_condition: "move this primitive out of the stdlib registry or replace the library behavior with compiled upstream source",
-        },
-        MemberStrategy::HostImport => RegistryRetention {
-            category: RetentionCategory::TargetHostAdapter,
-            gap: RetentionGap::HostAbi,
-            deletion_condition: "move this host adapter out of the stdlib registry and into target ABI tables",
-        },
-        MemberStrategy::ManagedConstructor => RegistryRetention {
-            category: RetentionCategory::RuntimePrimitive,
-            gap: RetentionGap::RuntimePrimitive,
-            deletion_condition: "delete this constructor entry when custom type constructors come from package source or prelude metadata",
-        },
-        MemberStrategy::InterfaceOnly => RegistryRetention {
-            category: RetentionCategory::TemporaryInterface,
-            gap: RetentionGap::PackageMetadata,
-            deletion_condition: "delete this interface-only entry when upstream source or package metadata provides the interface",
-        },
-        MemberStrategy::PreferCompiledSource => RegistryRetention {
-            category: RetentionCategory::UpstreamSource,
-            gap: RetentionGap::SourceLanguageFeature,
-            deletion_condition: "delete this entry when the upstream member compiles from package source",
-        },
+fn runtime_primitive_retention() -> RegistryRetention {
+    RegistryRetention {
+        category: RetentionCategory::RuntimePrimitive,
+        gap: RetentionGap::RuntimePrimitive,
+        deletion_condition: "move this primitive out of the stdlib registry or replace the library behavior with compiled upstream source",
+    }
+}
+
+fn host_adapter_retention() -> RegistryRetention {
+    RegistryRetention {
+        category: RetentionCategory::TargetHostAdapter,
+        gap: RetentionGap::HostAbi,
+        deletion_condition: "move this host adapter out of the stdlib registry and into target ABI tables",
+    }
+}
+
+fn constructor_interface_retention() -> RegistryRetention {
+    RegistryRetention {
+        category: RetentionCategory::TemporaryInterface,
+        gap: RetentionGap::PackageMetadata,
+        deletion_condition: "delete this constructor entry when custom type constructors come from package source or prelude metadata",
+    }
+}
+
+fn temporary_interface_retention() -> RegistryRetention {
+    RegistryRetention {
+        category: RetentionCategory::TemporaryInterface,
+        gap: RetentionGap::PackageMetadata,
+        deletion_condition: "delete this interface-only entry when upstream source or package metadata provides the interface",
     }
 }
 
@@ -869,20 +891,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn registers_initial_modules_and_member_strategies() {
+    fn registers_initial_modules_and_member_retention() {
         let registry = StdlibRegistry::new();
 
         assert_eq!(
-            registry.member_strategy("gleam/io", "println"),
-            Some(MemberStrategy::HostImport),
+            registry.member_retention("gleam/io", "println"),
+            Some(host_adapter_retention()),
         );
         assert_eq!(
-            registry.member_strategy("gleam/int", "to_string"),
-            Some(MemberStrategy::Intrinsic),
+            registry.member_retention("gleam/int", "to_string"),
+            Some(runtime_primitive_retention()),
         );
         assert_eq!(
-            registry.member_strategy("gleam/result", "Ok"),
-            Some(MemberStrategy::ManagedConstructor),
+            registry.member_retention("gleam/result", "Ok"),
+            Some(constructor_interface_retention()),
         );
     }
 
@@ -947,9 +969,9 @@ mod tests {
         assert_eq!(io.retention.gap, RetentionGap::HostAbi);
         assert_eq!(
             registry
-                .member_strategy("gleam/io", "println")
-                .expect("println strategy"),
-            MemberStrategy::HostImport
+                .member_retention("gleam/io", "println")
+                .expect("println retention"),
+            host_adapter_retention()
         );
     }
 }
