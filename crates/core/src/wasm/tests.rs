@@ -60,6 +60,7 @@ fn ir_module(functions: Vec<ir::Function>, span: Span) -> ir::Module {
         js_externals: Vec::new(),
         exports: Vec::new(),
         functions,
+        dependency_specializations: Vec::new(),
         linked_names: Vec::new(),
     }
 }

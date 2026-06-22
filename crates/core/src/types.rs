@@ -2486,6 +2486,14 @@ impl Type {
         Self::Generic(name.into())
     }
 
+    pub fn substitutions_to(&self, actual: &Type) -> HashMap<String, Type> {
+        substitutions_for(self, actual)
+    }
+
+    pub fn substitute(&self, substitutions: &HashMap<String, Type>) -> Type {
+        substitute_type(self, substitutions)
+    }
+
     fn substitute_from(&self, actual: &Type) -> Type {
         let substitutions = substitutions_for(self, actual);
         substitute_type(self, &substitutions)
@@ -2665,12 +2673,38 @@ fn collect_substitutions(expected: &Type, actual: &Type, substitutions: &mut Has
             }
         }
         (Type::List(expected), Type::List(actual)) => collect_substitutions(expected, actual, substitutions),
+        (
+            Type::Record { name: expected_name, fields: expected },
+            Type::Record { name: actual_name, fields: actual },
+        ) if expected_name == actual_name => {
+            for expected in expected {
+                if let Some(actual) = actual.iter().find(|field| field.name == expected.name) {
+                    collect_substitutions(&expected.type_, &actual.type_, substitutions);
+                }
+            }
+        }
         (Type::Custom { name: expected_name, args: expected }, Type::Custom { name: actual_name, args: actual })
             if expected_name == actual_name =>
         {
             for (expected, actual) in expected.iter().zip(actual.iter()) {
                 collect_substitutions(expected, actual, substitutions);
             }
+        }
+        (Type::Opaque { name: expected_name, args: expected }, Type::Opaque { name: actual_name, args: actual })
+            if expected_name == actual_name =>
+        {
+            for (expected, actual) in expected.iter().zip(actual.iter()) {
+                collect_substitutions(expected, actual, substitutions);
+            }
+        }
+        (
+            Type::Function { params: expected_params, return_type: expected_return },
+            Type::Function { params: actual_params, return_type: actual_return },
+        ) => {
+            for (expected, actual) in expected_params.iter().zip(actual_params.iter()) {
+                collect_substitutions(expected, actual, substitutions);
+            }
+            collect_substitutions(expected_return, actual_return, substitutions);
         }
         _ => {}
     }
@@ -2681,6 +2715,13 @@ fn substitute_type(type_: &Type, substitutions: &HashMap<String, Type>) -> Type 
         Type::Generic(name) => substitutions.get(name).cloned().unwrap_or_else(|| type_.clone()),
         Type::Tuple(items) => Type::Tuple(items.iter().map(|item| substitute_type(item, substitutions)).collect()),
         Type::List(item) => Type::List(Box::new(substitute_type(item, substitutions))),
+        Type::Record { name, fields } => Type::Record {
+            name: name.clone(),
+            fields: fields
+                .iter()
+                .map(|field| FieldInfo::new(field.name.clone(), substitute_type(&field.type_, substitutions)))
+                .collect(),
+        },
         Type::Custom { name, args } => Type::Custom {
             name: name.clone(),
             args: args.iter().map(|arg| substitute_type(arg, substitutions)).collect(),

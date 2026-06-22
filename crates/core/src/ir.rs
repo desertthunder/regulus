@@ -1,6 +1,7 @@
 pub mod bit_slices;
 mod closure;
 mod lowerer;
+mod specialization;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -18,6 +19,7 @@ use crate::{
 
 pub use bit_slices::{BitArrayLiteral, BitArraySegment, BitSegmentOption, BitSegmentType, BitStringPatternSegment};
 pub use lowerer::{FunctionContext, Lowerer};
+pub use specialization::{DependencySpecialization, DependencySpecializationKey};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct LocalId(pub u32);
@@ -85,6 +87,7 @@ pub struct Module {
     pub js_externals: Vec<JsExternalMetadata>,
     pub exports: Vec<Export>,
     pub functions: Vec<Function>,
+    pub dependency_specializations: Vec<DependencySpecialization>,
     /// Source-to-generated names assigned by the project linker.
     ///
     /// This is empty for single-file compilation.
@@ -970,6 +973,8 @@ pub fn lower_project(project: TypedProject) -> Result<Module, Diagnostics> {
         return Err(diagnostics);
     }
 
+    let dependency_specializations = project.collect_dependency_specializations();
+
     for module in project.modules {
         let is_dependency_module = module.package_name.as_deref() != Some(project.package_name.as_str());
         match lowerer::lower_with_project_context(module, &project.interfaces, &source_backed_stdlib_modules) {
@@ -987,7 +992,7 @@ pub fn lower_project(project: TypedProject) -> Result<Module, Diagnostics> {
         return Err(diagnostics);
     }
 
-    link_modules(modules)
+    link_modules(modules, dependency_specializations)
 }
 
 fn keep_dependency_module_internal(module: &mut Module) {
@@ -1175,7 +1180,9 @@ fn unsupported_source_backed_stdlib_runtime_diagnostic(module: &str, member: &st
     )
 }
 
-fn link_modules(modules: Vec<Module>) -> Result<Module, Diagnostics> {
+fn link_modules(
+    modules: Vec<Module>, dependency_specializations: Vec<DependencySpecialization>,
+) -> Result<Module, Diagnostics> {
     let Some(first) = modules.first() else {
         return Err(vec![Diagnostic::new(
             DiagnosticCode::ProjectError,
@@ -1195,6 +1202,7 @@ fn link_modules(modules: Vec<Module>) -> Result<Module, Diagnostics> {
         js_externals: Vec::new(),
         exports: Vec::new(),
         functions: Vec::new(),
+        dependency_specializations,
         linked_names: Vec::new(),
     };
     let rename_plan = global_backend_renames(&modules);
@@ -1988,6 +1996,12 @@ ProjectError: duplicate generated backend name `generated/run`
 
         let debug = module.linked_debug_dump();
         assert!(debug.contains("dep/foo.answer"));
+        assert_eq!(module.dependency_specializations.len(), 1);
+        assert_eq!(module.dependency_specializations[0].key.package, "dep_pkg");
+        assert_eq!(module.dependency_specializations[0].key.module, "dep/foo");
+        assert_eq!(module.dependency_specializations[0].key.function, "answer");
+        assert_eq!(module.dependency_specializations[0].key.params, Vec::<Type>::new());
+        assert_eq!(module.dependency_specializations[0].key.return_type, Type::Int);
         assert_eq!(module.functions.len(), 2);
         assert!(module.functions.iter().all(|function| {
             !matches!(
@@ -2014,6 +2028,139 @@ ProjectError: duplicate generated backend name `generated/run`
                 } if package == "dep_pkg" && module == "dep/foo"
             )
         }));
+    }
+
+    #[test]
+    fn collects_reachable_dependency_specializations_with_substitutions() {
+        let id_source = SourceFile::new(
+            SourceFileId(10),
+            r#"pub fn id(value: a) -> a {
+  value
+}
+"#,
+        );
+        let wrap_source = SourceFile::new(
+            SourceFileId(11),
+            r#"import dep/id
+
+pub fn wrap(value: a) -> a {
+  id.id(value)
+}
+"#,
+        );
+        let app_source = SourceFile::new(
+            SourceFileId(12),
+            r#"import dep/wrap
+
+fn private() -> String {
+  wrap.wrap("ok")
+}
+
+pub fn main() -> String {
+  private()
+}
+"#,
+        );
+        let mut dependency_interfaces = HashMap::new();
+        dependency_interfaces.insert(
+            "dep/id".to_string(),
+            InterfaceEntry::new("dep_pkg", "dep/id", interface_from_source(&id_source)),
+        );
+        dependency_interfaces.insert(
+            "dep/wrap".to_string(),
+            InterfaceEntry::new("dep_pkg", "dep/wrap", interface_from_source(&wrap_source)),
+        );
+        let project = Project {
+            root: PathBuf::new(),
+            config: GleamToml {
+                name: "app".to_string(),
+                version: "1.0.0".to_string(),
+                description: None,
+                licences: Vec::new(),
+                repository: None,
+                links: Vec::new(),
+                gleam: None,
+                target: None,
+                dependencies: Default::default(),
+                dev_dependencies: Default::default(),
+            },
+            compile_target: target::CompileTarget::Wasmtime,
+            graph: PackageGraph {
+                root_package: PackageNode {
+                    name: "app".to_string(),
+                    version: "1.0.0".to_string(),
+                    root: PathBuf::new(),
+                },
+                dependencies: Vec::new(),
+                dependency_interfaces,
+                dependency_sources: vec![DependencySourcePackage {
+                    package: DependencyPackage {
+                        name: "dep_pkg".to_string(),
+                        version: Some("1.0.0".to_string()),
+                        root: PathBuf::new(),
+                        source: DependencySource::Path,
+                    },
+                    modules: vec![
+                        ModuleInfo {
+                            name: "dep/id".to_string(),
+                            path: PathBuf::from("src/dep/id.gleam"),
+                            source_id: id_source.id,
+                            source_root: SourceRoot::Src,
+                        },
+                        ModuleInfo {
+                            name: "dep/wrap".to_string(),
+                            path: PathBuf::from("src/dep/wrap.gleam"),
+                            source_id: wrap_source.id,
+                            source_root: SourceRoot::Src,
+                        },
+                    ],
+                    sources: vec![id_source, wrap_source],
+                    assets: Vec::new(),
+                }],
+                modules: vec![ModuleInfo {
+                    name: "app".to_string(),
+                    path: PathBuf::from("src/app.gleam"),
+                    source_id: app_source.id,
+                    source_root: SourceRoot::Src,
+                }],
+            },
+            sources: vec![app_source],
+        };
+
+        let typed = types::check_project(&project).expect("type check project");
+        let specializations = typed.collect_dependency_specializations();
+        let mut keys = specializations
+            .iter()
+            .map(|specialization| &specialization.key)
+            .collect::<Vec<_>>();
+        keys.sort_by_key(|key| (key.module.as_str(), key.function.as_str()));
+
+        assert_eq!(keys.len(), 2);
+        assert_eq!(keys[0].package, "dep_pkg");
+        assert_eq!(keys[0].module, "dep/id");
+        assert_eq!(keys[0].function, "id");
+        assert_eq!(keys[0].params, vec![Type::String]);
+        assert_eq!(keys[0].return_type, Type::String);
+        assert_eq!(keys[1].module, "dep/wrap");
+        assert_eq!(keys[1].params, vec![Type::String]);
+        assert_eq!(keys[1].return_type, Type::String);
+        for specialization in &specializations {
+            assert_eq!(
+                specialization.substitutions.get("a"),
+                Some(&Type::String),
+                "{specialization:?}"
+            );
+            let interface_type = project
+                .graph
+                .dependency_interfaces
+                .get(&specialization.key.module)
+                .and_then(|entry| entry.interface.functions.get(&specialization.key.function))
+                .expect("dependency interface type");
+            assert_eq!(
+                interface_type.substitute(&specialization.substitutions),
+                specialization.instantiated_type
+            );
+        }
     }
 
     #[test]
@@ -2236,6 +2383,7 @@ pub fn main(input: String) -> String {
                     span,
                 },
             ],
+            dependency_specializations: Vec::new(),
             linked_names: vec![LinkedName {
                 source_name: "app/main.run".into(),
                 generated_name: "generated/run".into(),

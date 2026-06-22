@@ -1058,5 +1058,6 @@ Module {
             },
         },
     ],
+    dependency_specializations: [],
     linked_names: [],
 }

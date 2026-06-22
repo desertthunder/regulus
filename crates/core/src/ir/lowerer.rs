@@ -271,6 +271,7 @@ impl Lowerer {
                 js_externals,
                 exports,
                 functions,
+                dependency_specializations: Vec::new(),
                 linked_names: Vec::new(),
             })
         } else {

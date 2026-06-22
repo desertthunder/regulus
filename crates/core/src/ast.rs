@@ -215,6 +215,102 @@ pub struct Block {
     pub statements: Vec<Statement>,
 }
 
+impl Block {
+    pub fn fn_calls(&self) -> Vec<&Call> {
+        let mut calls = Vec::new();
+        self.collect_block_calls(&mut calls);
+        calls
+    }
+
+    fn collect_block_calls<'a>(&'a self, calls: &mut Vec<&'a Call>) {
+        for statement in &self.statements {
+            match statement {
+                Statement::Let(let_) => Self::collect_expr_calls(&let_.value, calls),
+                Statement::LetAssert(assert) => {
+                    Self::collect_expr_calls(&assert.value, calls);
+                    if let Some(message) = &assert.message {
+                        Self::collect_expr_calls(message, calls);
+                    }
+                }
+                Statement::Expression(expression) => Self::collect_expr_calls(expression, calls),
+            }
+        }
+    }
+
+    fn collect_arg_calls<'a>(arguments: &'a [Argument], calls: &mut Vec<&'a Call>) {
+        for argument in arguments {
+            Self::collect_expr_calls(&argument.value, calls);
+        }
+    }
+
+    fn collect_expr_calls<'a>(expression: &'a Expression, calls: &mut Vec<&'a Call>) {
+        match expression {
+            Expression::Call(call) => {
+                calls.push(call);
+                Self::collect_expr_calls(&call.function, calls);
+                Self::collect_arg_calls(&call.arguments, calls);
+            }
+            Expression::FieldAccess(access) => Self::collect_expr_calls(&access.record, calls),
+            Expression::Block(block) => Self::collect_block_calls(block, calls),
+            Expression::Case(case) => {
+                for subject in &case.subjects {
+                    Self::collect_expr_calls(subject, calls);
+                }
+                for clause in &case.clauses {
+                    if let Some(guard) = &clause.guard {
+                        Self::collect_expr_calls(guard, calls);
+                    }
+                    Self::collect_expr_calls(&clause.value, calls);
+                }
+            }
+            Expression::BinaryOperation(operation) => {
+                Self::collect_expr_calls(&operation.left, calls);
+                Self::collect_expr_calls(&operation.right, calls);
+            }
+            Expression::Pipeline(pipeline) => {
+                Self::collect_expr_calls(&pipeline.value, calls);
+                Self::collect_expr_calls(&pipeline.into, calls);
+            }
+            Expression::UnaryOperation(operation) => Self::collect_expr_calls(&operation.value, calls),
+            Expression::Use(use_) => Self::collect_expr_calls(&use_.value, calls),
+            Expression::AnonymousFunction(function) => Self::collect_block_calls(&function.body, calls),
+            Expression::Capture(capture) => {
+                Self::collect_expr_calls(&capture.function, calls);
+                for argument in capture.arguments.iter().flatten() {
+                    Self::collect_expr_calls(&argument.value, calls);
+                }
+            }
+            Expression::Record(record) => Self::collect_arg_calls(&record.arguments, calls),
+            Expression::RecordUpdate(update) => {
+                Self::collect_expr_calls(&update.spread, calls);
+                Self::collect_arg_calls(&update.updates, calls);
+            }
+            Expression::Tuple(tuple) => {
+                for element in &tuple.elements {
+                    Self::collect_expr_calls(element, calls);
+                }
+            }
+            Expression::TupleAccess(access) => Self::collect_expr_calls(&access.tuple, calls),
+            Expression::List(list) => {
+                for element in &list.elements {
+                    Self::collect_expr_calls(element, calls);
+                }
+                if let Some(spread) = &list.spread {
+                    Self::collect_expr_calls(spread, calls);
+                }
+            }
+            Expression::Panic(failure) | Expression::Todo(failure) => {
+                if let Some(message) = &failure.message {
+                    Self::collect_expr_calls(message, calls);
+                }
+            }
+            Expression::Assert(assert) => Self::collect_expr_calls(&assert.value, calls),
+            Expression::Echo(echo) => Self::collect_expr_calls(&echo.value, calls),
+            Expression::Literal(_) | Expression::Variable(_) | Expression::BitArray(_) | Expression::Raw(_) => {}
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Statement {
     Let(Let),

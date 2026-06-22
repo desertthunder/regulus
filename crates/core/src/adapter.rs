@@ -292,6 +292,7 @@ mod tests {
             }],
             exports: Vec::new(),
             functions: Vec::new(),
+            dependency_specializations: Vec::new(),
             linked_names: Vec::new(),
         };
 

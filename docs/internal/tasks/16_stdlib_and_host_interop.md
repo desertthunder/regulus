@@ -171,11 +171,11 @@ table.
 
 ### Monomorphized Dependency Emission
 
-- [ ] Define specialization keys for dependency functions from package,
+- [x] Define specialization keys for dependency functions from package,
       module, function, and instantiated concrete type arguments.
-- [ ] Collect reachable dependency functions from project exports and
+- [x] Collect reachable dependency functions from project exports and
       dependency-to-dependency calls after source loading.
-- [ ] Substitute generic type variables in dependency bodies and interfaces
+- [x] Substitute generic type variables in dependency bodies and interfaces
       for each concrete specialization.
 - [ ] Generate stable internal backend names for specializations and rewrite
       calls to those names.
@@ -205,10 +205,25 @@ table.
       emission.
 - [x] Add table-driven tests for target groups, ABI shapes, and JS host
       imports.
-- [ ] Define & implement how dynamic values and opaque native stdlib values cross the JS
-      host ABI.
-- [ ] Split ordinary user JS import validation from dependency package asset
+- [x] Define & implement how dynamic values and opaque native stdlib values
+      cross the JS host ABI.
+- [x] Split ordinary user JS import validation from dependency package asset
       validation.
+
+The JS host ABI is now explicit about scalar values, borrowed managed pointers,
+structured export readers, and tag-8 opaque handles owned by the adapter handle
+table. Dynamic values remain managed guest values at the boundary; `anything`
+is accepted only for the stdlib-native dynamic and inspection externals that
+need it, and ordinary user imports or exports using `anything` are rejected
+before byte emission.
+
+General JS externals lower as target-validated Wasm imports. User packages
+cannot use package-relative JS module paths. Dependency package assets are
+validated separately for loaded `gleam_stdlib` sources, including
+package-relative `.mjs` files such as `../gleam_stdlib.mjs` and `../dict.mjs`,
+while preserving the upstream external module and function names in metadata.
+The remaining host-facing dynamic work is the JSON bridge tracked under
+Collections, Dynamic, Text, And Binary.
 
 ### Higher-Order Calls
 
@@ -223,12 +238,15 @@ table.
       `function.flip` through the shared mechanism.
 - [x] Add diagnostics for unsupported callback parameter, return, capture, or
       host boundary ABI shapes.
-- [ ] Add tests proving upstream decoder and collection combinators call
-      normal compiled closures rather than runtime-specific callback paths.
+- [x] Add tests proving upstream collection and function combinators use
+      source-backed calls with normal compiled closures rather than
+      runtime-specific callback paths.
 
 Registry-specific callback adapters have been deleted. Future stdlib callback
 execution should come from monomorphized dependency source using the same
-closure ABI as project code.
+closure ABI as project code. Decoder combinators remain tracked under dynamic
+and collection work because primitive decoder representation is still
+transitional.
 
 ### Collections, Dynamic, Text, And Binary
 
