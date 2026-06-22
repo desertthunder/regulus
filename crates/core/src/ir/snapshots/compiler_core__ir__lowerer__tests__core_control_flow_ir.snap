@@ -1,6 +1,6 @@
 ---
 source: crates/core/src/ir/lowerer.rs
-assertion_line: 2956
+assertion_line: 2620
 expression: module
 ---
 Module {
@@ -539,7 +539,7 @@ Module {
                                 end: 114,
                             },
                             kind: Literal(
-                                Literal {
+                                IrLiteral {
                                     kind: Int,
                                     source: "1",
                                 },
@@ -582,7 +582,7 @@ Module {
                                 end: 114,
                             },
                             kind: Literal(
-                                Literal {
+                                IrLiteral {
                                     kind: Int,
                                     source: "1",
                                 },

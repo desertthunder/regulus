@@ -40,7 +40,7 @@ impl CompiledModule {
         let ast = compiler_core::target::select_module(ast, target)?;
         let resolved = compiler_core::resolve::resolve(ast.clone())?;
         let typed = compiler_core::types::check(resolved.clone())?;
-        let ir = compiler_core::ir::lower(typed.clone())?;
+        let ir = typed.clone().lower()?;
         let wasm = ir.emit_wasm_with_options(target.into())?;
         Ok(Self { ast, resolved, typed, ir, wasm })
     }

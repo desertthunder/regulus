@@ -18,6 +18,7 @@ use crate::{
 };
 
 pub use bit_slices::{BitArrayLiteral, BitArraySegment, BitSegmentOption, BitSegmentType, BitStringPatternSegment};
+pub use lowerer::lower;
 pub use lowerer::{FunctionContext, Lowerer};
 pub use specialization::{DependencySpecialization, DependencySpecializationKey};
 
@@ -126,7 +127,7 @@ impl Module {
         let mut boundary_calls = self
             .functions
             .iter()
-            .filter_map(import_boundary_debug_line)
+            .filter_map(Function::import_boundary_debug_line)
             .collect::<Vec<_>>();
         if !boundary_calls.is_empty() {
             boundary_calls.sort();
@@ -142,20 +143,6 @@ impl Module {
     }
 }
 
-// TODO: make an instance method on Function
-fn import_boundary_debug_line(function: &Function) -> Option<String> {
-    match &function.abi.boundary {
-        CallBoundary::HostImport { module, name } => {
-            Some(format!("host-import wrapper={} abi={module}.{name}", function.name))
-        }
-        CallBoundary::ModuleImport { module, name } => Some(format!(
-            "dependency-interface wrapper={} abi={module}.{name}",
-            function.name
-        )),
-        CallBoundary::Internal | CallBoundary::ModuleExport => None,
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ConstantId(pub u32);
 
@@ -163,6 +150,12 @@ pub struct ConstantId(pub u32);
 pub struct ModuleIdentity {
     pub package: String,
     pub module: String,
+}
+
+impl ModuleIdentity {
+    fn linked_source_name(&self, member: &str) -> String {
+        backend_key(self.package.as_str(), self.module.as_str(), member)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -212,26 +205,6 @@ pub struct DeclarationMetadata {
     pub span: Span,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TypeMetadata {
-    pub name: String,
-    pub parameters: Vec<String>,
-    pub opaque: bool,
-    pub constructors: Vec<ConstructorMetadata>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ConstructorMetadata {
-    pub name: String,
-    pub fields: Vec<FieldMetadata>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FieldMetadata {
-    pub name: Option<String>,
-    pub type_: Type,
-}
-
 impl From<&ast::Declaration> for DeclarationMetadata {
     fn from(declaration: &ast::Declaration) -> Self {
         match declaration {
@@ -244,37 +217,37 @@ impl From<&ast::Declaration> for DeclarationMetadata {
             ast::Declaration::Function(function) => Self {
                 name: Some(function.name.text.clone()),
                 kind: DeclarationKind::Function,
-                visibility: visibility(function.public),
+                visibility: Visibility::from_public(function.public),
                 span: function.span,
             },
             ast::Declaration::Constant(constant) => Self {
                 name: Some(constant.name.text.clone()),
                 kind: DeclarationKind::Constant,
-                visibility: visibility(constant.public),
+                visibility: Visibility::from_public(constant.public),
                 span: constant.span,
             },
             ast::Declaration::ExternalFunction(function) => Self {
                 name: Some(function.name.text.clone()),
                 kind: DeclarationKind::ExternalFunction,
-                visibility: visibility(function.public),
+                visibility: Visibility::from_public(function.public),
                 span: function.span,
             },
             ast::Declaration::ExternalType(type_) => Self {
                 name: Some(type_.name.text.clone()),
                 kind: DeclarationKind::ExternalType,
-                visibility: visibility(type_.public),
+                visibility: Visibility::from_public(type_.public),
                 span: type_.span,
             },
             ast::Declaration::TypeAlias(alias) => Self {
                 name: Some(alias.name.text.clone()),
                 kind: DeclarationKind::TypeAlias,
-                visibility: visibility(alias.public),
+                visibility: Visibility::from_public(alias.public),
                 span: alias.span,
             },
             ast::Declaration::TypeDefinition(type_) => Self {
                 name: Some(type_.name.text.clone()),
                 kind: DeclarationKind::TypeDefinition,
-                visibility: visibility(type_.public),
+                visibility: Visibility::from_public(type_.public),
                 span: type_.span,
             },
             ast::Declaration::Attribute(attribute) => Self {
@@ -301,6 +274,26 @@ impl From<&ast::Declaration> for DeclarationMetadata {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TypeMetadata {
+    pub name: String,
+    pub parameters: Vec<String>,
+    pub opaque: bool,
+    pub constructors: Vec<ConstructorMetadata>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConstructorMetadata {
+    pub name: String,
+    pub fields: Vec<FieldMetadata>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FieldMetadata {
+    pub name: Option<String>,
+    pub type_: Type,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DeclarationKind {
     Import,
     Function,
@@ -320,6 +313,12 @@ pub enum Visibility {
     Private,
 }
 
+impl Visibility {
+    fn from_public(public: bool) -> Self {
+        if public { Self::Public } else { Self::Private }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Constant {
     pub id: ConstantId,
@@ -331,7 +330,7 @@ pub struct Constant {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConstantValue {
-    Literal(Literal),
+    Literal(IrLiteral),
     Raw(String),
 }
 
@@ -467,11 +466,54 @@ pub struct Function {
     pub span: Span,
 }
 
+impl Function {
+    fn import_boundary_debug_line(&self) -> Option<String> {
+        match &self.abi.boundary {
+            CallBoundary::HostImport { module, name } => {
+                Some(format!("host-import wrapper={} abi={module}.{name}", self.name))
+            }
+            CallBoundary::ModuleImport { module, name } => Some(format!(
+                "dependency-interface wrapper={} abi={module}.{name}",
+                self.name
+            )),
+            CallBoundary::Internal | CallBoundary::ModuleExport => None,
+        }
+    }
+
+    fn substitute_types(&mut self, substitutions: &HashMap<String, Type>) {
+        self.closure_captures = self
+            .closure_captures
+            .iter()
+            .map(|type_| type_.substitute(substitutions))
+            .collect();
+        for param in &mut self.params {
+            param.substitute_type(substitutions);
+        }
+        for local in &mut self.locals {
+            local.substitute_type(substitutions);
+        }
+        self.return_type = self.return_type.substitute(substitutions);
+        self.abi.substitute_types(substitutions);
+        self.body.substitute_types(substitutions);
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CallAbi {
     pub params: Vec<AbiValue>,
     pub return_: Option<AbiValue>,
     pub boundary: CallBoundary,
+}
+
+impl CallAbi {
+    fn substitute_types(&mut self, substitutions: &HashMap<String, Type>) {
+        for param in &mut self.params {
+            param.substitute_type(substitutions);
+        }
+        if let Some(return_) = &mut self.return_ {
+            return_.substitute_type(substitutions);
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -483,6 +525,13 @@ pub struct AbiValue {
 impl From<&Type> for AbiValue {
     fn from(type_: &Type) -> Self {
         Self { type_: type_.clone(), representation: RepresentationType::from(type_) }
+    }
+}
+
+impl AbiValue {
+    fn substitute_type(&mut self, substitutions: &HashMap<String, Type>) {
+        self.type_ = self.type_.substitute(substitutions);
+        self.representation = RepresentationType::from(&self.type_);
     }
 }
 
@@ -500,6 +549,12 @@ pub struct Local {
     pub name: String,
     pub type_: Type,
     pub span: Span,
+}
+
+impl Local {
+    fn substitute_type(&mut self, substitutions: &HashMap<String, Type>) {
+        self.type_ = self.type_.substitute(substitutions);
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -531,6 +586,10 @@ impl Block {
             .iter()
             .any(|instruction| predicate(instruction.expression()))
             || predicate(&self.result)
+    }
+
+    fn substitute_types(&mut self, substitutions: &HashMap<String, Type>) {
+        substitute_block_types(self, substitutions);
     }
 }
 
@@ -689,7 +748,7 @@ impl<'a> Iterator for ExpressionChildren<'a> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExpressionKind {
-    Literal(Literal),
+    Literal(IrLiteral),
     LocalGet(LocalId),
     DirectCall(DirectCall),
     IndirectCall(IndirectCall),
@@ -751,6 +810,28 @@ pub struct DirectCall {
     pub function: String,
     pub arguments: Vec<CallArgument>,
     pub abi: CallAbi,
+}
+
+impl DirectCall {
+    fn abi_rename_key(&self) -> Option<String> {
+        let return_type = self.abi.return_.as_ref()?.type_.clone();
+        let params = self
+            .abi
+            .params
+            .iter()
+            .map(|param| param.type_.clone())
+            .collect::<Vec<_>>();
+        Some(call_rename_key(&self.function, &params, &return_type))
+    }
+
+    fn expression_rename_key(&self, return_type: &Type) -> String {
+        let params = self
+            .arguments
+            .iter()
+            .map(|argument| argument.value.type_.clone())
+            .collect::<Vec<_>>();
+        call_rename_key(&self.function, &params, return_type)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -854,9 +935,7 @@ pub enum MemoryOperation {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-// TODO: this (and some other types) collide with ast types need to
-// be renamed to avoid confusion. Maybe `IrLiteral`?
-pub struct Literal {
+pub struct IrLiteral {
     pub kind: LiteralKind,
     pub source: String,
 }
@@ -929,7 +1008,7 @@ pub enum IrPattern {
         pattern: Box<IrPattern>,
         local: LocalId,
     },
-    Literal(Literal),
+    Literal(IrLiteral),
     Tuple(Vec<IrPattern>),
     List {
         elements: Vec<IrPattern>,
@@ -947,10 +1026,6 @@ pub struct ConstructorPatternArgument {
     pub label: Option<String>,
     pub pattern: IrPattern,
     pub span: Span,
-}
-
-pub fn lower(module: TypedModule) -> Result<Module, Diagnostics> {
-    lowerer::lower(module)
 }
 
 pub fn lower_project(project: TypedProject) -> Result<Module, Diagnostics> {
@@ -1292,7 +1367,7 @@ fn global_backend_renames(modules: &[Module], specializations: &[DependencySpeci
                 BackendName::function(identity.package.as_str(), module_name.clone(), function.name.as_str())
             };
             let generated_name = render_backend_name(&backend);
-            let source_name = linked_source_name(identity, function.name.as_str());
+            let source_name = identity.linked_source_name(function.name.as_str());
             let kind = if function.name.starts_with("__")
                 || matches!(
                     function.abi.boundary,
@@ -1324,7 +1399,7 @@ fn global_backend_renames(modules: &[Module], specializations: &[DependencySpeci
         for constant in &module.constants {
             let backend = BackendName::constant(identity.package.as_str(), module_name.clone(), constant.name.as_str());
             let generated_name = render_backend_name(&backend);
-            let source_name = linked_source_name(identity, constant.name.as_str());
+            let source_name = identity.linked_source_name(constant.name.as_str());
             renames.insert(
                 backend_key(
                     identity.package.as_str(),
@@ -1346,7 +1421,7 @@ fn global_backend_renames(modules: &[Module], specializations: &[DependencySpeci
             {
                 let backend = BackendName::constructor(identity.package.as_str(), module_name.clone(), name.as_str());
                 let generated_name = render_backend_name(&backend);
-                let source_name = linked_source_name(identity, name.as_str());
+                let source_name = identity.linked_source_name(name.as_str());
                 renames.insert(
                     backend_key(identity.package.as_str(), identity.module.as_str(), name.as_str()),
                     generated_name.clone(),
@@ -1361,7 +1436,7 @@ fn global_backend_renames(modules: &[Module], specializations: &[DependencySpeci
         }
     }
     let mut sorted_specializations = specializations.iter().collect::<Vec<_>>();
-    sorted_specializations.sort_by_key(|specialization| specialization_sort_key(&specialization.key));
+    sorted_specializations.sort_by_key(|specialization| specialization.key.source_name());
     let mut generated_by_owner = HashMap::<(&str, &str), u32>::new();
     for specialization in sorted_specializations {
         let module_name = ModuleName::from_path(&specialization.key.module);
@@ -1380,7 +1455,7 @@ fn global_backend_renames(modules: &[Module], specializations: &[DependencySpeci
         let generated_name = render_backend_name(&backend);
         dependency_specialization_names.push((specialization.key.clone(), generated_name.clone()));
         linked_names.push(LinkedName {
-            source_name: dep_specialization_source_name(&specialization.key),
+            source_name: specialization.key.source_name(),
             generated_name,
             kind: LinkedNameKind::Function,
             span: specialization.source_span,
@@ -1398,26 +1473,17 @@ fn backend_key(package: &str, module: &str, member: &str) -> String {
     format!("{package}:{module}.{member}")
 }
 
-// TODO: instance method on ModuleIdentity
-fn linked_source_name(identity: &ModuleIdentity, member: &str) -> String {
-    backend_key(identity.package.as_str(), identity.module.as_str(), member)
-}
-
-// TODO: instance method on DependencySpecializationKey
-fn dep_specialization_source_name(key: &DependencySpecializationKey) -> String {
-    format!(
-        "{}:{}.{}/{}->{}",
-        key.package,
-        key.module,
-        key.function,
-        key.params.iter().map(Type::display).collect::<Vec<_>>().join(","),
-        key.return_type.display()
-    )
-}
-
-// TODO: this is useless
-fn specialization_sort_key(key: &DependencySpecializationKey) -> String {
-    dep_specialization_source_name(key)
+impl DependencySpecializationKey {
+    fn source_name(&self) -> String {
+        format!(
+            "{}:{}.{}/{}->{}",
+            self.package,
+            self.module,
+            self.function,
+            self.params.iter().map(Type::display).collect::<Vec<_>>().join(","),
+            self.return_type.display()
+        )
+    }
 }
 
 fn generated_name_collision_diagnostics(linked_names: &[LinkedName]) -> Diagnostics {
@@ -1462,7 +1528,6 @@ struct ModuleBackendRenames {
     calls: HashMap<String, String>,
 }
 
-// TODO: instance method on Module
 fn mod_backend_renames(module: &Module, plan: &BackendRenamePlan) -> ModuleBackendRenames {
     let mut names = HashMap::new();
     let mut calls = HashMap::new();
@@ -1604,28 +1669,6 @@ fn call_rename_key(source_name: &str, params: &[Type], return_type: &Type) -> St
     )
 }
 
-// TODO: instance method on DirectCall
-fn direct_call_rename_key(call: &DirectCall) -> Option<String> {
-    let return_type = call.abi.return_.as_ref()?.type_.clone();
-    let params = call
-        .abi
-        .params
-        .iter()
-        .map(|param| param.type_.clone())
-        .collect::<Vec<_>>();
-    Some(call_rename_key(&call.function, &params, &return_type))
-}
-
-// TODO: instance method on DirectCall
-fn direct_call_expr_rename_key(call: &DirectCall, return_type: &Type) -> String {
-    let params = call
-        .arguments
-        .iter()
-        .map(|argument| argument.value.type_.clone())
-        .collect::<Vec<_>>();
-    call_rename_key(&call.function, &params, return_type)
-}
-
 fn unique_call_rename(source_name: &str, calls: &HashMap<String, String>) -> Option<String> {
     let prefix = format!("{source_name}(");
     let mut matches = calls
@@ -1637,7 +1680,6 @@ fn unique_call_rename(source_name: &str, calls: &HashMap<String, String>) -> Opt
     (matches.len() == 1).then(|| matches.remove(0))
 }
 
-// TODO: instance method on Module
 fn add_dep_specialization_funcs(
     module: &mut Module, specializations: &[DependencySpecialization], plan: &BackendRenamePlan,
 ) {
@@ -1766,7 +1808,6 @@ fn dep_specialization_helper_renames(function: &Function, specialization_backend
         .collect()
 }
 
-// TODO: instance method on Block
 fn collect_function_value_names(block: &Block, names: &mut HashSet<String>) {
     for instruction in &block.instructions {
         collect_function_value_names_in_expr(instruction.expression(), names);
@@ -1774,7 +1815,6 @@ fn collect_function_value_names(block: &Block, names: &mut HashSet<String>) {
     collect_function_value_names_in_expr(&block.result, names);
 }
 
-// TODO: instance method on Expression
 fn collect_function_value_names_in_expr(expr: &Expression, names: &mut HashSet<String>) {
     match &expr.kind {
         ExpressionKind::FunctionValue(function) => {
@@ -1788,53 +1828,24 @@ fn collect_function_value_names_in_expr(expr: &Expression, names: &mut HashSet<S
     }
 }
 
-// TODO: instance method on Module
 fn remove_unspecialized_dep_functions(module: &mut Module, plan: &BackendRenamePlan) {
     module
         .functions
         .retain(|function| !plan.unspecialized_dependency_functions.contains(&function.name));
 }
 
-// TODO: instance method on Function
 fn substitute_function_types(function: &mut Function, substitutions: &HashMap<String, Type>) {
-    function.closure_captures = function
-        .closure_captures
-        .iter()
-        .map(|type_| type_.substitute(substitutions))
-        .collect();
-    for param in &mut function.params {
-        substitute_local_type(param, substitutions);
-    }
-    for local in &mut function.locals {
-        substitute_local_type(local, substitutions);
-    }
-    function.return_type = function.return_type.substitute(substitutions);
-    substitute_call_abi_types(&mut function.abi, substitutions);
-    substitute_block_types(&mut function.body, substitutions);
+    function.substitute_types(substitutions);
 }
 
-// TODO: instance method on Local
 fn substitute_local_type(local: &mut Local, substitutions: &HashMap<String, Type>) {
-    local.type_ = local.type_.substitute(substitutions);
+    local.substitute_type(substitutions);
 }
 
-// TODO: instance method on CallAbi
 fn substitute_call_abi_types(abi: &mut CallAbi, substitutions: &HashMap<String, Type>) {
-    for param in &mut abi.params {
-        substitute_abi_value_type(param, substitutions);
-    }
-    if let Some(return_) = &mut abi.return_ {
-        substitute_abi_value_type(return_, substitutions);
-    }
+    abi.substitute_types(substitutions);
 }
 
-// TODO: instance method on AbiValue
-fn substitute_abi_value_type(value: &mut AbiValue, substitutions: &HashMap<String, Type>) {
-    value.type_ = value.type_.substitute(substitutions);
-    value.representation = RepresentationType::from(&value.type_);
-}
-
-// TODO: instance method on Block
 fn substitute_block_types(block: &mut Block, substitutions: &HashMap<String, Type>) {
     for instruction in &mut block.instructions {
         match instruction {
@@ -1847,7 +1858,6 @@ fn substitute_block_types(block: &mut Block, substitutions: &HashMap<String, Typ
     substitute_expression_types(&mut block.result, substitutions);
 }
 
-// TODO: instance method on Expression
 fn substitute_expression_types(expression: &mut Expression, substitutions: &HashMap<String, Type>) {
     expression.type_ = expression.type_.substitute(substitutions);
     match &mut expression.kind {
@@ -1984,8 +1994,6 @@ fn rewrite_mod_backend_names(module: &mut Module, renames: &ModuleBackendRenames
     }
 }
 
-// TODO: all rewrite_* functions can be instance methods on the first arg type
-
 fn rewrite_reference(reference: &mut Reference, renames: &HashMap<String, String>) {
     rewrite_name(&mut reference.name, renames);
     match &mut reference.target {
@@ -2056,12 +2064,12 @@ fn rewrite_expr(expr: &mut Expression, renames: &ModuleBackendRenames) {
     let expression_type = expr.type_.clone();
     match &mut expr.kind {
         ExpressionKind::DirectCall(call) => {
-            let expression_key = direct_call_expr_rename_key(call, &expression_type);
+            let expression_key = call.expression_rename_key(&expression_type);
             if let Some(name) = renames
                 .calls
                 .get(&expression_key)
                 .cloned()
-                .or_else(|| direct_call_rename_key(call).and_then(|key| renames.calls.get(&key).cloned()))
+                .or_else(|| call.abi_rename_key().and_then(|key| renames.calls.get(&key).cloned()))
                 .or_else(|| unique_call_rename(&call.function, &renames.calls))
             {
                 call.function = name;
@@ -2316,7 +2324,7 @@ fn integer_expr(source: &str, span: Span) -> Option<Expression> {
     Some(Expression {
         type_: Type::Int,
         span,
-        kind: ExpressionKind::Literal(Literal { kind: LiteralKind::Int, source: source.into() }),
+        kind: ExpressionKind::Literal(IrLiteral { kind: LiteralKind::Int, source: source.into() }),
     })
 }
 
@@ -2335,7 +2343,7 @@ fn abi_return(type_: &Type) -> Option<AbiValue> {
 
 fn raw_metadata(raw: &ast::RawSyntax, kind: DeclarationKind, keyword: &str) -> DeclarationMetadata {
     let source = &raw.source;
-    let visibility = visibility(source.trim_start().starts_with("pub "));
+    let visibility = Visibility::from_public(source.trim_start().starts_with("pub "));
     DeclarationMetadata { name: declaration_name(source, keyword), kind, visibility, span: raw.span }
 }
 
@@ -2347,11 +2355,6 @@ fn declaration_name(source: &str, keyword: &str) -> Option<String> {
         .split(|character: char| !matches!(character, '_' | 'a'..='z' | 'A'..='Z' | '0'..='9'))
         .find(|part| !part.is_empty())
         .map(str::to_string)
-}
-
-// TODO: instance method on Visibility
-fn visibility(public: bool) -> Visibility {
-    if public { Visibility::Public } else { Visibility::Private }
 }
 
 #[cfg(test)]
@@ -2865,7 +2868,7 @@ pub fn main(input: String) -> String {
                         result: Box::new(Expression {
                             type_: Type::Nil,
                             span,
-                            kind: ExpressionKind::Literal(Literal { kind: LiteralKind::Nil, source: "Nil".into() }),
+                            kind: ExpressionKind::Literal(IrLiteral { kind: LiteralKind::Nil, source: "Nil".into() }),
                         }),
                         span,
                     },
@@ -2888,7 +2891,7 @@ pub fn main(input: String) -> String {
                         result: Box::new(Expression {
                             type_: Type::Nil,
                             span,
-                            kind: ExpressionKind::Literal(Literal { kind: LiteralKind::Nil, source: "Nil".into() }),
+                            kind: ExpressionKind::Literal(IrLiteral { kind: LiteralKind::Nil, source: "Nil".into() }),
                         }),
                         span,
                     },

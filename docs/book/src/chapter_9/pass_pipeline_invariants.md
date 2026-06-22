@@ -12,13 +12,13 @@ is neither pure analysis nor a normal program transformation.[^llvm-passes]
 
 Regulus is small, but the same categories already fit:
 
-| Regulus work    | Category                             |
-| --------------- | ------------------------------------ |
-| Name resolution | analysis over AST                    |
-| Type checking   | analysis plus checked annotations    |
-| Lowering        | transformation from typed AST to IR  |
-| WAT emission    | artifact-producing backend pass      |
-| Debug dumps     | utility output                       |
+| Regulus work    | Category                            |
+| --------------- | ----------------------------------- |
+| Name resolution | analysis over AST                   |
+| Type checking   | analysis plus checked annotations   |
+| Lowering        | transformation from typed AST to IR |
+| WAT emission    | artifact-producing backend pass     |
+| Debug dumps     | utility output                      |
 
 ## Invariants
 
@@ -114,7 +114,7 @@ let cst = parse::parse(source)?;
 let ast = ast::build(&cst)?;
 let resolved = resolve::resolve(ast)?;
 let typed = types::check(resolved)?;
-let ir = ir::lower(typed)?;
+let ir = typed.lower()?;
 let wasm = wasm::emit(&ir)?;
 ```
 

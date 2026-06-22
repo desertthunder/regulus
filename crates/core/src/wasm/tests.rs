@@ -13,7 +13,7 @@ fn lower_ir(source: &str) -> ir::Module {
     let ast = ast::build(&cst).expect("build ast");
     let resolved = resolve::resolve(ast).expect("resolve names");
     let typed = types::check(resolved).expect("type check source");
-    ir::lower(typed).expect("lower source")
+    typed.lower().expect("lower source")
 }
 
 fn compile_wasm(source: &str) -> WasmModule {
@@ -39,7 +39,7 @@ fn int_expr(source: &str, span: Span) -> ir::Expression {
     ir::Expression {
         type_: Type::Int,
         span,
-        kind: ExpressionKind::Literal(ir::Literal { kind: LiteralKind::Int, source: source.into() }),
+        kind: ExpressionKind::Literal(ir::IrLiteral { kind: LiteralKind::Int, source: source.into() }),
     }
 }
 
@@ -565,7 +565,7 @@ fn literal_parse_failures_report_source_spanned_diagnostics() {
     let result = ir::Expression {
         type_: Type::Int,
         span,
-        kind: ExpressionKind::Literal(ir::Literal { kind: LiteralKind::Int, source: "nope".into() }),
+        kind: ExpressionKind::Literal(ir::IrLiteral { kind: LiteralKind::Int, source: "nope".into() }),
     };
     let function = exported_function_with_body("bad", &Type::Int, result, span);
     assert_emit_wasm_error(&ir_module(vec![function], span), "invalid int literal", span);
@@ -577,7 +577,7 @@ fn static_value_parse_failures_report_source_spanned_diagnostics() {
     let bad_field = ir::Expression::new(
         Type::Int,
         span,
-        ExpressionKind::Literal(ir::Literal { kind: LiteralKind::Int, source: "nope".into() }),
+        ExpressionKind::Literal(ir::IrLiteral { kind: LiteralKind::Int, source: "nope".into() }),
     );
     let result = ir::Expression::new(
         Type::Tuple(vec![Type::Int]),
@@ -1363,7 +1363,7 @@ fn generic_expr(span: Span) -> ir::Expression {
     ir::Expression {
         type_: Type::Generic("a".into()),
         span,
-        kind: ExpressionKind::Literal(ir::Literal { kind: LiteralKind::Int, source: "1".into() }),
+        kind: ExpressionKind::Literal(ir::IrLiteral { kind: LiteralKind::Int, source: "1".into() }),
     }
 }
 
@@ -1389,7 +1389,7 @@ fn residual_generic_debug_reports_source_spanned_diagnostic() {
         ir::Expression {
             type_: Type::Int,
             span,
-            kind: ExpressionKind::Literal(ir::Literal { kind: LiteralKind::Int, source: "0".into() }),
+            kind: ExpressionKind::Literal(ir::IrLiteral { kind: LiteralKind::Int, source: "0".into() }),
         },
         span,
     );

@@ -1055,7 +1055,7 @@ impl<'a> StructuredEmitter<'a> {
         }
     }
 
-    fn literal(&mut self, literal: &ir::Literal, span: Span, out: &mut Vec<Instruction>) -> StructuredResult<()> {
+    fn literal(&mut self, literal: &ir::IrLiteral, span: Span, out: &mut Vec<Instruction>) -> StructuredResult<()> {
         match literal.kind {
             LiteralKind::Int => {
                 let value = literal
@@ -2286,7 +2286,7 @@ impl<'a> StructuredEmitter<'a> {
     }
 
     fn pattern_literal_test(
-        &mut self, subject: &PatternSubject<'_>, literal: &ir::Literal, out: &mut Vec<Instruction>,
+        &mut self, subject: &PatternSubject<'_>, literal: &ir::IrLiteral, out: &mut Vec<Instruction>,
     ) -> StructuredResult<()> {
         if subject.path.is_empty() {
             self.expression(subject.root, out)?;
@@ -2902,7 +2902,7 @@ impl<'a> StructuredEmitter<'a> {
     }
 
     fn constant(&mut self, constant: &ir::Constant) -> StructuredResult<()> {
-        if let ir::ConstantValue::Literal(ir::Literal { kind: LiteralKind::String, source }) = &constant.value {
+        if let ir::ConstantValue::Literal(ir::IrLiteral { kind: LiteralKind::String, source }) = &constant.value {
             let string = source.trim_matches('"');
             self.push_static(runtime::string_object(self.config, self.next_static_offset, string));
         }
@@ -3040,7 +3040,7 @@ fn invariant_diagnostics(module: &ir::Module, message: &str) -> Diagnostics {
     ]
 }
 
-fn literal_parse_diagnostic(literal: &ir::Literal, span: Span, expected: &'static str) -> StructuredError {
+fn literal_parse_diagnostic(literal: &ir::IrLiteral, span: Span, expected: &'static str) -> StructuredError {
     let kind = match literal.kind {
         LiteralKind::Int => "int",
         LiteralKind::Float => "float",
@@ -3060,7 +3060,7 @@ fn literal_parse_diagnostic(literal: &ir::Literal, span: Span, expected: &'stati
     ])
 }
 
-fn literal_type(literal: &ir::Literal) -> Type {
+fn literal_type(literal: &ir::IrLiteral) -> Type {
     match literal.kind {
         LiteralKind::Int => Type::Int,
         LiteralKind::Float => Type::Float,

@@ -18,6 +18,7 @@ use crate::{
         ConstraintGenerationError, ConstraintGenerator, Environment, Field, InferenceVariable, Scheme, Substitutions,
         TypeTerm, UnificationError, Unifier,
     },
+    ir::{self, Module},
     labels::{ArgumentLabelError, FunctionLabelMap, call_argument_order, function_label_map, use_callback_placement},
     loader::registry::TypeInterfaceRegistry,
     project::{GleamToml, PackageGraph, PackageNode, Project},
@@ -338,6 +339,12 @@ pub struct TypedModule {
     pub interface: ModuleInterface,
     pub package_name: Option<String>,
     pub module_name: Option<String>,
+}
+
+impl TypedModule {
+    pub fn lower(self) -> Result<Module, Diagnostics> {
+        ir::lower(self)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

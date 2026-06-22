@@ -74,8 +74,7 @@ pub fn compile_source_with_options(source: SourceFile, options: CompileOptions) 
     let ast = target::select_module(ast, options.target)?;
     let resolved = resolve::resolve(ast)?;
     let typed = types::check(resolved)?;
-    let ir = ir::lower(typed)?;
-
+    let ir = typed.lower()?;
     Ok(CompileOutput { wasm: ir.emit_wasm_with_options(options.target.into())? })
 }
 

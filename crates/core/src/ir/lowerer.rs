@@ -233,7 +233,7 @@ impl Lowerer {
                 }
                 if matches!(
                     constant.value,
-                    ConstantValue::Literal(Literal { kind: LiteralKind::String, .. })
+                    ConstantValue::Literal(IrLiteral { kind: LiteralKind::String, .. })
                 ) {
                     init.steps
                         .push(InitStep::StaticData { name: constant.name.clone(), span: constant.span });
@@ -594,7 +594,7 @@ impl Lowerer {
             ast::Expression::Literal(literal) => Some(Expression {
                 type_: Type::from(&literal.kind),
                 span: literal.span,
-                kind: ExpressionKind::Literal(Literal { kind: literal.kind.clone(), source: literal.source.clone() }),
+                kind: ExpressionKind::Literal(IrLiteral { kind: literal.kind.clone(), source: literal.source.clone() }),
             }),
             ast::Expression::Variable(name) => {
                 if let Some(local) = context.lookup(&name.text) {
@@ -1407,23 +1407,23 @@ impl Lowerer {
                 context.bind(name.text.clone(), local.id);
                 Some(IrPattern::Binding(local.id))
             }
-            Pattern::Integer(literal) => Some(IrPattern::Literal(Literal {
+            Pattern::Integer(literal) => Some(IrPattern::Literal(IrLiteral {
                 kind: LiteralKind::Int,
                 source: literal.source.clone(),
             })),
-            Pattern::Float(literal) => Some(IrPattern::Literal(Literal {
+            Pattern::Float(literal) => Some(IrPattern::Literal(IrLiteral {
                 kind: LiteralKind::Float,
                 source: literal.source.clone(),
             })),
-            Pattern::String(literal) => Some(IrPattern::Literal(Literal {
+            Pattern::String(literal) => Some(IrPattern::Literal(IrLiteral {
                 kind: LiteralKind::String,
                 source: literal.source.clone(),
             })),
-            Pattern::Bool(literal) => Some(IrPattern::Literal(Literal {
+            Pattern::Bool(literal) => Some(IrPattern::Literal(IrLiteral {
                 kind: LiteralKind::Bool,
                 source: literal.source.clone(),
             })),
-            Pattern::Nil(literal) => Some(IrPattern::Literal(Literal {
+            Pattern::Nil(literal) => Some(IrPattern::Literal(IrLiteral {
                 kind: LiteralKind::Nil,
                 source: literal.source.clone(),
             })),
@@ -1525,7 +1525,7 @@ impl Lowerer {
         Expression {
             type_: Type::Nil,
             span,
-            kind: ExpressionKind::Literal(Literal { kind: LiteralKind::Nil, source: "Nil".into() }),
+            kind: ExpressionKind::Literal(IrLiteral { kind: LiteralKind::Nil, source: "Nil".into() }),
         }
     }
 
@@ -1775,7 +1775,7 @@ impl Lowerer {
     fn ast_constant_value(&self, expression: &ast::Expression) -> ConstantValue {
         match expression {
             ast::Expression::Literal(literal) => {
-                ConstantValue::Literal(Literal { kind: literal.kind.clone(), source: literal.source.clone() })
+                ConstantValue::Literal(IrLiteral { kind: literal.kind.clone(), source: literal.source.clone() })
             }
             _ => ConstantValue::Raw(format!("{expression:?}")),
         }
