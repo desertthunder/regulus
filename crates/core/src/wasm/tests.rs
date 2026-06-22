@@ -919,6 +919,33 @@ pub fn main() -> Int { 1 }"#,
 }
 
 #[test]
+fn rejects_anything_external_import_abi_with_distinct_diagnostic() {
+    let diagnostics = compile_wasm_target(
+        r#"external fn bad(value: anything) -> String = "env" "bad"
+pub fn main() -> String { "ok" }"#,
+        CompileTarget::Wasmtime,
+    )
+    .expect_err("anything parameter should be rejected for user externals");
+
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic
+            .message
+            .contains("external function `bad` parameter 1 uses unsupported ABI shape `anything`")
+    }));
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic
+            .labels
+            .iter()
+            .any(|label| label.message.as_deref() == Some("unsupported `anything` ABI shape here"))
+    }));
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic.notes.iter().any(|note| {
+            note.contains("`anything` is only supported at stdlib-native dynamic and inspection boundaries")
+        })
+    }));
+}
+
+#[test]
 fn validates_external_import_modules_against_target() {
     let diagnostics = compile_wasm_target(
         r#"external fn load(key: String) -> String = "browser" "localStorage.getItem"
@@ -1009,6 +1036,12 @@ pub fn main() -> Int { 1 }"#,
             r#"external fn bad() -> List(value) = "env" "bad"
 pub fn main() -> Int { 1 }"#,
             "external function `bad` return uses unsupported ABI shape `List(Generic(\"value\"))`",
+        ),
+        (
+            "anything list return",
+            r#"external fn bad() -> List(anything) = "env" "bad"
+pub fn main() -> Int { 1 }"#,
+            "external function `bad` return uses unsupported ABI shape `List(anything)`",
         ),
     ];
 
@@ -1266,6 +1299,27 @@ fn rejects_unsupported_export_abi_before_wat_assembly() {
             .iter()
             .any(|diagnostic| diagnostic.message.contains("unsupported host ABI"))
     );
+}
+
+#[test]
+fn rejects_anything_export_abi_with_distinct_diagnostic() {
+    let diagnostics = compile_wasm_target(
+        r#"pub fn expose(value: anything) -> anything { value }"#,
+        CompileTarget::Wasmtime,
+    )
+    .expect_err("anything export should be rejected");
+
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic
+            .message
+            .contains("Wasm export `expose` parameter 1 uses unsupported dynamic boundary type `anything`")
+    }));
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic
+            .labels
+            .iter()
+            .any(|label| label.message.as_deref() == Some("unsupported `anything` ABI shape here"))
+    }));
 }
 
 #[test]

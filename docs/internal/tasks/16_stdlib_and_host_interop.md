@@ -111,11 +111,11 @@ Retained registry entries record their blocker group and deletion condition in
 - [x] Define & implement the internal type representation for `anything`.
 - [x] Allow `anything` in stdlib-native externals such as dynamic casts,
       dynamic indexes, and `string.inspect`.
-- [ ] Reject unsupported user exports, imports, and general ABI positions that
+- [x] Reject unsupported user exports, imports, and general ABI positions that
       use `anything`.
-- [ ] Add diagnostics that distinguish `anything` from ordinary generic type
+- [x] Add diagnostics that distinguish `anything` from ordinary generic type
       variables.
-- [ ] Add upstream fixtures for `dynamic.cast`,
+- [x] Add upstream fixtures for `dynamic.cast`,
       `dynamic/decode.bare_index`, and `string.inspect`.
 
 ### Runtime Primitive Scope

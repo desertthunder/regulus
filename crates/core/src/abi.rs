@@ -163,24 +163,27 @@ fn validate_value(func: &ast::ExternalFunction, diagnostics: &mut Diagnostics, p
         return;
     }
 
-    diagnostics.push(
-        Diagnostic::spanned(
-            DiagnosticCode::LoweringError,
-            format!(
-                "external function `{}` {} uses unsupported ABI shape `{:?}`",
-                func.name.text,
-                params.pos.description(),
-                params.type_
-            ),
-            params.span,
-            "unsupported external ABI shape here",
-        )
-        .with_note(format!(
-            "host import `{}.{}` must use concrete scalar values, managed values, or Nil returns",
-            unquote(&func.body.module.source),
-            unquote(&func.body.function.source)
-        )),
-    );
+    let mut diagnostic = Diagnostic::spanned(
+        DiagnosticCode::LoweringError,
+        format!(
+            "external function `{}` {} uses unsupported ABI shape `{}`",
+            func.name.text,
+            params.pos.description(),
+            abi_shape(params.type_)
+        ),
+        params.span,
+        unsupported_abi_label(params.type_),
+    )
+    .with_note(format!(
+        "host import `{}.{}` must use concrete scalar values, managed values, or Nil returns",
+        unquote(&func.body.module.source),
+        unquote(&func.body.function.source)
+    ));
+    if params.type_.contains_anything() {
+        diagnostic =
+            diagnostic.with_note("`anything` is only supported at stdlib-native dynamic and inspection boundaries");
+    }
+    diagnostics.push(diagnostic);
 }
 
 fn validate_named_value(named_func: NamedFunction, diagnostics: &mut Diagnostics, params: ValidateParams) {
@@ -188,23 +191,26 @@ fn validate_named_value(named_func: NamedFunction, diagnostics: &mut Diagnostics
         return;
     }
 
-    diagnostics.push(
-        Diagnostic::spanned(
-            DiagnosticCode::LoweringError,
-            format!(
-                "external function `{}` {} uses unsupported ABI shape `{:?}`",
-                named_func.func_name,
-                params.pos.description(),
-                params.type_
-            ),
-            params.span,
-            "unsupported external ABI shape here",
-        )
-        .with_note(format!(
-            "host import `{}.{}` must use concrete scalar values, managed values, or Nil returns",
-            named_func.module, named_func.function
-        )),
-    );
+    let mut diagnostic = Diagnostic::spanned(
+        DiagnosticCode::LoweringError,
+        format!(
+            "external function `{}` {} uses unsupported ABI shape `{}`",
+            named_func.func_name,
+            params.pos.description(),
+            abi_shape(params.type_)
+        ),
+        params.span,
+        unsupported_abi_label(params.type_),
+    )
+    .with_note(format!(
+        "host import `{}.{}` must use concrete scalar values, managed values, or Nil returns",
+        named_func.module, named_func.function
+    ));
+    if params.type_.contains_anything() {
+        diagnostic =
+            diagnostic.with_note("`anything` is only supported at stdlib-native dynamic and inspection boundaries");
+    }
+    diagnostics.push(diagnostic);
 }
 
 fn is_supported_extern_abi_value(type_: &Type, nil_allowed: bool, anything_allowed: bool) -> bool {
@@ -232,12 +238,24 @@ fn is_supported_extern_abi_value(type_: &Type, nil_allowed: bool, anything_allow
     }
 }
 
-fn is_allowed_anything_external(allow_stdlib_anything: bool, module: &str, function: &str) -> bool {
+pub fn is_allowed_anything_external(allow_stdlib_anything: bool, module: &str, function: &str) -> bool {
     if !allow_stdlib_anything {
         return false;
     }
     let is_stdlib_asset = module.ends_with("gleam_stdlib.mjs");
     is_stdlib_asset && matches!(function, "identity" | "index" | "inspect")
+}
+
+fn abi_shape(type_: &Type) -> String {
+    if type_.contains_anything() { type_.display() } else { format!("{type_:?}") }
+}
+
+fn unsupported_abi_label(type_: &Type) -> &'static str {
+    if type_.contains_anything() {
+        "unsupported `anything` ABI shape here"
+    } else {
+        "unsupported external ABI shape here"
+    }
 }
 
 #[cfg(test)]
@@ -296,7 +314,7 @@ mod tests {
         assert!(
             diagnostics[0]
                 .message
-                .contains("external function `inspect` parameter 1 uses unsupported ABI shape `Anything`")
+                .contains("external function `inspect` parameter 1 uses unsupported ABI shape `anything`")
         );
     }
 }

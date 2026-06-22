@@ -12,7 +12,12 @@ use crate::ast::LiteralKind;
 use crate::diagnostic::{Diagnostic, DiagnosticCode, Diagnostics, Label};
 use crate::ir::{self, ExpressionKind};
 use crate::source::Span;
-use crate::{ClosureConstants, abi::STDLIB_IO_HOST_MODULE, runtime, types::Type};
+use crate::{
+    ClosureConstants,
+    abi::{STDLIB_IO_HOST_MODULE, is_allowed_anything_external},
+    runtime,
+    types::Type,
+};
 
 #[derive(Debug, Clone, Copy)]
 enum JsAbiBoundary<'a> {
@@ -169,6 +174,7 @@ impl<'a> StructuredEmitter<'a> {
 
     fn module(mut self, source: &ir::Module) -> StructuredResult<Module> {
         self.module.source_span = source.functions.first().map(|function| function.span);
+        validate_anything_boundary_abi(source)?;
         if self.options.target.is_js_host() {
             validate_js_host_abi(source, self.options.target)?;
         }
@@ -3068,6 +3074,76 @@ fn result_types(type_: &Type, span: Span) -> StructuredResult<Vec<ValueType>> {
     if matches!(type_, Type::Nil) { Ok(Vec::new()) } else { Ok(vec![value_type(type_, span)?]) }
 }
 
+fn validate_anything_boundary_abi(module: &ir::Module) -> StructuredResult<()> {
+    let mut diagnostics = Vec::new();
+
+    for function in &module.functions {
+        let allow_anything = match &function.abi.boundary {
+            ir::CallBoundary::HostImport { module, name } => is_allowed_anything_external(true, module, name),
+            ir::CallBoundary::Internal => true,
+            ir::CallBoundary::ModuleExport | ir::CallBoundary::ModuleImport { .. } => false,
+        };
+        if allow_anything {
+            continue;
+        }
+
+        for (index, param) in function.params.iter().enumerate() {
+            if param.type_.contains_anything() {
+                diagnostics.push(anything_boundary_abi_diagnostic(
+                    module,
+                    function,
+                    &format!("parameter {}", index + 1),
+                    &param.type_,
+                    param.span,
+                ));
+            }
+        }
+
+        if function.return_type.contains_anything() {
+            diagnostics.push(anything_boundary_abi_diagnostic(
+                module,
+                function,
+                "return",
+                &function.return_type,
+                function.span,
+            ));
+        }
+    }
+
+    if diagnostics.is_empty() { Ok(()) } else { Err(StructuredError::Diagnostics(diagnostics)) }
+}
+
+fn anything_boundary_abi_diagnostic(
+    module: &ir::Module, function: &ir::Function, pos: &str, type_: &Type, span: Span,
+) -> Diagnostic {
+    let name = match &function.abi.boundary {
+        ir::CallBoundary::ModuleExport => module
+            .exports
+            .iter()
+            .find(|export| export.kind == ir::ExportKind::Function && export.backend_name() == function.name)
+            .map(|export| export.name.as_str())
+            .unwrap_or(function.name.as_str()),
+        _ => function.name.as_str(),
+    };
+    let boundary = match &function.abi.boundary {
+        ir::CallBoundary::ModuleExport => "export",
+        ir::CallBoundary::ModuleImport { .. } => "module import",
+        ir::CallBoundary::HostImport { .. } => "host import",
+        ir::CallBoundary::Internal => "internal function",
+    };
+
+    Diagnostic::spanned(
+        DiagnosticCode::WasmError,
+        format!(
+            "Wasm {boundary} `{name}` {pos} uses unsupported dynamic boundary type `{}`",
+            type_.display()
+        ),
+        span,
+        "unsupported `anything` ABI shape here",
+    )
+    .with_note("`anything` is reserved for stdlib-native dynamic and inspection boundaries")
+}
+
 fn validate_js_host_abi(module: &ir::Module, target: WasmTarget) -> StructuredResult<()> {
     let mut diagnostics = Vec::new();
 
@@ -3141,6 +3217,24 @@ fn validate_js_host_function_shape(
 fn js_host_abi_diagnostic(
     func: &ir::Function, boundary: JsAbiBoundary<'_>, target: WasmTarget, pos: &str, type_: &Type, span: Span,
 ) -> Diagnostic {
+    if type_.contains_anything() {
+        let name = match boundary {
+            JsAbiBoundary::Import { .. } => func.name.as_str(),
+            JsAbiBoundary::Export { name } => name,
+        };
+        return Diagnostic::spanned(
+            DiagnosticCode::WasmError,
+            format!(
+                "JS host function `{name}` {pos} uses unsupported dynamic boundary type `{}` for target `{}`",
+                type_.display(),
+                target.name()
+            ),
+            span,
+            "unsupported `anything` ABI shape here",
+        )
+        .with_note("`anything` is reserved for stdlib-native dynamic and inspection boundaries");
+    }
+
     let (message, note) = match boundary {
         JsAbiBoundary::Import { module, name } => (
             format!(

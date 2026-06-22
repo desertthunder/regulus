@@ -77,6 +77,20 @@ impl Type {
         }
     }
 
+    pub fn contains_anything(&self) -> bool {
+        match self {
+            Self::Anything => true,
+            Self::Tuple(items) => items.iter().any(Self::contains_anything),
+            Self::List(item) => item.contains_anything(),
+            Self::Record { fields, .. } => fields.iter().any(|field| field.type_.contains_anything()),
+            Self::Custom { args, .. } | Self::Opaque { args, .. } => args.iter().any(Self::contains_anything),
+            Self::Function { params, return_type } => {
+                params.iter().any(Self::contains_anything) || return_type.contains_anything()
+            }
+            _ => false,
+        }
+    }
+
     fn has_inference_variable(&self) -> bool {
         match self {
             Self::Anything => false,
@@ -2477,7 +2491,7 @@ impl Type {
         substitute_type(self, &substitutions)
     }
 
-    fn display(&self) -> String {
+    pub fn display(&self) -> String {
         match self {
             Type::Int => "Int".into(),
             Type::Anything => "anything".into(),

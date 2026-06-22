@@ -675,7 +675,11 @@ mod tests {
 
     use crate::project::{GleamToml, PackageGraph, PackageNode, Project};
     use crate::source::SourceFile;
-    use crate::{ir, stdlib::StdlibRegistry, types};
+    use crate::{
+        ir,
+        stdlib::StdlibRegistry,
+        types::{self, Type},
+    };
 
     use super::*;
 
@@ -1204,6 +1208,49 @@ pub fn run() -> Int
     }
 
     #[test]
+    fn upstream_anything_native_externals_keep_anything_annotations() {
+        let dynamic_cast = upstream_external_function_type("gleam/dynamic", "cast", target::CompileTarget::Browser);
+        assert_eq!(
+            dynamic_cast,
+            Type::Function {
+                params: vec![Type::Anything],
+                return_type: Box::new(Type::Custom { name: "Dynamic".into(), args: Vec::new() }),
+            }
+        );
+
+        let bare_index =
+            upstream_external_function_type("gleam/dynamic/decode", "bare_index", target::CompileTarget::Browser);
+        assert_eq!(
+            bare_index,
+            Type::Function {
+                params: vec![
+                    Type::Custom { name: "Dynamic".into(), args: Vec::new() },
+                    Type::Anything
+                ],
+                return_type: Box::new(Type::Custom {
+                    name: "Result".into(),
+                    args: vec![
+                        Type::Custom {
+                            name: "Option".into(),
+                            args: vec![Type::Custom { name: "Dynamic".into(), args: Vec::new() }],
+                        },
+                        Type::String,
+                    ],
+                }),
+            }
+        );
+
+        let inspect = upstream_external_function_type("gleam/string", "do_inspect", target::CompileTarget::Browser);
+        assert_eq!(
+            inspect,
+            Type::Function {
+                params: vec![Type::Anything],
+                return_type: Box::new(Type::Custom { name: "StringTree".into(), args: Vec::new() }),
+            }
+        );
+    }
+
+    #[test]
     fn links_source_backed_stdlib_calls_without_runtime_dispatch() {
         let package_sources = pure_stdlib_source_package(&[
             "gleam/order",
@@ -1447,6 +1494,51 @@ pub fn result_mapped() -> Int {
                 .join(format!("{module}.gleam")),
         )
         .expect("read upstream stdlib source")
+    }
+
+    fn upstream_external_function_type(
+        module: &str, function_name: &str, compile_target: target::CompileTarget,
+    ) -> Type {
+        let source = SourceFile::with_path(
+            SourceFileId(2_900_000),
+            published_stdlib_fixture_root()
+                .join("src")
+                .join(format!("{module}.gleam")),
+            upstream_stdlib_module_source(module),
+        );
+        let cst = parse::parse(source).expect("parse upstream stdlib source");
+        let module = ast::build(&cst).expect("build upstream stdlib ast");
+        let module = target::select_module(module, compile_target).expect("select upstream stdlib target");
+        find_external_function_type(&module.declarations, function_name)
+            .unwrap_or_else(|| panic!("upstream stdlib function `{function_name}` should exist"))
+    }
+
+    fn find_external_function_type(declarations: &[ast::Declaration], function_name: &str) -> Option<Type> {
+        for declaration in declarations {
+            match declaration {
+                ast::Declaration::ExternalFunction(function) if function.name.text == function_name => {
+                    let params = function
+                        .parameters
+                        .iter()
+                        .map(|parameter| {
+                            parameter
+                                .type_annotation
+                                .as_ref()
+                                .and_then(|annotation| Type::from_source(&annotation.source))
+                        })
+                        .collect::<Option<Vec<_>>>()?;
+                    let return_type = Type::from_source(&function.return_type.source)?;
+                    return Some(Type::Function { params, return_type: Box::new(return_type) });
+                }
+                ast::Declaration::TargetGroup(group) => {
+                    if let Some(type_) = find_external_function_type(&group.declarations, function_name) {
+                        return Some(type_);
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
     }
 
     fn project_from_dependency_source_package(package_sources: DependencySourcePackage) -> Project {
