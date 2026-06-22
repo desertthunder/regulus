@@ -62,6 +62,7 @@ impl Unifier {
             (TypeTerm::Variable(variable), type_) | (type_, TypeTerm::Variable(variable)) => {
                 self.bind_variable(variable, &type_, span)
             }
+            (TypeTerm::Anything, TypeTerm::Anything) => Ok(TypeTerm::Anything),
             (TypeTerm::Int, TypeTerm::Int) => Ok(TypeTerm::Int),
             (TypeTerm::Float, TypeTerm::Float) => Ok(TypeTerm::Float),
             (TypeTerm::String, TypeTerm::String) => Ok(TypeTerm::String),

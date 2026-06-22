@@ -42,7 +42,7 @@ impl From<&Type> for RepresentationType {
             Type::Record { .. } => Self::HeapManaged(HeapRepresentation::Record),
             Type::Custom { .. } => Self::HeapManaged(HeapRepresentation::Custom),
             Type::Function { .. } => Self::HeapManaged(HeapRepresentation::Function),
-            Type::Generic(_) | Type::Opaque { .. } => Self::HeapManaged(HeapRepresentation::Opaque),
+            Type::Anything | Type::Generic(_) | Type::Opaque { .. } => Self::HeapManaged(HeapRepresentation::Opaque),
         }
     }
 }

@@ -1943,6 +1943,7 @@ impl<'a> StructuredEmitter<'a> {
             Type::Float => DebugImport::F64,
             Type::Bool => DebugImport::Bool,
             Type::String
+            | Type::Anything
             | Type::BitArray
             | Type::Tuple(_)
             | Type::List(_)
@@ -2072,6 +2073,7 @@ impl<'a> StructuredEmitter<'a> {
             Type::Bool => out.push(Instruction::I32Eq),
             Type::Nil => out.push(Instruction::I32Const(1)),
             Type::String
+            | Type::Anything
             | Type::BitArray
             | Type::Tuple(_)
             | Type::List(_)
@@ -3329,6 +3331,7 @@ fn maybe_value_type(type_: &Type) -> Option<ValueType> {
         Type::Int => Some(ValueType::I64),
         Type::Float => Some(ValueType::F64),
         Type::Bool
+        | Type::Anything
         | Type::String
         | Type::BitArray
         | Type::Tuple(_)
@@ -3473,6 +3476,7 @@ fn collect_expression_debug_imports(expression: &ir::Expression, imports: &mut V
                     Type::Float => imports.push(DebugImport::F64),
                     Type::Bool => imports.push(DebugImport::Bool),
                     Type::String
+                    | Type::Anything
                     | Type::BitArray
                     | Type::Tuple(_)
                     | Type::List(_)

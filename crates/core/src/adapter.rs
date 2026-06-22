@@ -242,7 +242,9 @@ fn substitute_generics(type_: &Type, substitutions: &HashMap<String, Type>) -> T
                 .collect(),
             return_type: Box::new(substitute_generics(return_type, substitutions)),
         },
-        Type::Int | Type::Float | Type::String | Type::BitArray | Type::Bool | Type::Nil => type_.clone(),
+        Type::Anything | Type::Int | Type::Float | Type::String | Type::BitArray | Type::Bool | Type::Nil => {
+            type_.clone()
+        }
     }
 }
 

@@ -16,6 +16,7 @@ pub struct Field {
 /// Type syntax used by the inference solver.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TypeTerm {
+    Anything,
     Int,
     Float,
     String,
@@ -119,6 +120,7 @@ impl TypeTerm {
 
     pub fn from_type(type_: &Type) -> Self {
         match type_ {
+            Type::Anything => Self::Anything,
             Type::Int => Self::Int,
             Type::Float => Self::Float,
             Type::String => Self::String,
@@ -150,6 +152,7 @@ impl TypeTerm {
 
     pub fn into_type(self) -> Option<Type> {
         match self {
+            Self::Anything => Some(Type::Anything),
             Self::Int => Some(Type::Int),
             Self::Float => Some(Type::Float),
             Self::String => Some(Type::String),

@@ -108,8 +108,8 @@ Retained registry entries record their blocker group and deletion condition in
 ### Native Types And `anything`
 
 - [x] Preserve bodyless runtime types as external type interfaces.
-- [ ] Define & implement the internal type representation for `anything`.
-- [ ] Allow `anything` in stdlib-native externals such as dynamic casts,
+- [x] Define & implement the internal type representation for `anything`.
+- [x] Allow `anything` in stdlib-native externals such as dynamic casts,
       dynamic indexes, and `string.inspect`.
 - [ ] Reject unsupported user exports, imports, and general ABI positions that
       use `anything`.

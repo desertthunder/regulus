@@ -29,6 +29,7 @@ use crate::{
 /// A type known to the compiler.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Type {
+    Anything,
     Int,
     Float,
     String,
@@ -65,6 +66,7 @@ impl From<&LiteralKind> for Type {
 impl Type {
     pub fn has_generic(&self) -> bool {
         match self {
+            Self::Anything => false,
             Self::Generic(_) => true,
             Self::Tuple(items) => items.iter().any(Self::has_generic),
             Self::List(item) => item.has_generic(),
@@ -77,6 +79,7 @@ impl Type {
 
     fn has_inference_variable(&self) -> bool {
         match self {
+            Self::Anything => false,
             Self::Generic(name) if TypeChecker::is_inference_variable_name(name) => true,
             Self::Tuple(items) => items.iter().any(Self::has_inference_variable),
             Self::List(item) => item.has_inference_variable(),
@@ -2237,6 +2240,7 @@ impl TypeChecker {
     fn type_to_inference_term(&self, type_: &Type) -> TypeTerm {
         match type_ {
             Type::Int => TypeTerm::Int,
+            Type::Anything => TypeTerm::Anything,
             Type::Float => TypeTerm::Float,
             Type::String => TypeTerm::String,
             Type::BitArray => TypeTerm::BitArray,
@@ -2476,6 +2480,7 @@ impl Type {
     fn display(&self) -> String {
         match self {
             Type::Int => "Int".into(),
+            Type::Anything => "anything".into(),
             Type::Float => "Float".into(),
             Type::String => "String".into(),
             Type::BitArray => "BitArray".into(),
@@ -2534,6 +2539,7 @@ fn inference_variable_from_name(name: &str) -> Option<InferenceVariable> {
 fn type_term_to_type(type_: &TypeTerm) -> Option<Type> {
     match type_ {
         TypeTerm::Int => Some(Type::Int),
+        TypeTerm::Anything => Some(Type::Anything),
         TypeTerm::Float => Some(Type::Float),
         TypeTerm::String => Some(Type::String),
         TypeTerm::BitArray => Some(Type::BitArray),
@@ -2684,6 +2690,7 @@ fn parse_type_source(source: &str) -> Option<Type> {
     let source = source.trim();
     match source {
         "Int" => Some(Type::Int),
+        "anything" => Some(Type::Anything),
         "Float" => Some(Type::Float),
         "String" => Some(Type::String),
         "BitArray" => Some(Type::BitArray),
@@ -3198,6 +3205,7 @@ fn main() -> Int {
             Type::from_source("Result(Int, String)"),
             Some(Type::Custom { name: "Result".into(), args: vec![Type::Int, Type::String] })
         );
+        assert_eq!(Type::from_source("anything"), Some(Type::Anything));
         assert_eq!(Type::from_source("value"), Some(Type::Generic("value".into())));
     }
 

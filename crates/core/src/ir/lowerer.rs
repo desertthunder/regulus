@@ -374,7 +374,11 @@ impl Lowerer {
         match declaration {
             ast::Declaration::ExternalFunction(function) => {
                 if let Some(type_) = self.function_types.get(&function.name.text) {
-                    self.diagnostics.extend(validate_extern_function_abi(function, type_));
+                    self.diagnostics.extend(validate_extern_function_abi(
+                        function,
+                        type_,
+                        self.module.package_name.as_deref() == Some("gleam_stdlib"),
+                    ));
                 }
             }
             ast::Declaration::TargetGroup(group) => {
@@ -2164,7 +2168,9 @@ fn substitute_type_generics(type_: &Type, substitutions: &HashMap<String, Type>)
                 .collect(),
             return_type: Box::new(substitute_type_generics(return_type, substitutions)),
         },
-        Type::Int | Type::Float | Type::String | Type::BitArray | Type::Bool | Type::Nil => type_.clone(),
+        Type::Anything | Type::Int | Type::Float | Type::String | Type::BitArray | Type::Bool | Type::Nil => {
+            type_.clone()
+        }
     }
 }
 

@@ -81,19 +81,32 @@ struct ValidateParams<'a> {
     type_: &'a Type,
     span: Span,
     allow_nil: bool,
+    allow_anything: bool,
 }
 
 impl<'a> ValidateParams<'a> {
     fn new(pos: AbiPosition, type_: &'a Type, span: Span, allow_nil: bool) -> Self {
-        Self { pos, type_, span, allow_nil }
+        Self { pos, type_, span, allow_nil, allow_anything: false }
+    }
+
+    fn allowing_anything(mut self, allowed: bool) -> Self {
+        self.allow_anything = allowed;
+        self
     }
 }
 
-pub fn validate_extern_function_abi(func: &ast::ExternalFunction, type_: &Type) -> Diagnostics {
+pub fn validate_extern_function_abi(
+    func: &ast::ExternalFunction, type_: &Type, allow_stdlib_anything: bool,
+) -> Diagnostics {
     let mut diagnostics = Vec::new();
     let Type::Function { params, return_type } = type_ else {
         return diagnostics;
     };
+    let allow_anything = is_allowed_anything_external(
+        allow_stdlib_anything,
+        &unquote(&func.body.module.source),
+        &unquote(&func.body.function.source),
+    );
 
     for (index, type_) in params.iter().enumerate() {
         let span = func
@@ -105,14 +118,16 @@ pub fn validate_extern_function_abi(func: &ast::ExternalFunction, type_: &Type) 
         validate_value(
             func,
             &mut diagnostics,
-            &ValidateParams::new(AbiPosition::Parameter { index }, type_, span, false),
+            &ValidateParams::new(AbiPosition::Parameter { index }, type_, span, false)
+                .allowing_anything(allow_anything),
         );
     }
 
     validate_value(
         func,
         &mut diagnostics,
-        &ValidateParams::new(AbiPosition::Return, return_type, func.return_type.span, true),
+        &ValidateParams::new(AbiPosition::Return, return_type, func.return_type.span, true)
+            .allowing_anything(allow_anything),
     );
 
     diagnostics
@@ -123,26 +138,28 @@ pub fn validate_external_info_abi(name: &str, info: &ExternalFunctionInfo, type_
     let Type::Function { params, return_type } = type_ else {
         return diagnostics;
     };
+    let allow_anything = is_allowed_anything_external(true, &info.module, &info.function);
 
     for (index, type_) in params.iter().enumerate() {
         validate_named_value(
             NamedFunction::new(name, &info.module, &info.function),
             &mut diagnostics,
-            ValidateParams::new(AbiPosition::Parameter { index }, type_, info.span, false),
+            ValidateParams::new(AbiPosition::Parameter { index }, type_, info.span, false)
+                .allowing_anything(allow_anything),
         );
     }
 
     validate_named_value(
         NamedFunction::new(name, &info.module, &info.function),
         &mut diagnostics,
-        ValidateParams::new(AbiPosition::Return, return_type, info.span, true),
+        ValidateParams::new(AbiPosition::Return, return_type, info.span, true).allowing_anything(allow_anything),
     );
 
     diagnostics
 }
 
 fn validate_value(func: &ast::ExternalFunction, diagnostics: &mut Diagnostics, params: &ValidateParams) {
-    if is_supported_extern_abi_value(params.type_, params.allow_nil) {
+    if is_supported_extern_abi_value(params.type_, params.allow_nil, params.allow_anything) {
         return;
     }
 
@@ -167,7 +184,7 @@ fn validate_value(func: &ast::ExternalFunction, diagnostics: &mut Diagnostics, p
 }
 
 fn validate_named_value(named_func: NamedFunction, diagnostics: &mut Diagnostics, params: ValidateParams) {
-    if is_supported_extern_abi_value(params.type_, params.allow_nil) {
+    if is_supported_extern_abi_value(params.type_, params.allow_nil, params.allow_anything) {
         return;
     }
 
@@ -190,29 +207,45 @@ fn validate_named_value(named_func: NamedFunction, diagnostics: &mut Diagnostics
     );
 }
 
-fn is_supported_extern_abi_value(type_: &Type, nil_allowed: bool) -> bool {
+fn is_supported_extern_abi_value(type_: &Type, nil_allowed: bool, anything_allowed: bool) -> bool {
     match type_ {
         Type::Nil => nil_allowed,
+        Type::Anything => anything_allowed,
         Type::Generic(_) => false,
-        Type::Tuple(items) => items.iter().all(|item| is_supported_extern_abi_value(item, false)),
-        Type::List(item) => is_supported_extern_abi_value(item, false),
+        Type::Tuple(items) => items
+            .iter()
+            .all(|item| is_supported_extern_abi_value(item, false, anything_allowed)),
+        Type::List(item) => is_supported_extern_abi_value(item, false, anything_allowed),
         Type::Record { fields, .. } => fields
             .iter()
-            .all(|field| is_supported_extern_abi_value(&field.type_, false)),
-        Type::Custom { args, .. } | Type::Opaque { args, .. } => {
-            args.iter().all(|arg| is_supported_extern_abi_value(arg, false))
-        }
+            .all(|field| is_supported_extern_abi_value(&field.type_, false, anything_allowed)),
+        Type::Custom { args, .. } | Type::Opaque { args, .. } => args
+            .iter()
+            .all(|arg| is_supported_extern_abi_value(arg, false, anything_allowed)),
         Type::Function { params, return_type } => {
-            params.iter().all(|param| is_supported_extern_abi_value(param, false))
-                && is_supported_extern_abi_value(return_type, true)
+            params
+                .iter()
+                .all(|param| is_supported_extern_abi_value(param, false, anything_allowed))
+                && is_supported_extern_abi_value(return_type, true, anything_allowed)
         }
         Type::Int | Type::Float | Type::String | Type::BitArray | Type::Bool => true,
     }
 }
 
+fn is_allowed_anything_external(allow_stdlib_anything: bool, module: &str, function: &str) -> bool {
+    if !allow_stdlib_anything {
+        return false;
+    }
+    let is_stdlib_asset = module.ends_with("gleam_stdlib.mjs");
+    is_stdlib_asset && matches!(function, "identity" | "index" | "inspect")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::source::SourceFileId;
+
+    const TEST_SPAN: Span = Span { file_id: SourceFileId(u32::MAX), start: 0, end: 0 };
 
     #[test]
     fn records_stdlib_host_adapters_in_abi_table() {
@@ -221,5 +254,49 @@ mod tests {
             Some(StdlibHostAdapter { import_module: STDLIB_IO_HOST_MODULE, import_name: "println" })
         );
         assert_eq!(stdlib_host_adapter("gleam/int", "to_string"), None);
+    }
+
+    #[test]
+    fn allows_anything_for_stdlib_native_dynamic_and_inspect_externals() {
+        let type_ = Type::Function {
+            params: vec![Type::Anything],
+            return_type: Box::new(Type::Custom { name: "Dynamic".into(), args: Vec::new() }),
+        };
+        let info = ExternalFunctionInfo {
+            target: Some("javascript".into()),
+            module: "../gleam_stdlib.mjs".into(),
+            function: "identity".into(),
+            span: TEST_SPAN,
+        };
+
+        assert!(validate_external_info_abi("cast", &info, &type_).is_empty());
+
+        let inspect = Type::Function {
+            params: vec![Type::Anything],
+            return_type: Box::new(Type::Custom { name: "StringTree".into(), args: Vec::new() }),
+        };
+        let info = ExternalFunctionInfo { function: "inspect".into(), ..info };
+
+        assert!(validate_external_info_abi("do_inspect", &info, &inspect).is_empty());
+    }
+
+    #[test]
+    fn rejects_anything_for_general_externals() {
+        let type_ = Type::Function { params: vec![Type::Anything], return_type: Box::new(Type::String) };
+        let info = ExternalFunctionInfo {
+            target: Some("javascript".into()),
+            module: "regulus/js".into(),
+            function: "inspect".into(),
+            span: TEST_SPAN,
+        };
+
+        let diagnostics = validate_external_info_abi("inspect", &info, &type_);
+
+        assert_eq!(diagnostics.len(), 1);
+        assert!(
+            diagnostics[0]
+                .message
+                .contains("external function `inspect` parameter 1 uses unsupported ABI shape `Anything`")
+        );
     }
 }
