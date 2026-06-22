@@ -177,11 +177,11 @@ table.
       dependency-to-dependency calls after source loading.
 - [x] Substitute generic type variables in dependency bodies and interfaces
       for each concrete specialization.
-- [ ] Generate stable internal backend names for specializations and rewrite
+- [x] Generate stable internal backend names for specializations and rewrite
       calls to those names.
-- [ ] Keep dependency specializations internal so generic stdlib helpers are
+- [x] Keep dependency specializations internal so generic stdlib helpers are
       not exported through the host ABI.
-- [ ] Emit Wasm for source-backed stdlib helpers that currently lower but need
+- [x] Emit Wasm for source-backed stdlib helpers that currently lower but need
       concrete dependency shapes: `gleam/list.{fold,map}`,
       `gleam/option.map`, `gleam/result.map`,
       `gleam/function.{compose,flip}`, `gleam/int.to_string`, and

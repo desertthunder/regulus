@@ -61,9 +61,88 @@ impl ExpressionSpan for Expression {
     }
 }
 
+impl TypedModule {
+    fn typed_expression(&self, span: Span) -> Option<Type> {
+        self.expressions
+            .iter()
+            .find(|expression| expression.span == span)
+            .map(|expression| expression.type_.clone())
+    }
+
+    fn call_target(&self, function: &Expression) -> Option<FunctionId> {
+        match function {
+            Expression::Variable(name) => self.resolved.references.iter().find_map(|reference| {
+                if reference.name.span != name.span {
+                    return None;
+                }
+                let ReferenceTarget::Symbol(symbol_id) = reference.target else {
+                    return None;
+                };
+                let symbol = self.resolved.symbols.symbol(symbol_id);
+                match &symbol.kind {
+                    SymbolKind::Function { .. } | SymbolKind::ExternalFunction { .. } => Some(FunctionId {
+                        package: self.package_name.clone()?,
+                        module: self.module_name.clone()?,
+                        function: symbol.name.clone(),
+                    }),
+                    SymbolKind::Imported { package, module: imported_module, member } => Some(FunctionId {
+                        package: package.clone().or_else(|| self.package_name.clone())?,
+                        module: imported_module.clone(),
+                        function: member.clone(),
+                    }),
+                    _ => None,
+                }
+            }),
+            Expression::FieldAccess(access) => self.resolved.references.iter().find_map(|reference| {
+                let ReferenceTarget::QualifiedMember { module: module_symbol, member, .. } = &reference.target else {
+                    return None;
+                };
+                if member.span != access.field.span {
+                    return None;
+                }
+                let symbol = self.resolved.symbols.symbol(*module_symbol);
+                let SymbolKind::Import { package, module: imported_module } = &symbol.kind else {
+                    return None;
+                };
+                Some(FunctionId {
+                    package: package.clone().or_else(|| self.package_name.clone())?,
+                    module: imported_module.clone(),
+                    function: member.text.clone(),
+                })
+            }),
+            _ => None,
+        }
+    }
+
+    fn function_type(&self, name: &str) -> Option<&Type> {
+        self.functions
+            .iter()
+            .find(|function| function.name.text == name)
+            .map(|function| &function.type_)
+    }
+}
+
 struct FunctionSource<'a> {
     module: &'a TypedModule,
     function: &'a ast::Function,
+}
+
+impl FunctionSource<'_> {
+    fn call_site_type(&self, call: &ast::Call, substitutions: &HashMap<String, Type>) -> Option<Type> {
+        let call_return_type = self.module.typed_expression(call.span)?;
+        let call_param_types = call
+            .arguments
+            .iter()
+            .map(|argument| self.module.typed_expression(argument.value.span()))
+            .collect::<Option<Vec<_>>>()?;
+        Some(Type::Function {
+            params: call_param_types
+                .into_iter()
+                .map(|type_| type_.substitute(substitutions))
+                .collect(),
+            return_type: Box::new(call_return_type.substitute(substitutions)),
+        })
+    }
 }
 
 impl TypedProject {
@@ -100,27 +179,43 @@ impl TypedProject {
                     .and_then(|entry| entry.interface.functions.get(&callee.function))
                 else {
                     if callee_is_source {
-                        worklist.push(WorkItem { function: callee, substitutions: item.substitutions.clone() });
+                        let Some(call_site_type) = source.call_site_type(call, &item.substitutions) else {
+                            worklist.push(WorkItem { function: callee, substitutions: item.substitutions.clone() });
+                            continue;
+                        };
+                        let Some(callee_type) = source_functions
+                            .get(&callee)
+                            .and_then(|source| source.module.function_type(&callee.function))
+                        else {
+                            worklist.push(WorkItem { function: callee, substitutions: item.substitutions.clone() });
+                            continue;
+                        };
+                        let substitutions = callee_type.substitutions_to(&call_site_type);
+                        if !dependency_functions.contains(&callee) {
+                            worklist.push(WorkItem { function: callee, substitutions });
+                            continue;
+                        }
+                        let instantiated_type = callee_type.substitute(&substitutions);
+                        let Type::Function { params, return_type } = instantiated_type.clone() else {
+                            continue;
+                        };
+                        worklist.push(WorkItem { function: callee.clone(), substitutions: substitutions.clone() });
+                        let key = DependencySpecializationKey {
+                            package: callee.package,
+                            module: callee.module,
+                            function: callee.function,
+                            params,
+                            return_type: *return_type,
+                        };
+                        push_unique_specialization(
+                            &mut specializations,
+                            DependencySpecialization { key, source_span: call.span, instantiated_type, substitutions },
+                        );
                     }
                     continue;
                 };
-                let Some(call_return_type) = source.module.typed_expression(call.span) else {
+                let Some(call_site_type) = source.call_site_type(call, &item.substitutions) else {
                     continue;
-                };
-                let Some(call_param_types) = call
-                    .arguments
-                    .iter()
-                    .map(|argument| source.module.typed_expression(argument.value.span()))
-                    .collect::<Option<Vec<_>>>()
-                else {
-                    continue;
-                };
-                let call_site_type = Type::Function {
-                    params: call_param_types
-                        .into_iter()
-                        .map(|type_| type_.substitute(&item.substitutions))
-                        .collect(),
-                    return_type: Box::new(call_return_type.substitute(&item.substitutions)),
                 };
                 let substitutions = interface_type.substitutions_to(&call_site_type);
                 let instantiated_type = interface_type.substitute(&substitutions);
@@ -198,67 +293,8 @@ impl TypedProject {
     }
 }
 
-impl TypedModule {
-    fn typed_expression(&self, span: Span) -> Option<Type> {
-        self.expressions
-            .iter()
-            .find(|expression| expression.span == span)
-            .map(|expression| expression.type_.clone())
-    }
-
-    fn call_target(&self, function: &Expression) -> Option<FunctionId> {
-        match function {
-            Expression::Variable(name) => self.resolved.references.iter().find_map(|reference| {
-                if reference.name.span != name.span {
-                    return None;
-                }
-                let ReferenceTarget::Symbol(symbol_id) = reference.target else {
-                    return None;
-                };
-                let symbol = self.resolved.symbols.symbol(symbol_id);
-                match &symbol.kind {
-                    SymbolKind::Function { .. } | SymbolKind::ExternalFunction { .. } => Some(FunctionId {
-                        package: self.package_name.clone()?,
-                        module: self.module_name.clone()?,
-                        function: symbol.name.clone(),
-                    }),
-                    SymbolKind::Imported { package, module: imported_module, member } => Some(FunctionId {
-                        package: package.clone().or_else(|| self.package_name.clone())?,
-                        module: imported_module.clone(),
-                        function: member.clone(),
-                    }),
-                    _ => None,
-                }
-            }),
-            Expression::FieldAccess(access) => self.resolved.references.iter().find_map(|reference| {
-                let ReferenceTarget::QualifiedMember { module: module_symbol, member, .. } = &reference.target else {
-                    return None;
-                };
-                if member.span != access.field.span {
-                    return None;
-                }
-                let symbol = self.resolved.symbols.symbol(*module_symbol);
-                let SymbolKind::Import { package, module: imported_module } = &symbol.kind else {
-                    return None;
-                };
-                Some(FunctionId {
-                    package: package.clone().or_else(|| self.package_name.clone())?,
-                    module: imported_module.clone(),
-                    function: member.text.clone(),
-                })
-            }),
-            _ => None,
-        }
-    }
-}
-
-fn push_unique_specialization(
-    specializations: &mut Vec<DependencySpecialization>, specialization: DependencySpecialization,
-) {
-    if !specializations
-        .iter()
-        .any(|existing| existing.key == specialization.key)
-    {
-        specializations.push(specialization);
+fn push_unique_specialization(specs: &mut Vec<DependencySpecialization>, spec: DependencySpecialization) {
+    if !specs.iter().any(|existing| existing.key == spec.key) {
+        specs.push(spec);
     }
 }

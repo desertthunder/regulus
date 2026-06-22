@@ -142,6 +142,7 @@ impl Module {
     }
 }
 
+// TODO: make an instance method on Function
 fn import_boundary_debug_line(function: &Function) -> Option<String> {
     match &function.abi.boundary {
         CallBoundary::HostImport { module, name } => {
@@ -992,7 +993,7 @@ pub fn lower_project(project: TypedProject) -> Result<Module, Diagnostics> {
         return Err(diagnostics);
     }
 
-    link_modules(modules, dependency_specializations)
+    link_mods(modules, dependency_specializations)
 }
 
 fn keep_dependency_module_internal(module: &mut Module) {
@@ -1180,16 +1181,15 @@ fn unsupported_source_backed_stdlib_runtime_diagnostic(module: &str, member: &st
     )
 }
 
-fn link_modules(
-    modules: Vec<Module>, dependency_specializations: Vec<DependencySpecialization>,
-) -> Result<Module, Diagnostics> {
-    let Some(first) = modules.first() else {
+fn link_mods(mods: Vec<Module>, dep_specializations: Vec<DependencySpecialization>) -> Result<Module, Diagnostics> {
+    let Some(first) = mods.first() else {
         return Err(vec![Diagnostic::new(
             DiagnosticCode::ProjectError,
             "project has no modules to compile",
         )]);
     };
 
+    let rename_plan = global_backend_renames(&mods, &dep_specializations);
     let mut linked = Module {
         span: first.span,
         identity: None,
@@ -1202,19 +1202,20 @@ fn link_modules(
         js_externals: Vec::new(),
         exports: Vec::new(),
         functions: Vec::new(),
-        dependency_specializations,
+        dependency_specializations: dep_specializations.clone(),
         linked_names: Vec::new(),
     };
-    let rename_plan = global_backend_renames(&modules);
     let diagnostics = generated_name_collision_diagnostics(&rename_plan.linked_names);
     if !diagnostics.is_empty() {
         return Err(diagnostics);
     }
     linked.linked_names = rename_plan.linked_names.clone();
-    for module in modules {
-        let renames = module_backend_renames(&module, &rename_plan);
+    for module in mods {
+        let renames = mod_backend_renames(&module, &rename_plan);
         let mut module = module;
-        rewrite_module_backend_names(&mut module, &renames, &rename_plan);
+        add_dep_specialization_funcs(&mut module, &dep_specializations, &rename_plan);
+        rewrite_mod_backend_names(&mut module, &renames, &rename_plan);
+        remove_unspecialized_dep_functions(&mut module, &rename_plan);
 
         linked.imports.extend(module.imports);
         linked.declarations.extend(module.declarations);
@@ -1232,12 +1233,20 @@ fn link_modules(
 
 struct BackendRenamePlan {
     renames: HashMap<String, String>,
+    dependency_specializations: Vec<(DependencySpecializationKey, String)>,
+    unspecialized_dependency_functions: HashSet<String>,
     linked_names: Vec<LinkedName>,
 }
 
-fn global_backend_renames(modules: &[Module]) -> BackendRenamePlan {
+fn global_backend_renames(modules: &[Module], specializations: &[DependencySpecialization]) -> BackendRenamePlan {
     let mut renames = HashMap::new();
+    let mut dependency_specialization_names = Vec::new();
+    let mut unspecialized_dependency_functions = HashSet::new();
     let mut linked_names = Vec::new();
+    let dependency_packages = specializations
+        .iter()
+        .map(|specialization| specialization.key.package.as_str())
+        .collect::<HashSet<_>>();
     for module in modules {
         let Some(identity) = &module.identity else { continue };
         let module_name = ModuleName::from_path(&identity.module);
@@ -1301,6 +1310,15 @@ fn global_backend_renames(modules: &[Module]) -> BackendRenamePlan {
                 ),
                 generated_name.clone(),
             );
+            if dependency_packages.contains(identity.package.as_str())
+                && (!function.name.starts_with("__") || anonymous_function_index(&function.name).is_some())
+                && !matches!(
+                    function.abi.boundary,
+                    CallBoundary::HostImport { .. } | CallBoundary::ModuleImport { .. }
+                )
+            {
+                unspecialized_dependency_functions.insert(generated_name.clone());
+            }
             linked_names.push(LinkedName { source_name, generated_name, kind, span: function.span });
         }
         for constant in &module.constants {
@@ -1342,15 +1360,64 @@ fn global_backend_renames(modules: &[Module]) -> BackendRenamePlan {
             }
         }
     }
-    BackendRenamePlan { renames, linked_names }
+    let mut sorted_specializations = specializations.iter().collect::<Vec<_>>();
+    sorted_specializations.sort_by_key(|specialization| specialization_sort_key(&specialization.key));
+    let mut generated_by_owner = HashMap::<(&str, &str), u32>::new();
+    for specialization in sorted_specializations {
+        let module_name = ModuleName::from_path(&specialization.key.module);
+        let owner = (specialization.key.package.as_str(), specialization.key.module.as_str());
+        let index = generated_by_owner.entry(owner).or_insert(0);
+        let backend = BackendName::package_item(
+            specialization.key.package.as_str(),
+            module_name,
+            BackendItem::generated_for_member(
+                BackendItemKind::Helper(HelperKind::Other("specialization".into())),
+                specialization.key.function.as_str(),
+                CompilerGeneratedIndex(*index),
+            ),
+        );
+        *index += 1;
+        let generated_name = render_backend_name(&backend);
+        dependency_specialization_names.push((specialization.key.clone(), generated_name.clone()));
+        linked_names.push(LinkedName {
+            source_name: dep_specialization_source_name(&specialization.key),
+            generated_name,
+            kind: LinkedNameKind::Function,
+            span: specialization.source_span,
+        });
+    }
+    BackendRenamePlan {
+        renames,
+        dependency_specializations: dependency_specialization_names,
+        unspecialized_dependency_functions,
+        linked_names,
+    }
 }
 
 fn backend_key(package: &str, module: &str, member: &str) -> String {
     format!("{package}:{module}.{member}")
 }
 
+// TODO: instance method on ModuleIdentity
 fn linked_source_name(identity: &ModuleIdentity, member: &str) -> String {
     backend_key(identity.package.as_str(), identity.module.as_str(), member)
+}
+
+// TODO: instance method on DependencySpecializationKey
+fn dep_specialization_source_name(key: &DependencySpecializationKey) -> String {
+    format!(
+        "{}:{}.{}/{}->{}",
+        key.package,
+        key.module,
+        key.function,
+        key.params.iter().map(Type::display).collect::<Vec<_>>().join(","),
+        key.return_type.display()
+    )
+}
+
+// TODO: this is useless
+fn specialization_sort_key(key: &DependencySpecializationKey) -> String {
+    dep_specialization_source_name(key)
 }
 
 fn generated_name_collision_diagnostics(linked_names: &[LinkedName]) -> Diagnostics {
@@ -1390,9 +1457,16 @@ fn generated_name_collision_diagnostics(linked_names: &[LinkedName]) -> Diagnost
     diagnostics
 }
 
-fn module_backend_renames(module: &Module, plan: &BackendRenamePlan) -> HashMap<String, String> {
-    let mut renames = HashMap::new();
-    let Some(identity) = &module.identity else { return renames };
+struct ModuleBackendRenames {
+    names: HashMap<String, String>,
+    calls: HashMap<String, String>,
+}
+
+// TODO: instance method on Module
+fn mod_backend_renames(module: &Module, plan: &BackendRenamePlan) -> ModuleBackendRenames {
+    let mut names = HashMap::new();
+    let mut calls = HashMap::new();
+    let Some(identity) = &module.identity else { return ModuleBackendRenames { names, calls } };
     let global = &plan.renames;
 
     for function in &module.functions {
@@ -1401,8 +1475,8 @@ fn module_backend_renames(module: &Module, plan: &BackendRenamePlan) -> HashMap<
             identity.module.as_str(),
             function.name.as_str(),
         )) {
-            renames.insert(function.name.clone(), backend.clone());
-            renames.insert(format!("{}.{}", identity.module, function.name), backend.clone());
+            names.insert(function.name.clone(), backend.clone());
+            names.insert(format!("{}.{}", identity.module, function.name), backend.clone());
         }
     }
     for constant in &module.constants {
@@ -1411,8 +1485,8 @@ fn module_backend_renames(module: &Module, plan: &BackendRenamePlan) -> HashMap<
             identity.module.as_str(),
             constant.name.as_str(),
         )) {
-            renames.insert(constant.name.clone(), backend.clone());
-            renames.insert(format!("{}.{}", identity.module, constant.name), backend.clone());
+            names.insert(constant.name.clone(), backend.clone());
+            names.insert(format!("{}.{}", identity.module, constant.name), backend.clone());
         }
     }
     for declaration in &module.declarations {
@@ -1424,8 +1498,29 @@ fn module_backend_renames(module: &Module, plan: &BackendRenamePlan) -> HashMap<
                 name.as_str(),
             ))
         {
-            renames.insert(name.clone(), backend.clone());
-            renames.insert(format!("{}.{}", identity.module, name), backend.clone());
+            names.insert(name.clone(), backend.clone());
+            names.insert(format!("{}.{}", identity.module, name), backend.clone());
+        }
+    }
+
+    for (key, backend) in &plan.dependency_specializations {
+        if key.package == identity.package && key.module == identity.module {
+            insert_call_rename(&mut calls, &key.function, key, backend);
+            insert_call_rename(
+                &mut calls,
+                &format!("{}.{}", identity.module, key.function),
+                key,
+                backend,
+            );
+            insert_call_rename(
+                &mut calls,
+                &backend_key(&key.package, &key.module, &key.function),
+                key,
+                backend,
+            );
+            if let Some(unspecialized) = global.get(&backend_key(&key.package, &key.module, &key.function)) {
+                insert_call_rename(&mut calls, unspecialized, key, backend);
+            }
         }
     }
 
@@ -1445,38 +1540,430 @@ fn module_backend_renames(module: &Module, plan: &BackendRenamePlan) -> HashMap<
             let Some(member) = source.strip_prefix(&prefix) else {
                 continue;
             };
-            renames.insert(source.clone(), backend.clone());
-            renames.insert(format!("{local}.{member}"), backend.clone());
-            renames.insert(format!("{}.{}", import.module, member), backend.clone());
-            renames.insert(format!("{package_qualified_prefix}{member}"), backend.clone());
+            names.insert(source.clone(), backend.clone());
+            names.insert(format!("{local}.{member}"), backend.clone());
+            names.insert(format!("{}.{}", import.module, member), backend.clone());
+            names.insert(format!("{package_qualified_prefix}{member}"), backend.clone());
             if import
                 .unqualified
                 .iter()
                 .any(|item| item.alias.as_deref().unwrap_or(&item.name) == member)
             {
-                renames.insert(member.to_string(), backend.clone());
+                names.insert(member.to_string(), backend.clone());
+            }
+        }
+        for (key, backend) in &plan.dependency_specializations {
+            if key.package != package || key.module != import.module {
+                continue;
+            }
+            insert_call_rename(
+                &mut calls,
+                &backend_key(&key.package, &key.module, &key.function),
+                key,
+                backend,
+            );
+            if let Some(unspecialized) = global.get(&backend_key(&key.package, &key.module, &key.function)) {
+                insert_call_rename(&mut calls, unspecialized, key, backend);
+            }
+            insert_call_rename(&mut calls, &format!("{local}.{}", key.function), key, backend);
+            insert_call_rename(&mut calls, &format!("{}.{}", import.module, key.function), key, backend);
+            insert_call_rename(
+                &mut calls,
+                &format!("{package_qualified_prefix}{}", key.function),
+                key,
+                backend,
+            );
+            if import
+                .unqualified
+                .iter()
+                .any(|item| item.alias.as_deref().unwrap_or(&item.name) == key.function)
+            {
+                insert_call_rename(&mut calls, &key.function, key, backend);
             }
         }
     }
 
-    renames
+    ModuleBackendRenames { names, calls }
+}
+
+fn insert_call_rename(
+    calls: &mut HashMap<String, String>, source_name: &str, key: &DependencySpecializationKey, backend: &str,
+) {
+    calls.insert(
+        call_rename_key(source_name, &key.params, &key.return_type),
+        backend.to_string(),
+    );
+}
+
+fn call_rename_key(source_name: &str, params: &[Type], return_type: &Type) -> String {
+    format!(
+        "{}({})->{}",
+        source_name,
+        params.iter().map(Type::display).collect::<Vec<_>>().join(","),
+        return_type.display()
+    )
+}
+
+// TODO: instance method on DirectCall
+fn direct_call_rename_key(call: &DirectCall) -> Option<String> {
+    let return_type = call.abi.return_.as_ref()?.type_.clone();
+    let params = call
+        .abi
+        .params
+        .iter()
+        .map(|param| param.type_.clone())
+        .collect::<Vec<_>>();
+    Some(call_rename_key(&call.function, &params, &return_type))
+}
+
+// TODO: instance method on DirectCall
+fn direct_call_expr_rename_key(call: &DirectCall, return_type: &Type) -> String {
+    let params = call
+        .arguments
+        .iter()
+        .map(|argument| argument.value.type_.clone())
+        .collect::<Vec<_>>();
+    call_rename_key(&call.function, &params, return_type)
+}
+
+fn unique_call_rename(source_name: &str, calls: &HashMap<String, String>) -> Option<String> {
+    let prefix = format!("{source_name}(");
+    let mut matches = calls
+        .iter()
+        .filter_map(|(key, backend)| key.starts_with(&prefix).then_some(backend.clone()))
+        .collect::<Vec<_>>();
+    matches.sort();
+    matches.dedup();
+    (matches.len() == 1).then(|| matches.remove(0))
+}
+
+// TODO: instance method on Module
+fn add_dep_specialization_funcs(
+    module: &mut Module, specializations: &[DependencySpecialization], plan: &BackendRenamePlan,
+) {
+    let Some(identity) = &module.identity else { return };
+    let mut clones = Vec::new();
+    for specialization in specializations {
+        if specialization.key.package != identity.package || specialization.key.module != identity.module {
+            continue;
+        }
+        let Some(source) = module
+            .functions
+            .iter()
+            .find(|function| function.name == specialization.key.function)
+        else {
+            continue;
+        };
+        let Some((_, backend_name)) = plan
+            .dependency_specializations
+            .iter()
+            .find(|(key, _)| key == &specialization.key)
+        else {
+            continue;
+        };
+        let mut function = source.clone();
+        function.name = backend_name.clone();
+        function.public = false;
+        function.abi.boundary = CallBoundary::Internal;
+        let substitutions = concrete_function_substitutions(source, specialization);
+        substitute_function_types(&mut function, &substitutions);
+        let helper_renames = dep_specialization_helper_renames(&function, backend_name);
+        if !helper_renames.is_empty() {
+            let helper_renames = ModuleBackendRenames { names: helper_renames, calls: HashMap::new() };
+            rewrite_function(&mut function, &helper_renames);
+            for helper_name in helper_renames.names.keys() {
+                let Some(helper_source) = module.functions.iter().find(|candidate| candidate.name == *helper_name)
+                else {
+                    continue;
+                };
+                let mut helper = helper_source.clone();
+                helper.name = helper_renames
+                    .names
+                    .get(helper_name)
+                    .cloned()
+                    .unwrap_or_else(|| helper.name.clone());
+                helper.public = false;
+                helper.abi.boundary = CallBoundary::Internal;
+                substitute_function_types(&mut helper, &substitutions);
+                rewrite_function(&mut helper, &helper_renames);
+                clones.push(helper);
+            }
+        }
+        clones.push(function);
+    }
+    module.functions.extend(clones);
+}
+
+fn concrete_function_substitutions(
+    source: &Function, specialization: &DependencySpecialization,
+) -> HashMap<String, Type> {
+    let mut substitutions = specialization.substitutions.clone();
+    for (source_param, concrete_param) in source.params.iter().zip(&specialization.key.params) {
+        collect_type_substitutions(&source_param.type_, concrete_param, &mut substitutions);
+    }
+    collect_type_substitutions(&source.return_type, &specialization.key.return_type, &mut substitutions);
+    substitutions
+}
+
+fn collect_type_substitutions(source: &Type, concrete: &Type, substitutions: &mut HashMap<String, Type>) {
+    match (source, concrete) {
+        (Type::Generic(name), concrete) => {
+            substitutions.entry(name.clone()).or_insert_with(|| concrete.clone());
+        }
+        (Type::List(source), Type::List(concrete)) => collect_type_substitutions(source, concrete, substitutions),
+        (Type::Tuple(source), Type::Tuple(concrete)) => {
+            for (source, concrete) in source.iter().zip(concrete) {
+                collect_type_substitutions(source, concrete, substitutions);
+            }
+        }
+        (
+            Type::Function { params: source_params, return_type: source_return },
+            Type::Function { params: concrete_params, return_type: concrete_return },
+        ) => {
+            for (source, concrete) in source_params.iter().zip(concrete_params) {
+                collect_type_substitutions(source, concrete, substitutions);
+            }
+            collect_type_substitutions(source_return, concrete_return, substitutions);
+        }
+        (
+            Type::Custom { name: source_name, args: source_args },
+            Type::Custom { name: concrete_name, args: concrete_args },
+        ) if source_name == concrete_name => {
+            for (source, concrete) in source_args.iter().zip(concrete_args) {
+                collect_type_substitutions(source, concrete, substitutions);
+            }
+        }
+        (
+            Type::Record { name: source_name, fields: source_fields },
+            Type::Record { name: concrete_name, fields: concrete_fields },
+        ) if source_name == concrete_name => {
+            for (source, concrete) in source_fields.iter().zip(concrete_fields) {
+                collect_type_substitutions(&source.type_, &concrete.type_, substitutions);
+            }
+        }
+        (
+            Type::Opaque { name: source_name, args: source_args },
+            Type::Opaque { name: concrete_name, args: concrete_args },
+        ) if source_name == concrete_name => {
+            for (source, concrete) in source_args.iter().zip(concrete_args) {
+                collect_type_substitutions(source, concrete, substitutions);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn dep_specialization_helper_renames(function: &Function, specialization_backend: &str) -> HashMap<String, String> {
+    let mut helper_names = HashSet::new();
+    collect_function_value_names(&function.body, &mut helper_names);
+    helper_names
+        .into_iter()
+        .filter(|name| name.starts_with("__anon_"))
+        .map(|name| {
+            let backend = format!("{specialization_backend}${}", name.trim_start_matches("__"));
+            (name, backend)
+        })
+        .collect()
+}
+
+// TODO: instance method on Block
+fn collect_function_value_names(block: &Block, names: &mut HashSet<String>) {
+    for instruction in &block.instructions {
+        collect_function_value_names_in_expr(instruction.expression(), names);
+    }
+    collect_function_value_names_in_expr(&block.result, names);
+}
+
+// TODO: instance method on Expression
+fn collect_function_value_names_in_expr(expr: &Expression, names: &mut HashSet<String>) {
+    match &expr.kind {
+        ExpressionKind::FunctionValue(function) => {
+            names.insert(function.name.clone());
+        }
+        ExpressionKind::AnonymousFunction(function) => collect_function_value_names(&function.body, names),
+        _ => {}
+    }
+    for child in expr.children() {
+        collect_function_value_names_in_expr(child, names);
+    }
+}
+
+// TODO: instance method on Module
+fn remove_unspecialized_dep_functions(module: &mut Module, plan: &BackendRenamePlan) {
+    module
+        .functions
+        .retain(|function| !plan.unspecialized_dependency_functions.contains(&function.name));
+}
+
+// TODO: instance method on Function
+fn substitute_function_types(function: &mut Function, substitutions: &HashMap<String, Type>) {
+    function.closure_captures = function
+        .closure_captures
+        .iter()
+        .map(|type_| type_.substitute(substitutions))
+        .collect();
+    for param in &mut function.params {
+        substitute_local_type(param, substitutions);
+    }
+    for local in &mut function.locals {
+        substitute_local_type(local, substitutions);
+    }
+    function.return_type = function.return_type.substitute(substitutions);
+    substitute_call_abi_types(&mut function.abi, substitutions);
+    substitute_block_types(&mut function.body, substitutions);
+}
+
+// TODO: instance method on Local
+fn substitute_local_type(local: &mut Local, substitutions: &HashMap<String, Type>) {
+    local.type_ = local.type_.substitute(substitutions);
+}
+
+// TODO: instance method on CallAbi
+fn substitute_call_abi_types(abi: &mut CallAbi, substitutions: &HashMap<String, Type>) {
+    for param in &mut abi.params {
+        substitute_abi_value_type(param, substitutions);
+    }
+    if let Some(return_) = &mut abi.return_ {
+        substitute_abi_value_type(return_, substitutions);
+    }
+}
+
+// TODO: instance method on AbiValue
+fn substitute_abi_value_type(value: &mut AbiValue, substitutions: &HashMap<String, Type>) {
+    value.type_ = value.type_.substitute(substitutions);
+    value.representation = RepresentationType::from(&value.type_);
+}
+
+// TODO: instance method on Block
+fn substitute_block_types(block: &mut Block, substitutions: &HashMap<String, Type>) {
+    for instruction in &mut block.instructions {
+        match instruction {
+            Instruction::Evaluate { expression, .. } | Instruction::LocalSet { value: expression, .. } => {
+                substitute_expression_types(expression, substitutions)
+            }
+            Instruction::AssertMatch { value, .. } => substitute_expression_types(value, substitutions),
+        }
+    }
+    substitute_expression_types(&mut block.result, substitutions);
+}
+
+// TODO: instance method on Expression
+fn substitute_expression_types(expression: &mut Expression, substitutions: &HashMap<String, Type>) {
+    expression.type_ = expression.type_.substitute(substitutions);
+    match &mut expression.kind {
+        ExpressionKind::DirectCall(call) => {
+            substitute_call_abi_types(&mut call.abi, substitutions);
+            for argument in &mut call.arguments {
+                substitute_expression_types(&mut argument.value, substitutions);
+            }
+        }
+        ExpressionKind::IndirectCall(call) => {
+            substitute_expression_types(&mut call.callee, substitutions);
+            substitute_call_abi_types(&mut call.abi, substitutions);
+            for argument in &mut call.arguments {
+                substitute_expression_types(&mut argument.value, substitutions);
+            }
+        }
+        ExpressionKind::FunctionValue(function) => substitute_call_abi_types(&mut function.abi, substitutions),
+        ExpressionKind::AnonymousFunction(function) => {
+            for param in &mut function.params {
+                substitute_local_type(param, substitutions);
+            }
+            for capture in &mut function.captures {
+                capture.type_ = capture.type_.substitute(substitutions);
+            }
+            substitute_call_abi_types(&mut function.abi, substitutions);
+            substitute_block_types(&mut function.body, substitutions);
+        }
+        ExpressionKind::Pipeline(pipeline) => {
+            substitute_expression_types(&mut pipeline.input, substitutions);
+            substitute_expression_types(&mut pipeline.call, substitutions);
+        }
+        ExpressionKind::Use(use_) => {
+            substitute_expression_types(&mut use_.callback, substitutions);
+            substitute_expression_types(&mut use_.call, substitutions);
+        }
+        ExpressionKind::Branch(branch) => {
+            for subject in &mut branch.subjects {
+                substitute_expression_types(subject, substitutions);
+            }
+            for clause in &mut branch.clauses {
+                if let Some(guard) = &mut clause.guard {
+                    substitute_expression_types(guard, substitutions);
+                }
+                substitute_expression_types(&mut clause.body, substitutions);
+            }
+        }
+        ExpressionKind::Tuple(items) | ExpressionKind::List(items) => {
+            for item in items {
+                substitute_expression_types(item, substitutions);
+            }
+        }
+        ExpressionKind::BitArrayConcat { left, right }
+        | ExpressionKind::Compare { left, right, .. }
+        | ExpressionKind::RuntimeEquality { left, right } => {
+            substitute_expression_types(left, substitutions);
+            substitute_expression_types(right, substitutions);
+        }
+        ExpressionKind::BitStringDeconstruct { bit_array, .. }
+        | ExpressionKind::FieldAccess { record: bit_array, .. }
+        | ExpressionKind::TupleElement { tuple: bit_array, .. }
+        | ExpressionKind::ListDeconstruct { list: bit_array, .. } => {
+            substitute_expression_types(bit_array, substitutions);
+        }
+        ExpressionKind::Record(record) => {
+            for field in &mut record.fields {
+                substitute_expression_types(&mut field.value, substitutions);
+            }
+        }
+        ExpressionKind::Constructor(constructor) => {
+            for argument in &mut constructor.arguments {
+                substitute_expression_types(argument, substitutions);
+            }
+        }
+        ExpressionKind::RecordUpdate { record, fields, .. } => {
+            substitute_expression_types(record, substitutions);
+            for field in fields {
+                field.type_ = field.type_.substitute(substitutions);
+                if let Some(value) = &mut field.value {
+                    substitute_expression_types(value, substitutions);
+                }
+            }
+        }
+        ExpressionKind::ListCons { head, tail } => {
+            substitute_expression_types(head, substitutions);
+            substitute_expression_types(tail, substitutions);
+        }
+        ExpressionKind::Memory(operation) => match operation {
+            MemoryOperation::Allocate { bytes } => substitute_expression_types(bytes, substitutions),
+            MemoryOperation::Load { address, type_: _ } => substitute_expression_types(address, substitutions),
+            MemoryOperation::Store { address, value } => {
+                substitute_expression_types(address, substitutions);
+                substitute_expression_types(value, substitutions);
+            }
+        },
+        ExpressionKind::Literal(_)
+        | ExpressionKind::LocalGet(_)
+        | ExpressionKind::BitArray(_)
+        | ExpressionKind::Failure(_) => {}
+    }
 }
 
 fn anonymous_function_index(name: &str) -> Option<u32> {
     name.strip_prefix("__anon_")?.parse().ok()
 }
 
-fn rewrite_module_backend_names(module: &mut Module, renames: &HashMap<String, String>, _plan: &BackendRenamePlan) {
+fn rewrite_mod_backend_names(module: &mut Module, renames: &ModuleBackendRenames, _plan: &BackendRenamePlan) {
     for constant in &mut module.constants {
-        rewrite_name(&mut constant.name, renames);
+        rewrite_name(&mut constant.name, &renames.names);
     }
     for step in &mut module.init.steps {
         if let InitStep::StaticData { name, .. } = step {
-            rewrite_name(name, renames);
+            rewrite_name(name, &renames.names);
         }
     }
     for reference in &mut module.references {
-        rewrite_reference(reference, renames);
+        rewrite_reference(reference, &renames.names);
     }
     for export in &mut module.exports {
         if matches!(
@@ -1485,6 +1972,7 @@ fn rewrite_module_backend_names(module: &mut Module, renames: &HashMap<String, S
         ) {
             export.backend_name = Some(
                 renames
+                    .names
                     .get(&export.name)
                     .cloned()
                     .unwrap_or_else(|| export.name.clone()),
@@ -1495,6 +1983,8 @@ fn rewrite_module_backend_names(module: &mut Module, renames: &HashMap<String, S
         rewrite_function(function, renames);
     }
 }
+
+// TODO: all rewrite_* functions can be instance methods on the first arg type
 
 fn rewrite_reference(reference: &mut Reference, renames: &HashMap<String, String>) {
     rewrite_name(&mut reference.name, renames);
@@ -1517,29 +2007,29 @@ fn rewrite_reference(reference: &mut Reference, renames: &HashMap<String, String
     }
 }
 
-fn rewrite_function(function: &mut Function, renames: &HashMap<String, String>) {
-    if let Some(name) = renames.get(&function.name) {
+fn rewrite_function(function: &mut Function, renames: &ModuleBackendRenames) {
+    if let Some(name) = renames.names.get(&function.name) {
         function.name = name.clone();
     }
     rewrite_block(&mut function.body, renames);
 }
 
-fn rewrite_block(block: &mut Block, renames: &HashMap<String, String>) {
+fn rewrite_block(block: &mut Block, renames: &ModuleBackendRenames) {
     for instruction in &mut block.instructions {
         match instruction {
             Instruction::Evaluate { expression, .. } | Instruction::LocalSet { value: expression, .. } => {
-                rewrite_expression(expression, renames)
+                rewrite_expr(expression, renames)
             }
             Instruction::AssertMatch { value, pattern, .. } => {
-                rewrite_expression(value, renames);
+                rewrite_expr(value, renames);
                 rewrite_pattern(pattern, renames);
             }
         }
     }
-    rewrite_expression(&mut block.result, renames);
+    rewrite_expr(&mut block.result, renames);
 }
 
-fn rewrite_pattern(pattern: &mut IrPattern, renames: &HashMap<String, String>) {
+fn rewrite_pattern(pattern: &mut IrPattern, renames: &ModuleBackendRenames) {
     match pattern {
         IrPattern::Alias { pattern, .. } => rewrite_pattern(pattern, renames),
         IrPattern::Tuple(items) => {
@@ -1553,7 +2043,7 @@ fn rewrite_pattern(pattern: &mut IrPattern, renames: &HashMap<String, String>) {
             }
         }
         IrPattern::Constructor { name, arguments } => {
-            rewrite_name(name, renames);
+            rewrite_name(name, &renames.names);
             for argument in arguments {
                 rewrite_pattern(&mut argument.pattern, renames);
             }
@@ -1562,93 +2052,108 @@ fn rewrite_pattern(pattern: &mut IrPattern, renames: &HashMap<String, String>) {
     }
 }
 
-fn rewrite_expression(expression: &mut Expression, renames: &HashMap<String, String>) {
-    match &mut expression.kind {
+fn rewrite_expr(expr: &mut Expression, renames: &ModuleBackendRenames) {
+    let expression_type = expr.type_.clone();
+    match &mut expr.kind {
         ExpressionKind::DirectCall(call) => {
-            rewrite_name(&mut call.function, renames);
+            let expression_key = direct_call_expr_rename_key(call, &expression_type);
+            if let Some(name) = renames
+                .calls
+                .get(&expression_key)
+                .cloned()
+                .or_else(|| direct_call_rename_key(call).and_then(|key| renames.calls.get(&key).cloned()))
+                .or_else(|| unique_call_rename(&call.function, &renames.calls))
+            {
+                call.function = name;
+            } else {
+                rewrite_name(&mut call.function, &renames.names);
+                if let Some(name) = unique_call_rename(&call.function, &renames.calls) {
+                    call.function = name;
+                }
+            }
             for argument in &mut call.arguments {
-                rewrite_expression(&mut argument.value, renames);
+                rewrite_expr(&mut argument.value, renames);
             }
         }
-        ExpressionKind::FunctionValue(function) => rewrite_name(&mut function.name, renames),
+        ExpressionKind::FunctionValue(function) => rewrite_name(&mut function.name, &renames.names),
         ExpressionKind::AnonymousFunction(function) => {
-            rewrite_name(&mut function.name, renames);
+            rewrite_name(&mut function.name, &renames.names);
             rewrite_block(&mut function.body, renames);
         }
         ExpressionKind::IndirectCall(call) => {
-            rewrite_expression(&mut call.callee, renames);
+            rewrite_expr(&mut call.callee, renames);
             for argument in &mut call.arguments {
-                rewrite_expression(&mut argument.value, renames);
+                rewrite_expr(&mut argument.value, renames);
             }
         }
         ExpressionKind::Pipeline(pipeline) => {
-            rewrite_expression(&mut pipeline.input, renames);
-            rewrite_expression(&mut pipeline.call, renames);
+            rewrite_expr(&mut pipeline.input, renames);
+            rewrite_expr(&mut pipeline.call, renames);
         }
         ExpressionKind::Use(use_) => {
-            rewrite_expression(&mut use_.callback, renames);
-            rewrite_expression(&mut use_.call, renames);
+            rewrite_expr(&mut use_.callback, renames);
+            rewrite_expr(&mut use_.call, renames);
         }
         ExpressionKind::Branch(branch) => {
             for subject in &mut branch.subjects {
-                rewrite_expression(subject, renames);
+                rewrite_expr(subject, renames);
             }
             for clause in &mut branch.clauses {
                 for pattern in &mut clause.patterns {
                     rewrite_pattern(pattern, renames);
                 }
                 if let Some(guard) = &mut clause.guard {
-                    rewrite_expression(guard, renames);
+                    rewrite_expr(guard, renames);
                 }
-                rewrite_expression(&mut clause.body, renames);
+                rewrite_expr(&mut clause.body, renames);
             }
         }
         ExpressionKind::Tuple(items) | ExpressionKind::List(items) => {
             for item in items {
-                rewrite_expression(item, renames);
+                rewrite_expr(item, renames);
             }
         }
         ExpressionKind::BitArrayConcat { left, right }
         | ExpressionKind::Compare { left, right, .. }
         | ExpressionKind::RuntimeEquality { left, right } => {
-            rewrite_expression(left, renames);
-            rewrite_expression(right, renames);
+            rewrite_expr(left, renames);
+            rewrite_expr(right, renames);
         }
         ExpressionKind::BitStringDeconstruct { bit_array, .. }
         | ExpressionKind::FieldAccess { record: bit_array, .. }
         | ExpressionKind::TupleElement { tuple: bit_array, .. }
-        | ExpressionKind::ListDeconstruct { list: bit_array, .. } => rewrite_expression(bit_array, renames),
+        | ExpressionKind::ListDeconstruct { list: bit_array, .. } => rewrite_expr(bit_array, renames),
         ExpressionKind::Record(record) => {
             for field in &mut record.fields {
-                rewrite_expression(&mut field.value, renames);
+                rewrite_expr(&mut field.value, renames);
             }
         }
         ExpressionKind::Constructor(constructor) => {
-            rewrite_name(&mut constructor.name, renames);
+            rewrite_name(&mut constructor.name, &renames.names);
             for argument in &mut constructor.arguments {
-                rewrite_expression(argument, renames);
+                rewrite_expr(argument, renames);
             }
         }
         ExpressionKind::RecordUpdate { record, constructor, fields } => {
-            rewrite_expression(record, renames);
-            rewrite_name(constructor, renames);
+            rewrite_expr(record, renames);
+            rewrite_name(constructor, &renames.names);
             for field in fields {
                 if let Some(value) = &mut field.value {
-                    rewrite_expression(value, renames);
+                    rewrite_expr(value, renames);
                 }
             }
         }
         ExpressionKind::ListCons { head, tail } => {
-            rewrite_expression(head, renames);
-            rewrite_expression(tail, renames);
+            rewrite_expr(head, renames);
+            rewrite_expr(tail, renames);
         }
         ExpressionKind::Memory(operation) => match operation {
             MemoryOperation::Allocate { bytes } | MemoryOperation::Load { address: bytes, .. } => {
-                rewrite_expression(bytes, renames)
+                rewrite_expr(bytes, renames)
             }
             MemoryOperation::Store { address, value } => {
-                rewrite_expression(address, renames);
-                rewrite_expression(value, renames);
+                rewrite_expr(address, renames);
+                rewrite_expr(value, renames);
             }
         },
         ExpressionKind::Literal(_)
@@ -1713,39 +2218,39 @@ fn constructor_name(name: &ast::ConstructorName) -> String {
 }
 
 fn collect_successful_bindings(
-    context: &FunctionContext, pattern: &IrPattern, path: BindingPath, bindings: &mut Vec<SuccessfulBinding>,
+    ctx: &FunctionContext, pattern: &IrPattern, path: BindingPath, bindings: &mut Vec<SuccessfulBinding>,
 ) {
     match pattern {
         IrPattern::Binding(local) => {
-            bindings.push(SuccessfulBinding { local: *local, path, span: context.local(*local).span })
+            bindings.push(SuccessfulBinding { local: *local, path, span: ctx.local(*local).span })
         }
         IrPattern::Alias { pattern, local } => {
-            collect_successful_bindings(context, pattern, path.clone(), bindings);
+            collect_successful_bindings(ctx, pattern, path.clone(), bindings);
             bindings.push(SuccessfulBinding {
                 local: *local,
                 path: match path {
                     BindingPath::Subject(subject) => BindingPath::Alias { subject },
                     other => other,
                 },
-                span: context.local(*local).span,
+                span: ctx.local(*local).span,
             });
         }
         IrPattern::Tuple(elements) => {
             let subject = path.subject();
             for (index, element) in elements.iter().enumerate() {
-                collect_successful_bindings(context, element, BindingPath::TupleElement { subject, index }, bindings);
+                collect_successful_bindings(ctx, element, BindingPath::TupleElement { subject, index }, bindings);
             }
         }
         IrPattern::List { elements, tail } => {
             let subject = path.subject();
             for (index, element) in elements.iter().enumerate() {
-                collect_successful_bindings(context, element, BindingPath::ListElement { subject, index }, bindings);
+                collect_successful_bindings(ctx, element, BindingPath::ListElement { subject, index }, bindings);
             }
             if let Some(local) = tail {
                 bindings.push(SuccessfulBinding {
                     local: *local,
                     path: BindingPath::ListTail { subject },
-                    span: context.local(*local).span,
+                    span: ctx.local(*local).span,
                 });
             }
         }
@@ -1753,7 +2258,7 @@ fn collect_successful_bindings(
             let subject = path.subject();
             for (index, argument) in arguments.iter().enumerate() {
                 collect_successful_bindings(
-                    context,
+                    ctx,
                     &argument.pattern,
                     BindingPath::ConstructorField { subject, field: argument.label.clone(), index },
                     bindings,
@@ -1767,7 +2272,7 @@ fn collect_successful_bindings(
                     bindings.push(SuccessfulBinding {
                         local,
                         path: BindingPath::ListElement { subject, index },
-                        span: context.local(local).span,
+                        span: ctx.local(local).span,
                     });
                 }
             }
@@ -1785,7 +2290,7 @@ fn raw_literal_arguments(raw: &ast::RawSyntax) -> Option<Vec<Expression>> {
     Some(
         inner
             .split(',')
-            .filter_map(|item| integer_expression(item.trim(), raw.span))
+            .filter_map(|item| integer_expr(item.trim(), raw.span))
             .collect(),
     )
 }
@@ -1799,12 +2304,12 @@ fn raw_record_arguments(raw: &ast::RawSyntax) -> Option<Vec<Expression>> {
         inner
             .split(',')
             .filter_map(|item| item.split(':').next_back())
-            .filter_map(|item| integer_expression(item.trim(), raw.span))
+            .filter_map(|item| integer_expr(item.trim(), raw.span))
             .collect(),
     )
 }
 
-fn integer_expression(source: &str, span: Span) -> Option<Expression> {
+fn integer_expr(source: &str, span: Span) -> Option<Expression> {
     if source.is_empty() || source.parse::<i64>().is_err() {
         return None;
     }
@@ -1844,6 +2349,7 @@ fn declaration_name(source: &str, keyword: &str) -> Option<String> {
         .map(str::to_string)
 }
 
+// TODO: instance method on Visibility
 fn visibility(public: bool) -> Visibility {
     if public { Visibility::Public } else { Visibility::Private }
 }
@@ -2013,10 +2519,16 @@ ProjectError: duplicate generated backend name `generated/run`
             matches!(
                 &function.body.result.kind,
                 ExpressionKind::DirectCall(call)
-                    if call.function.contains("$pkg$x6465705f706b67$mod$x646570$x666f6f$fn$x616e73776572")
+                    if call.function.contains("$pkg$x6465705f706b67$mod$x646570$x666f6f$helper$x7370656369616c697a6174696f6e$x616e73776572$i0")
                         && call.abi.boundary == CallBoundary::Internal
             )
         }));
+        assert!(
+            !module
+                .functions
+                .iter()
+                .any(|function| { function.name == "r$pkg$x6465705f706b67$mod$x646570$x666f6f$fn$x616e73776572" })
+        );
         assert!(module.references.iter().any(|reference| {
             matches!(
                 &reference.target,

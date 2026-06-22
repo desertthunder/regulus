@@ -44,14 +44,14 @@ struct PackagesToml {
 }
 
 pub fn load_dependency_interfaces(
-    root: &Path, dependencies: &[(String, DependencyToml, bool)], compile_target: target::CompileTarget,
+    root: &Path, deps: &[(String, DependencyToml, bool)], compile_target: target::CompileTarget,
 ) -> Result<DependencyInterfaces, Diagnostics> {
     let mut progress = None;
-    load_dependency_interfaces_with_progress(root, dependencies, compile_target, &mut progress)
+    load_dependency_interfaces_with_progress(root, deps, compile_target, &mut progress)
 }
 
 pub fn load_dependency_interfaces_with_progress(
-    root: &Path, dependencies: &[(String, DependencyToml, bool)], compile_target: target::CompileTarget,
+    root: &Path, deps: &[(String, DependencyToml, bool)], compile_target: target::CompileTarget,
     progress: &mut Option<&mut dyn FnMut(ProjectLoadProgress)>,
 ) -> Result<DependencyInterfaces, Diagnostics> {
     let package_versions = match fs::read_to_string(root.join("build").join("packages").join("packages.toml")) {
@@ -63,13 +63,13 @@ pub fn load_dependency_interfaces_with_progress(
     let mut output = DependencyInterfaces::default();
     let mut diagnostics = Vec::new();
 
-    if !dependencies.is_empty()
+    if !deps.is_empty()
         && let Some(progress) = progress.as_deref_mut()
     {
         progress(ProjectLoadProgress::ResolvingDependencies);
     }
 
-    for (name, dep, _dev) in dependencies {
+    for (name, dep, _dev) in deps {
         match dependency_root(root, name, dep) {
             Some(pkg_root) => {
                 let version = dep.get_dep_ver(name, &package_versions, &pkg_root);
@@ -1321,10 +1321,7 @@ pub fn reversed_head() -> Int {
 }
 
 pub fn mapped_head() -> Int {
-  case list.map([1], fn(x) { x + 1 }) {
-    [x] -> x
-    _ -> 0
-  }
+  list.fold(list.map([1], fn(x) { x + 1 }), 0, fn(acc, x) { acc + x })
 }
 
 pub fn folded() -> Int {
@@ -1374,6 +1371,88 @@ pub fn result_mapped() -> Int {
             assert!(dump.contains(function), "{dump}");
         }
         assert!(!dump.contains("__stdlib_gleam_"), "{dump}");
+    }
+
+    #[test]
+    fn emits_wasm_for_monomorphized_source_backed_stdlib_helpers() {
+        let package_sources = pure_stdlib_source_package(&[
+            "gleam/order",
+            "gleam/result",
+            "gleam/option",
+            "gleam/list",
+            "gleam/int",
+            "gleam/float",
+            "gleam/function",
+        ]);
+        let project = project_using_stdlib_source_package(
+            package_sources,
+            // TODO: this should be an embedded file with include_str!
+            r#"import gleam/float
+import gleam/function
+import gleam/int
+import gleam/list
+import gleam/option.{Some}
+import gleam/result.{Error, Ok}
+
+fn add_one(x: Int) -> Int {
+  x + 1
+}
+
+fn double(x: Int) -> Int {
+  x * 2
+}
+
+fn subtract(a: Int, b: Int) -> Int {
+  a - b
+}
+
+fn add_acc(acc: Int, x: Int) -> Int {
+  acc + x
+}
+
+pub fn folded() -> Int {
+  list.fold([1, 2, 3], 0, add_acc)
+}
+
+pub fn mapped_head() -> Int {
+  list.fold(list.map([1], add_one), 0, add_acc)
+}
+
+pub fn option_mapped() -> option.Option(Int) {
+  option.map(Some(4), add_one)
+}
+
+pub fn result_mapped() -> result.Result(Int, Int) {
+  result.map(Error(4), add_one)
+}
+
+pub fn composed() -> Int {
+  function.compose(add_one, double)
+  0
+}
+
+pub fn flipped() -> Int {
+  function.flip(subtract)
+  0
+}
+
+pub fn int_text() -> String {
+  int.to_string(-42)
+}
+
+pub fn float_text() -> String {
+  float.to_string(1.5)
+}
+"#,
+        );
+
+        let typed = types::check_project(&project).expect("type check monomorphized stdlib helpers");
+        let lowered = ir::lower_project(typed).expect("lower monomorphized stdlib helpers");
+        let wasm = lowered.emit_wasm().expect("emit Wasm for monomorphized stdlib helpers");
+        assert!(wasm.wat.contains("(module"), "{}", wasm.wat);
+        assert!(!wasm.wat.contains("__stdlib_gleam_list_map"), "{}", wasm.wat);
+        assert!(!wasm.wat.contains("__stdlib_gleam_option_map"), "{}", wasm.wat);
+        assert!(!wasm.wat.contains("__stdlib_gleam_result_map"), "{}", wasm.wat);
     }
 
     #[test]
