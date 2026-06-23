@@ -432,6 +432,44 @@ pub fn text_empty() -> Bool { string.is_empty("") }
 }
 
 #[test]
+fn runs_dict_with_structurally_equal_managed_keys() {
+    let wasm = compile_wasm(
+        r#"import gleam/dict
+import gleam/option
+
+pub fn tuple_key_lookup() -> Int {
+  let values = dict.insert(dict.new(), #("a", 1), 42)
+  case dict.get(values, #("a", 1)) {
+    option.Some(value) -> value
+    option.None -> 0
+  }
+}
+
+pub fn equal_dicts() -> Bool {
+  dict.insert(dict.new(), #("a", 1), 42) == dict.insert(dict.new(), #("a", 1), 42)
+}
+"#,
+    );
+
+    let engine = Engine::default();
+    let module = Module::new(&engine, &wasm.bytes).expect("compile wasm module");
+    let mut store = Store::new(&engine, ());
+    let instance = Instance::new(&mut store, &module, &[]).expect("instantiate module");
+    let tuple_key_lookup = instance
+        .get_typed_func::<(), i64>(&mut store, "tuple_key_lookup")
+        .expect("get tuple_key_lookup");
+    assert_eq!(
+        tuple_key_lookup.call(&mut store, ()).expect("call tuple_key_lookup"),
+        42
+    );
+
+    let equal_dicts = instance
+        .get_typed_func::<(), i32>(&mut store, "equal_dicts")
+        .expect("get equal_dicts");
+    assert_eq!(equal_dicts.call(&mut store, ()).expect("call equal_dicts"), 1);
+}
+
+#[test]
 fn structured_codegen_ports_helper_backed_stdlib_intrinsics() {
     let cases = [
         (

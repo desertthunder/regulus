@@ -1356,7 +1356,7 @@ fn link_mods(mods: Vec<Module>, dep_specializations: Vec<DependencySpecializatio
         js_externals: Vec::new(),
         exports: Vec::new(),
         functions: Vec::new(),
-        dependency_specializations: dep_specializations.clone(),
+        dependency_specializations: dep_specializations.to_owned(),
         linked_names: Vec::new(),
     };
     let diagnostics = generated_name_collision_diagnostics(&rename_plan.linked_names);

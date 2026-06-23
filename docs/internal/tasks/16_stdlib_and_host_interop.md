@@ -252,8 +252,8 @@ transitional.
 
 - [x] Support current registry-backed `gleam/dict` and `gleam/bit_array`
       surfaces.
-- [ ] Implement upstream dict runtime primitive
-- [ ] Define & implement equality, hashing, transient update, and JS ABI rules for native
+- [x] Implement upstream dict runtime primitive
+- [x] Define & implement equality, hashing, transient update, and JS ABI rules for native
       dict values.
 - [ ] Define & implement the JSON bridge from host JSON or JSON text to `Dynamic`.
 - [ ] Implement primitive dynamic operations for classification, construction,

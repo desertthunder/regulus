@@ -1840,17 +1840,29 @@ fn is_regulus_native_external(package: Option<&str>, local_name: &str, module: &
 fn regulus_native_upstream_js_external(
     package: Option<&str>, local_name: &str, module: &str, function: &str,
 ) -> Option<(&'static str, &'static str)> {
-    (package == Some("gleam_stdlib")
-        && module == "__regulus_native"
-        && matches!(
-            (local_name, function),
-            ("__regulus_int_to_string", "int_to_string") | ("__regulus_float_to_string", "float_to_string")
-        ))
-    .then(|| match local_name {
-        "__regulus_int_to_string" => ("../gleam_stdlib.mjs", "to_string"),
-        "__regulus_float_to_string" => ("../gleam_stdlib.mjs", "float_to_string"),
-        _ => unreachable!(),
-    })
+    if package == Some("gleam_stdlib") && module == "__regulus_native" {
+        match (local_name, function) {
+            ("__regulus_int_to_string", "int_to_string") => Some(("../gleam_stdlib.mjs", "to_string")),
+            ("__regulus_float_to_string", "float_to_string") => Some(("../gleam_stdlib.mjs", "float_to_string")),
+            _ => None,
+        }
+    } else if package != Some("gleam_stdlib") || module != "../dict.mjs" {
+        None
+    } else {
+        match function {
+            "make" => Some(("../dict.mjs", "make")),
+            "size" => Some(("../dict.mjs", "size")),
+            "get" => Some(("../dict.mjs", "get")),
+            "has" => Some(("../dict.mjs", "has")),
+            "insert" => Some(("../dict.mjs", "insert")),
+            "toTransient" => Some(("../dict.mjs", "toTransient")),
+            "fromTransient" => Some(("../dict.mjs", "fromTransient")),
+            "destructiveTransientInsert" => Some(("../dict.mjs", "destructiveTransientInsert")),
+            "destructiveTransientDelete" => Some(("../dict.mjs", "destructiveTransientDelete")),
+            "destructiveTransientUpdateWith" => Some(("../dict.mjs", "destructiveTransientUpdateWith")),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

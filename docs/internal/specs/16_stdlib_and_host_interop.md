@@ -128,6 +128,20 @@ Package-relative JS assets are allowed only when they belong to a loaded
 dependency and pass validation. User modules should not gain arbitrary relative
 JS imports through the stdlib path.
 
+Native dict values use the runtime-managed `Dict` custom value. The current
+primitive keeps persistent update semantics and treats transient conversion as
+an internal stdlib-native optimization boundary: transient insert and delete
+consume a transient-shaped value and return the updated dict value. Dict keys
+and values compare structurally through the normal managed-value equality
+helper. The native hash rule is collision-only for now, so correctness comes
+from structural equality rather than bucket partitioning.
+
+For JS-family targets, validated upstream `../dict.mjs` externals in
+`gleam_stdlib` are not emitted as ordinary JS host imports when a Regulus
+native primitive exists for the same operation. Diagnostics and package asset
+validation still preserve the upstream module and function names. General user
+JS imports do not get this treatment.
+
 ## Runtime Primitives
 
 Runtime primitives should be small and language-shaped. Valid examples include:

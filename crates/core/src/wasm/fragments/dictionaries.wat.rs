@@ -73,15 +73,7 @@ pub const DICTIONARY_HELPERS: &str = r#"
     i32.wrap_i64
   )
   (func $__dict_bucket_index (param $key i64) (result i32)
-    local.get $key
-    i32.wrap_i64
-    local.get $key
-    i64.const 32
-    i64.shr_u
-    i32.wrap_i64
-    i32.xor
-    i32.const 15
-    i32.and
+    i32.const 0
   )
   (func $__dict_bucket_load (param $buckets i32) (param $index i32) (result i32)
     local.get $buckets
@@ -208,6 +200,41 @@ pub const DICTIONARY_HELPERS: &str = r#"
     end
     call $__option_none
   )
+  (func $__dict_bucket_has_pair (param $bucket i32) (param $key i64) (param $value i64) (result i32)
+    (local $pair i32)
+    block $done
+      loop $loop
+        local.get $bucket
+        i32.eqz
+        br_if $done
+        local.get $bucket
+        call $__list_head
+        i32.wrap_i64
+        local.set $pair
+        local.get $pair
+        i32.const 0
+        call $__field_load_i64
+        local.get $key
+        call $__equal_slot
+        if
+          local.get $pair
+          i32.const 1
+          call $__field_load_i64
+          local.get $value
+          call $__equal_slot
+          if
+            i32.const 1
+            return
+          end
+        end
+        local.get $bucket
+        call $__list_tail
+        local.set $bucket
+        br $loop
+      end
+    end
+    i32.const 0
+  )
   (func $__dict_bucket_delete (param $bucket i32) (param $key i64) (result i32)
     (local $result i32) (local $pair i32)
     block $done
@@ -258,6 +285,41 @@ pub const DICTIONARY_HELPERS: &str = r#"
     call $__dict_bucket_load
     local.get $key
     call $__dict_bucket_get
+  )
+  (func $__result_error_nil (result i32)
+    (local $slots i32)
+    i32.const 8
+    call $__alloc
+    local.set $slots
+    local.get $slots
+    i64.const 0
+    i64.store
+    i32.const 4031082741
+    i32.const 1
+    local.get $slots
+    call $__custom_new
+  )
+  (func $__dict_get_result (param $dict i32) (param $key i64) (result i32)
+    (local $option i32)
+    local.get $dict
+    local.get $key
+    call $__dict_get
+    local.set $option
+    local.get $option
+    i32.const 8
+    i32.add
+    i32.load
+    i32.const 2407843793
+    i32.eq
+    if (result i32)
+      local.get $option
+      i32.const 12
+      i32.add
+      i64.load
+      call $__decode_ok
+    else
+      call $__result_error_nil
+    end
   )
   (func $__dict_insert (param $dict i32) (param $key i64) (param $value i64) (result i32)
     (local $buckets i32) (local $index i32) (local $old_bucket i32) (local $new_bucket i32) (local $had_key i32)
@@ -328,5 +390,97 @@ pub const DICTIONARY_HELPERS: &str = r#"
     local.get $new_bucket
     call $__dict_copy_buckets_set
     call $__dict_with
+  )
+  (func $__dict_transient_insert (param $key i64) (param $value i64) (param $dict i32) (result i32)
+    local.get $dict
+    local.get $key
+    local.get $value
+    call $__dict_insert
+  )
+  (func $__dict_transient_delete (param $key i64) (param $dict i32) (result i32)
+    local.get $dict
+    local.get $key
+    call $__dict_delete
+  )
+  (func $__dict_bucket_entries_equal (param $left_bucket i32) (param $right_dict i32) (result i32)
+    (local $right_buckets i32) (local $pair i32) (local $key i64) (local $value i64)
+    local.get $right_dict
+    call $__dict_buckets
+    local.set $right_buckets
+    block $done
+      loop $loop
+        local.get $left_bucket
+        i32.eqz
+        br_if $done
+        local.get $left_bucket
+        call $__list_head
+        i32.wrap_i64
+        local.set $pair
+        local.get $pair
+        i32.const 0
+        call $__field_load_i64
+        local.set $key
+        local.get $pair
+        i32.const 1
+        call $__field_load_i64
+        local.set $value
+        local.get $right_buckets
+        local.get $key
+        call $__dict_bucket_index
+        call $__dict_bucket_load
+        local.get $key
+        local.get $value
+        call $__dict_bucket_has_pair
+        i32.eqz
+        if
+          i32.const 0
+          return
+        end
+        local.get $left_bucket
+        call $__list_tail
+        local.set $left_bucket
+        br $loop
+      end
+    end
+    i32.const 1
+  )
+  (func $__dict_equal (param $left i32) (param $right i32) (result i32)
+    (local $buckets i32) (local $i i32)
+    local.get $left
+    call $__dict_size
+    local.get $right
+    call $__dict_size
+    i64.ne
+    if
+      i32.const 0
+      return
+    end
+    local.get $left
+    call $__dict_buckets
+    local.set $buckets
+    block $done
+      loop $loop
+        local.get $i
+        i32.const 16
+        i32.ge_u
+        br_if $done
+        local.get $buckets
+        local.get $i
+        call $__dict_bucket_load
+        local.get $right
+        call $__dict_bucket_entries_equal
+        i32.eqz
+        if
+          i32.const 0
+          return
+        end
+        local.get $i
+        i32.const 1
+        i32.add
+        local.set $i
+        br $loop
+      end
+    end
+    i32.const 1
   )
 "#;

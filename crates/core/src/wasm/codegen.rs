@@ -834,7 +834,7 @@ impl<'a> StructuredEmitter<'a> {
             structured.locals.push(Local { name: Some(local.name.clone()), type_ });
         }
 
-        if needs_scratch(function) {
+        if block_needs_scratch(&function.body) {
             let id = LocalId((structured.params.len() + structured.locals.len()) as u32);
             structured
                 .locals
@@ -852,7 +852,7 @@ impl<'a> StructuredEmitter<'a> {
                 self.funcid_locals.push(fid);
             }
         }
-        if needs_allocation(function) {
+        if block_needs_allocation(&function.body) {
             self.runtime_helper_roots.insert("__allocation_fail".into());
             let id = LocalId((structured.params.len() + structured.locals.len()) as u32);
             structured
@@ -1085,6 +1085,9 @@ impl<'a> StructuredEmitter<'a> {
     }
 
     fn direct_call(&mut self, call: &ir::DirectCall, out: &mut Vec<Instruction>) -> StructuredResult<()> {
+        if self.native_dict_external(call, out)? {
+            return Ok(());
+        }
         match call.function.as_str() {
             "__op_add" | "__op_subtract" | "__op_multiply" | "__op_divide" | "__op_remainder" => {
                 self.binary_arguments(call, out)?;
@@ -1434,6 +1437,64 @@ impl<'a> StructuredEmitter<'a> {
     ) {
         self.runtime_helper_roots.insert(name.into());
         out.push(Instruction::CallName { name: name.into(), type_: FunctionType::new(params, results) });
+    }
+
+    fn native_dict_external(&mut self, call: &ir::DirectCall, out: &mut Vec<Instruction>) -> StructuredResult<bool> {
+        match native_dict_external_name(&call.function, self.function_ids.contains_key(&call.function)) {
+            Some("make") => self.call_runtime_helper("__dict_new", [], [ValueType::I32], out),
+            Some("size") => {
+                self.expression(&call.arguments[0].value, out)?;
+                self.call_runtime_helper("__dict_size", [ValueType::I32], [ValueType::I64], out);
+            }
+            Some("has") => {
+                self.expression(&call.arguments[0].value, out)?;
+                self.expression_slot_value(&call.arguments[1].value, out)?;
+                self.call_runtime_helper(
+                    "__dict_has_key",
+                    [ValueType::I32, ValueType::I64],
+                    [ValueType::I32],
+                    out,
+                );
+            }
+            Some("get") => {
+                self.expression(&call.arguments[0].value, out)?;
+                self.expression_slot_value(&call.arguments[1].value, out)?;
+                self.call_runtime_helper(
+                    "__dict_get_result",
+                    [ValueType::I32, ValueType::I64],
+                    [ValueType::I32],
+                    out,
+                );
+            }
+            Some("insert") => self.dict_insert(call, out)?,
+            Some("toTransient") | Some("fromTransient") => {
+                self.expression(&call.arguments[0].value, out)?;
+            }
+            Some("destructiveTransientInsert") => {
+                self.expression_slot_value(&call.arguments[0].value, out)?;
+                self.expression_slot_value(&call.arguments[1].value, out)?;
+                self.expression(&call.arguments[2].value, out)?;
+                self.call_runtime_helper(
+                    "__dict_transient_insert",
+                    [ValueType::I64, ValueType::I64, ValueType::I32],
+                    [ValueType::I32],
+                    out,
+                );
+            }
+            Some("destructiveTransientDelete") => {
+                self.expression_slot_value(&call.arguments[0].value, out)?;
+                self.expression(&call.arguments[1].value, out)?;
+                self.call_runtime_helper(
+                    "__dict_transient_delete",
+                    [ValueType::I64, ValueType::I32],
+                    [ValueType::I32],
+                    out,
+                );
+            }
+            Some("destructiveTransientUpdateWith") => return Ok(false),
+            Some(_) | None => return Ok(false),
+        }
+        Ok(true)
     }
 
     fn dict_insert(&mut self, call: &ir::DirectCall, out: &mut Vec<Instruction>) -> StructuredResult<()> {
@@ -3302,10 +3363,37 @@ fn is_js_host_opaque_handle(module: &ir::Module, type_: &Type) -> bool {
     }
 }
 
+fn native_dict_external_name(function: &str, has_local_function: bool) -> Option<&'static str> {
+    let public = function
+        .strip_prefix("gleam_stdlib:gleam/dict.")
+        .or_else(|| function.strip_prefix("gleam/dict."));
+    if let Some(name) = public {
+        return match name {
+            "new" | "make" => Some("make"),
+            "size" => Some("size"),
+            "get" => Some("get"),
+            "has_key" | "has" => Some("has"),
+            "insert" => Some("insert"),
+            _ => None,
+        };
+    }
+    if has_local_function {
+        return None;
+    }
+    match function {
+        "to_transient" => Some("toTransient"),
+        "from_transient" => Some("fromTransient"),
+        "transient_insert" => Some("destructiveTransientInsert"),
+        "transient_delete" => Some("destructiveTransientDelete"),
+        "transient_update_with" => Some("destructiveTransientUpdateWith"),
+        _ => None,
+    }
+}
+
 fn module_exports_arena_scoped_values(module: &ir::Module) -> bool {
     module.functions.iter().any(|function| {
         matches!(function.abi.boundary, ir::CallBoundary::ModuleExport)
-            && needs_allocation(function)
+            && block_needs_allocation(&function.body)
             && (is_heap_managed_type(&function.return_type)
                 || function.params.iter().any(|param| is_heap_managed_type(&param.type_)))
     })
@@ -3352,7 +3440,7 @@ fn reachable_functions(module: &ir::Module) -> Vec<&ir::Function> {
         let Some(function) = by_name.get(name.as_str()) else {
             continue;
         };
-        collect_function_references(function, &by_name, &mut stack);
+        collect_function_refs(function, &by_name, &mut stack);
     }
 
     module
@@ -3362,16 +3450,14 @@ fn reachable_functions(module: &ir::Module) -> Vec<&ir::Function> {
         .collect()
 }
 
-fn collect_function_references(
-    function: &ir::Function, by_name: &HashMap<&str, &ir::Function>, stack: &mut Vec<String>,
-) {
+fn collect_function_refs(function: &ir::Function, by_name: &HashMap<&str, &ir::Function>, stack: &mut Vec<String>) {
     for instruction in &function.body.instructions {
-        collect_expression_references(instruction.expression(), by_name, stack);
+        collect_expression_refs(instruction.expression(), by_name, stack);
     }
-    collect_expression_references(&function.body.result, by_name, stack);
+    collect_expression_refs(&function.body.result, by_name, stack);
 }
 
-fn collect_expression_references(
+fn collect_expression_refs(
     expression: &ir::Expression, by_name: &HashMap<&str, &ir::Function>, stack: &mut Vec<String>,
 ) {
     match &expression.kind {
@@ -3384,7 +3470,7 @@ fn collect_expression_references(
         _ => {}
     }
     for child in expression.children() {
-        collect_expression_references(child, by_name, stack);
+        collect_expression_refs(child, by_name, stack);
     }
 }
 
@@ -3454,16 +3540,13 @@ fn store_for_type(memory: MemoryId, offset: u32, type_: ValueType) -> Instructio
     }
 }
 
-fn needs_scratch(function: &ir::Function) -> bool {
-    block_needs_scratch(&function.body)
-}
-
 /// Compute how many depth-specific `__funcid_N` locals are needed.
 ///
-/// Each level of indirect calls nested as arguments of another indirect call
-/// needs its own local so that the outer call's saved table index is not
-/// clobbered when an inner call saves its own.  Returns the number of unique
-/// depth levels (= max nesting depth + 1).
+/// Each level of indirect calls nested as arguments of another indirect
+/// call needs its own local so that the outer call's saved table index
+/// is not clobbered when an inner call saves its own.
+///
+/// Returns the number of unique depth levels (= max nesting depth + 1).
 fn indirect_call_max_arg_depth(block: &ir::Block) -> usize {
     block
         .instructions
@@ -3501,10 +3584,7 @@ fn expr_indirect_depth(expr: &ir::Expression, depth: usize) -> usize {
     }
 }
 
-fn needs_allocation(function: &ir::Function) -> bool {
-    block_needs_allocation(&function.body)
-}
-
+// TODO: instance method
 fn needs_bit_string_pattern(block: &ir::Block) -> bool {
     block.instructions.iter().any(|instruction| match instruction {
         ir::Instruction::Evaluate { expression, .. } | ir::Instruction::LocalSet { value: expression, .. } => {
@@ -3514,6 +3594,7 @@ fn needs_bit_string_pattern(block: &ir::Block) -> bool {
     }) || expression_has_bit_string_pattern(&block.result)
 }
 
+// TODO: instance method
 fn pattern_has_bit_string(pattern: &ir::IrPattern) -> bool {
     match pattern {
         ir::IrPattern::BitString(_) => true,
@@ -3527,6 +3608,7 @@ fn pattern_has_bit_string(pattern: &ir::IrPattern) -> bool {
     }
 }
 
+// TODO: instance method
 fn expression_has_bit_string_pattern(expression: &ir::Expression) -> bool {
     match &expression.kind {
         ExpressionKind::Branch(branch) => branch.clauses.iter().any(|clause| {
@@ -3536,6 +3618,7 @@ fn expression_has_bit_string_pattern(expression: &ir::Expression) -> bool {
     }
 }
 
+// TODO: instance method
 fn needed_debug_imports(function: &ir::Function) -> Vec<DebugImport> {
     let mut imports = Vec::new();
     collect_block_debug_imports(&function.body, &mut imports);
@@ -3608,6 +3691,8 @@ fn collect_expression_debug_imports(expression: &ir::Expression, imports: &mut V
         _ => {}
     }
 }
+
+// TODO: all of the below functions can be instance methods
 
 fn block_needs_allocation(block: &ir::Block) -> bool {
     needs_bit_string_pattern(block)

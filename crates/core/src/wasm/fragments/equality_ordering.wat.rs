@@ -179,6 +179,25 @@ pub const EQUALITY_AND_ORDERING_HELPERS: &str = r#"
     end
     drop
     local.get $tag
+    i32.const 5
+    i32.eq
+    local.get $left
+    i32.const 8
+    i32.add
+    i32.load
+    i32.const 4134106229
+    i32.eq
+    i32.and
+    if (result i32)
+      local.get $left
+      local.get $right
+      call $__dict_equal
+      return
+    else
+      i32.const 0
+    end
+    drop
+    local.get $tag
     i32.const 1
     i32.eq
     if (result i32)
