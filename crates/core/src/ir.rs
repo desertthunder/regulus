@@ -832,6 +832,25 @@ impl DirectCall {
             .collect::<Vec<_>>();
         call_rename_key(&self.function, &params, return_type)
     }
+
+    fn expression_param_rename_key(&self) -> String {
+        let params = self
+            .arguments
+            .iter()
+            .map(|argument| argument.value.type_.clone())
+            .collect::<Vec<_>>();
+        call_param_rename_key(&self.function, &params)
+    }
+
+    fn abi_param_rename_key(&self) -> String {
+        let params = self
+            .abi
+            .params
+            .iter()
+            .map(|param| param.type_.clone())
+            .collect::<Vec<_>>();
+        call_param_rename_key(&self.function, &params)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1050,6 +1069,13 @@ pub fn lower_project(project: TypedProject) -> Result<Module, Diagnostics> {
     }
 
     let dependency_specializations = project.collect_dependency_specializations();
+    diagnostics.extend(unsupported_dependency_specialization_diagnostics(
+        &project,
+        &dependency_specializations,
+    ));
+    if !diagnostics.is_empty() {
+        return Err(diagnostics);
+    }
 
     for module in project.modules {
         let is_dependency_module = module.package_name.as_deref() != Some(project.package_name.as_str());
@@ -1256,6 +1282,59 @@ fn unsupported_source_backed_stdlib_runtime_diagnostic(module: &str, member: &st
     )
 }
 
+fn unsupported_dependency_specialization_diagnostics(
+    project: &TypedProject, specializations: &[DependencySpecialization],
+) -> Diagnostics {
+    specializations
+        .iter()
+        .filter(|specialization| dependency_specialization_type_is_unsupported(&specialization.instantiated_type))
+        .map(|specialization| {
+            let span = dependency_function_name_span(project, specialization).unwrap_or(specialization.source_span);
+            unsupported_dependency_specialization_diagnostic(specialization, span)
+        })
+        .collect()
+}
+
+fn dependency_specialization_type_is_unsupported(type_: &Type) -> bool {
+    type_.has_generic() || type_.contains_anything()
+}
+
+fn dependency_function_name_span(project: &TypedProject, specialization: &DependencySpecialization) -> Option<Span> {
+    project
+        .modules
+        .iter()
+        .find(|module| {
+            module.package_name.as_deref() == Some(specialization.key.package.as_str())
+                && module.module_name.as_deref() == Some(specialization.key.module.as_str())
+        })
+        .and_then(|module| {
+            module
+                .resolved
+                .ast
+                .functions
+                .iter()
+                .find(|function| function.name.text == specialization.key.function)
+        })
+        .map(|function| function.name.span)
+}
+
+fn unsupported_dependency_specialization_diagnostic(
+    specialization: &DependencySpecialization, span: Span,
+) -> Diagnostic {
+    Diagnostic::new(
+        DiagnosticCode::LoweringError,
+        format!(
+            "dependency specialization `{}:{}.{}` uses unsupported type `{}`",
+            specialization.key.package,
+            specialization.key.module,
+            specialization.key.function,
+            specialization.instantiated_type.display()
+        ),
+    )
+    .with_label(Label::primary(span, "unsupported dependency specialization shape here"))
+    .with_note("dependency specializations must have concrete internal runtime shapes before Wasm emission")
+}
+
 fn link_mods(mods: Vec<Module>, dep_specializations: Vec<DependencySpecialization>) -> Result<Module, Diagnostics> {
     let Some(first) = mods.first() else {
         return Err(vec![Diagnostic::new(
@@ -1309,6 +1388,7 @@ fn link_mods(mods: Vec<Module>, dep_specializations: Vec<DependencySpecializatio
 struct BackendRenamePlan {
     renames: HashMap<String, String>,
     dependency_specializations: Vec<(DependencySpecializationKey, String)>,
+    dependency_specialization_call_spans: HashMap<Span, String>,
     unspecialized_dependency_functions: HashSet<String>,
     linked_names: Vec<LinkedName>,
 }
@@ -1316,6 +1396,7 @@ struct BackendRenamePlan {
 fn global_backend_renames(modules: &[Module], specializations: &[DependencySpecialization]) -> BackendRenamePlan {
     let mut renames = HashMap::new();
     let mut dependency_specialization_names = Vec::new();
+    let mut dependency_specialization_call_spans = HashMap::<Span, Option<String>>::new();
     let mut unspecialized_dependency_functions = HashSet::new();
     let mut linked_names = Vec::new();
     let dependency_packages = specializations
@@ -1454,6 +1535,14 @@ fn global_backend_renames(modules: &[Module], specializations: &[DependencySpeci
         *index += 1;
         let generated_name = render_backend_name(&backend);
         dependency_specialization_names.push((specialization.key.clone(), generated_name.clone()));
+        dependency_specialization_call_spans
+            .entry(specialization.source_span)
+            .and_modify(|existing| {
+                if existing.as_deref() != Some(generated_name.as_str()) {
+                    *existing = None;
+                }
+            })
+            .or_insert_with(|| Some(generated_name.clone()));
         linked_names.push(LinkedName {
             source_name: specialization.key.source_name(),
             generated_name,
@@ -1464,6 +1553,10 @@ fn global_backend_renames(modules: &[Module], specializations: &[DependencySpeci
     BackendRenamePlan {
         renames,
         dependency_specializations: dependency_specialization_names,
+        dependency_specialization_call_spans: dependency_specialization_call_spans
+            .into_iter()
+            .filter_map(|(span, backend)| backend.map(|backend| (span, backend)))
+            .collect(),
         unspecialized_dependency_functions,
         linked_names,
     }
@@ -1526,12 +1619,16 @@ fn generated_name_collision_diagnostics(linked_names: &[LinkedName]) -> Diagnost
 struct ModuleBackendRenames {
     names: HashMap<String, String>,
     calls: HashMap<String, String>,
+    call_spans: HashMap<Span, String>,
 }
 
 fn mod_backend_renames(module: &Module, plan: &BackendRenamePlan) -> ModuleBackendRenames {
     let mut names = HashMap::new();
     let mut calls = HashMap::new();
-    let Some(identity) = &module.identity else { return ModuleBackendRenames { names, calls } };
+    let call_spans = plan.dependency_specialization_call_spans.clone();
+    let Some(identity) = &module.identity else {
+        return ModuleBackendRenames { names, calls, call_spans };
+    };
     let global = &plan.renames;
 
     for function in &module.functions {
@@ -1648,7 +1745,7 @@ fn mod_backend_renames(module: &Module, plan: &BackendRenamePlan) -> ModuleBacke
         }
     }
 
-    ModuleBackendRenames { names, calls }
+    ModuleBackendRenames { names, calls, call_spans }
 }
 
 fn insert_call_rename(
@@ -1658,6 +1755,7 @@ fn insert_call_rename(
         call_rename_key(source_name, &key.params, &key.return_type),
         backend.to_string(),
     );
+    calls.insert(call_param_rename_key(source_name, &key.params), backend.to_string());
 }
 
 fn call_rename_key(source_name: &str, params: &[Type], return_type: &Type) -> String {
@@ -1666,6 +1764,14 @@ fn call_rename_key(source_name: &str, params: &[Type], return_type: &Type) -> St
         source_name,
         params.iter().map(Type::display).collect::<Vec<_>>().join(","),
         return_type.display()
+    )
+}
+
+fn call_param_rename_key(source_name: &str, params: &[Type]) -> String {
+    format!(
+        "{}({})->?",
+        source_name,
+        params.iter().map(Type::display).collect::<Vec<_>>().join(",")
     )
 }
 
@@ -1711,7 +1817,8 @@ fn add_dep_specialization_funcs(
         substitute_function_types(&mut function, &substitutions);
         let helper_renames = dep_specialization_helper_renames(&function, backend_name);
         if !helper_renames.is_empty() {
-            let helper_renames = ModuleBackendRenames { names: helper_renames, calls: HashMap::new() };
+            let helper_renames =
+                ModuleBackendRenames { names: helper_renames, calls: HashMap::new(), call_spans: HashMap::new() };
             rewrite_function(&mut function, &helper_renames);
             for helper_name in helper_renames.names.keys() {
                 let Some(helper_source) = module.functions.iter().find(|candidate| candidate.name == *helper_name)
@@ -2065,17 +2172,31 @@ fn rewrite_expr(expr: &mut Expression, renames: &ModuleBackendRenames) {
     match &mut expr.kind {
         ExpressionKind::DirectCall(call) => {
             let expression_key = call.expression_rename_key(&expression_type);
-            if let Some(name) = renames
-                .calls
-                .get(&expression_key)
-                .cloned()
-                .or_else(|| call.abi_rename_key().and_then(|key| renames.calls.get(&key).cloned()))
-                .or_else(|| unique_call_rename(&call.function, &renames.calls))
-            {
+            let expression_param_key = call.expression_param_rename_key();
+            if let Some(name) = renames.call_spans.get(&expr.span).cloned().or_else(|| {
+                renames
+                    .calls
+                    .get(&expression_key)
+                    .cloned()
+                    .or_else(|| renames.calls.get(&expression_param_key).cloned())
+                    .or_else(|| call.abi_rename_key().and_then(|key| renames.calls.get(&key).cloned()))
+                    .or_else(|| renames.calls.get(&call.abi_param_rename_key()).cloned())
+                    .or_else(|| unique_call_rename(&call.function, &renames.calls))
+            }) {
                 call.function = name;
             } else {
                 rewrite_name(&mut call.function, &renames.names);
-                if let Some(name) = unique_call_rename(&call.function, &renames.calls) {
+                let expression_key = call.expression_rename_key(&expression_type);
+                let expression_param_key = call.expression_param_rename_key();
+                if let Some(name) = renames
+                    .calls
+                    .get(&expression_key)
+                    .cloned()
+                    .or_else(|| renames.calls.get(&expression_param_key).cloned())
+                    .or_else(|| call.abi_rename_key().and_then(|key| renames.calls.get(&key).cloned()))
+                    .or_else(|| renames.calls.get(&call.abi_param_rename_key()).cloned())
+                    .or_else(|| unique_call_rename(&call.function, &renames.calls))
+                {
                     call.function = name;
                 }
             }

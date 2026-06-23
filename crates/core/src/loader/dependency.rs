@@ -673,6 +673,7 @@ mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
 
+    use super::*;
     use crate::project::{GleamToml, PackageGraph, PackageNode, Project};
     use crate::source::SourceFile;
     use crate::{
@@ -680,8 +681,7 @@ mod tests {
         stdlib::StdlibRegistry,
         types::{self, Type},
     };
-
-    use super::*;
+    use wasmtime::{Engine, Instance, Memory as WasmtimeMemory, Module, Store};
 
     #[test]
     fn path_dependency_source_is_loaded_from_declared_path() {
@@ -1374,66 +1374,22 @@ pub fn result_mapped() -> Int {
     }
 
     #[test]
-    fn emits_wasm_for_monomorphized_source_backed_stdlib_helpers() {
-        let package_sources = pure_stdlib_source_package(&[
-            "gleam/order",
-            "gleam/result",
-            "gleam/option",
-            "gleam/list",
-            "gleam/int",
-            "gleam/float",
-            "gleam/function",
-        ]);
+    fn runs_monomorphized_source_backed_stdlib_helpers_in_wasmtime() {
+        let package_sources =
+            behavior_stdlib_source_package(&["gleam/order", "gleam/function", "gleam/int", "gleam/float"]);
         let project = project_using_stdlib_source_package(
             package_sources,
             // TODO: this should be an embedded file with include_str!
             r#"import gleam/float
 import gleam/function
 import gleam/int
-import gleam/list
-import gleam/option.{Some}
-import gleam/result.{Error, Ok}
 
-fn add_one(x: Int) -> Int {
-  x + 1
+pub fn identity_int() -> Int {
+  function.identity(4)
 }
 
-fn double(x: Int) -> Int {
-  x * 2
-}
-
-fn subtract(a: Int, b: Int) -> Int {
-  a - b
-}
-
-fn add_acc(acc: Int, x: Int) -> Int {
-  acc + x
-}
-
-pub fn folded() -> Int {
-  list.fold([1, 2, 3], 0, add_acc)
-}
-
-pub fn mapped_head() -> Int {
-  list.fold(list.map([1], add_one), 0, add_acc)
-}
-
-pub fn option_mapped() -> option.Option(Int) {
-  option.map(Some(4), add_one)
-}
-
-pub fn result_mapped() -> result.Result(Int, Int) {
-  result.map(Error(4), add_one)
-}
-
-pub fn composed() -> Int {
-  function.compose(add_one, double)
-  0
-}
-
-pub fn flipped() -> Int {
-  function.flip(subtract)
-  0
+pub fn identity_text() -> String {
+  function.identity("ok")
 }
 
 pub fn int_text() -> String {
@@ -1453,6 +1409,66 @@ pub fn float_text() -> String {
         assert!(!wasm.wat.contains("__stdlib_gleam_list_map"), "{}", wasm.wat);
         assert!(!wasm.wat.contains("__stdlib_gleam_option_map"), "{}", wasm.wat);
         assert!(!wasm.wat.contains("__stdlib_gleam_result_map"), "{}", wasm.wat);
+
+        let (mut store, instance, memory) = instantiate_wasm(&wasm.bytes);
+        for (name, expected) in [("identity_int", 4)] {
+            assert_eq!(call_i64_export(&instance, &mut store, name), expected, "{name}");
+        }
+        assert_eq!(
+            call_string_export(&instance, &mut store, &memory, "identity_text"),
+            "ok"
+        );
+        assert_eq!(call_string_export(&instance, &mut store, &memory, "int_text"), "-42");
+        assert_eq!(
+            call_string_export(&instance, &mut store, &memory, "float_text"),
+            "1.500000"
+        );
+    }
+
+    #[test]
+    fn reports_unsupported_dependency_specialization_shape_before_wasm_emission() {
+        let source = SourceFile::new(
+            SourceFileId(1),
+            r#"pub fn expose() -> anything {
+  panic as "unsupported"
+}
+"#,
+        );
+        let package_sources = DependencySourcePackage {
+            package: DependencyPackage {
+                name: "gleam_stdlib".to_string(),
+                version: Some("1.0.3".to_string()),
+                root: PathBuf::new(),
+                source: DependencySource::Path,
+            },
+            modules: vec![ModuleInfo {
+                name: "gleam/unsupported".to_string(),
+                path: PathBuf::from("src/gleam/unsupported.gleam"),
+                source_id: source.id,
+                source_root: SourceRoot::Src,
+            }],
+            sources: vec![source],
+            assets: Vec::new(),
+        };
+        let project = project_using_stdlib_source_package(
+            package_sources,
+            r#"import gleam/unsupported
+
+pub fn main() {
+  unsupported.expose()
+  Nil
+}
+"#,
+        );
+        let typed = types::check_project(&project).expect("type check project");
+        let errors = ir::lower_project(typed).expect_err("unsupported specialization should fail lowering");
+
+        insta::assert_snapshot!(errors[0].render_plain(), @r#"
+LoweringError: dependency specialization `gleam_stdlib:gleam/unsupported.expose` uses unsupported type `fn() -> anything`
+  --> file 1 bytes 7..13
+      unsupported dependency specialization shape here
+  note: dependency specializations must have concrete internal runtime shapes before Wasm emission
+"#);
     }
 
     #[test]
@@ -1553,6 +1569,30 @@ pub fn float_text() -> String {
                 path,
                 pure_stdlib_module_source(module),
             ));
+        }
+        DependencySourcePackage { package, modules: module_infos, sources, assets: Vec::new() }
+    }
+
+    fn behavior_stdlib_source_package(modules: &[&str]) -> DependencySourcePackage {
+        let package = DependencyPackage {
+            name: "gleam_stdlib".to_string(),
+            version: Some("1.0.3".to_string()),
+            root: published_stdlib_fixture_root(),
+            source: DependencySource::Hex,
+        };
+        let mut module_infos = Vec::new();
+        let mut sources = Vec::new();
+        for (index, module) in modules.iter().enumerate() {
+            let source_id = SourceFileId(2_600_000 + index as u32);
+            let path = package.root.join("src").join(format!("{module}.gleam"));
+            let source = pure_stdlib_module_source(module);
+            module_infos.push(ModuleInfo {
+                name: (*module).to_string(),
+                path: path.clone(),
+                source_id,
+                source_root: SourceRoot::Src,
+            });
+            sources.push(SourceFile::with_path(source_id, path, source));
         }
         DependencySourcePackage { package, modules: module_infos, sources, assets: Vec::new() }
     }
@@ -1708,6 +1748,42 @@ pub fn float_text() -> String {
             },
             sources: vec![source],
         }
+    }
+
+    fn instantiate_wasm(bytes: &[u8]) -> (Store<()>, Instance, WasmtimeMemory) {
+        let engine = Engine::default();
+        let module = Module::new(&engine, bytes).expect("compile wasm module");
+        let mut store = Store::new(&engine, ());
+        let instance = Instance::new(&mut store, &module, &[]).expect("instantiate module");
+        let memory = instance.get_memory(&mut store, "memory").expect("memory export");
+        (store, instance, memory)
+    }
+
+    fn call_i64_export(instance: &Instance, store: &mut Store<()>, name: &str) -> i64 {
+        instance
+            .get_typed_func::<(), i64>(&mut *store, name)
+            .unwrap_or_else(|_| panic!("get {name} export"))
+            .call(store, ())
+            .unwrap_or_else(|error| panic!("call {name}: {error}"))
+    }
+
+    fn call_i32_export(instance: &Instance, store: &mut Store<()>, name: &str) -> i32 {
+        instance
+            .get_typed_func::<(), i32>(&mut *store, name)
+            .unwrap_or_else(|_| panic!("get {name} export"))
+            .call(store, ())
+            .unwrap_or_else(|error| panic!("call {name}: {error}"))
+    }
+
+    fn call_string_export(instance: &Instance, store: &mut Store<()>, memory: &WasmtimeMemory, name: &str) -> String {
+        let ptr = call_i32_export(instance, store, name) as usize;
+        let mut header = [0; 8];
+        memory.read(&*store, ptr, &mut header).expect("read string header");
+        assert_eq!(u32::from_le_bytes(header[0..4].try_into().unwrap()), 1);
+        let len = u32::from_le_bytes(header[4..8].try_into().unwrap()) as usize;
+        let mut bytes = vec![0; len];
+        memory.read(&*store, ptr + 8, &mut bytes).expect("read string data");
+        String::from_utf8(bytes).expect("utf-8 string")
     }
 
     fn interface_from_source(source: SourceFile) -> ModuleInterface {

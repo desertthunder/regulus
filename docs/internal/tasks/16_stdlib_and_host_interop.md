@@ -186,11 +186,11 @@ table.
       `gleam/option.map`, `gleam/result.map`,
       `gleam/function.{compose,flip}`, `gleam/int.to_string`, and
       `gleam/float.to_string`.
-- [ ] Add behavior fixtures for multiple instantiations of the same helper,
+- [x] Add behavior fixtures for multiple instantiations of the same helper,
       transitive stdlib calls, closure capture, and native helper wrappers.
-- [ ] Add diagnostics for dependency specializations that reach unsupported
+- [x] Add diagnostics for dependency specializations that reach unsupported
       type, closure, native, or host ABI shapes.
-- [ ] Replace source-only and linked-dump proofs with Wasm behavior fixtures
+- [x] Replace source-only and linked-dump proofs with Wasm behavior fixtures
       once monomorphized dependency emission is available.
 
 ### Host ABI And Externals
