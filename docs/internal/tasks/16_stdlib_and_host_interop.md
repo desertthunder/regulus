@@ -256,9 +256,9 @@ transitional.
 - [x] Define & implement equality, hashing, transient update, and JS ABI rules for native
       dict values.
 - [x] Define & implement the JSON bridge from host JSON or JSON text to `Dynamic`.
-- [ ] Implement primitive dynamic operations for classification, construction,
+- [x] Implement primitive dynamic operations for classification, construction,
       lookup, traversal, and error payloads.
-- [ ] Reuse normal closure dispatch for decoder combinators such as `field`,
+- [x] Reuse normal closure dispatch for decoder combinators such as `field`,
       `map`, `then`, `one_of`, and `recursive`.
 - [ ] Implement or validate primitives/assets for Unicode, string slicing,
       casing, trimming, inspect, parse, string trees, byte trees, base16,

@@ -38,15 +38,24 @@ should eventually be renamed away from stdlib module/member names.
 | `gleam/dynamic.nil`              | runtime primitive | Dynamic representation.                      | Keep as dynamic construction primitive.                                            |
 | `gleam/dynamic.properties`       | runtime primitive | Dynamic representation.                      | Keep as dynamic construction primitive.                                            |
 | `gleam/dynamic.string`           | runtime primitive | Dynamic representation.                      | Keep as dynamic construction primitive.                                            |
+| `gleam/dynamic/decode.at`        | runtime primitive | Decoder traversal over dynamic values.       | Move combinator behavior to source once upstream decode compiles.                  |
 | `gleam/dynamic/decode.bit_array` | runtime primitive | Decoder primitive value.                     | Keep as decoder primitive or replace with upstream source wrapping a primitive.    |
 | `gleam/dynamic/decode.bool`      | runtime primitive | Decoder primitive value.                     | Keep as decoder primitive or replace with upstream source wrapping a primitive.    |
 | `gleam/dynamic/decode.dynamic`   | runtime primitive | Decoder primitive value.                     | Keep as decoder primitive or replace with upstream source wrapping a primitive.    |
+| `gleam/dynamic/decode.field`     | runtime primitive | Decoder field traversal with closure dispatch. | Move combinator behavior to source once upstream decode compiles.                |
 | `gleam/dynamic/decode.float`     | runtime primitive | Decoder primitive value.                     | Keep as decoder primitive or replace with upstream source wrapping a primitive.    |
 | `gleam/dynamic/decode.int`       | runtime primitive | Decoder primitive value.                     | Keep as decoder primitive or replace with upstream source wrapping a primitive.    |
+| `gleam/dynamic/decode.failure`   | runtime primitive | Decoder error primitive value.               | Keep only primitive representation; move combinator behavior to source.            |
 | `gleam/dynamic/decode.list`      | runtime primitive | Decoder primitive value with nested decoder. | Keep only primitive representation; move combinator behavior to source.            |
+| `gleam/dynamic/decode.map`       | runtime primitive | Decoder value using normal closure dispatch. | Move combinator behavior to source once upstream decode compiles.                  |
+| `gleam/dynamic/decode.one_of`    | runtime primitive | Decoder fallback primitive value.            | Move combinator behavior to source once upstream decode compiles.                  |
 | `gleam/dynamic/decode.optional`  | runtime primitive | Decoder primitive value with nested decoder. | Keep only primitive representation; move combinator behavior to source.            |
+| `gleam/dynamic/decode.recursive` | runtime primitive | Decoder thunk using normal closure dispatch. | Move combinator behavior to source once upstream decode compiles.                  |
 | `gleam/dynamic/decode.run`       | runtime primitive | Dynamic decode execution.                    | Keep as dynamic boundary primitive.                                                |
+| `gleam/dynamic/decode.subfield`  | runtime primitive | Decoder nested field traversal.              | Move combinator behavior to source once upstream decode compiles.                  |
+| `gleam/dynamic/decode.success`   | runtime primitive | Decoder success primitive value.             | Keep only primitive representation; move combinator behavior to source.            |
 | `gleam/dynamic/decode.string`    | runtime primitive | Decoder primitive value.                     | Keep as decoder primitive or replace with upstream source wrapping a primitive.    |
+| `gleam/dynamic/decode.then`      | runtime primitive | Decoder value using normal closure dispatch. | Move combinator behavior to source once upstream decode compiles.                  |
 | `gleam/io.debug`                 | runtime primitive | Debug rendering of managed values.           | Keep as debug primitive, renamed away from stdlib dispatch.                        |
 | `gleam/string.append`            | runtime primitive | String storage allocation.                   | Keep as string primitive or expose through compiled source calling a primitive.    |
 | `gleam/string.concat`            | runtime primitive | String list concatenation allocation.        | Keep as string primitive or expose through compiled source calling a primitive.    |

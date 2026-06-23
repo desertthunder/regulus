@@ -523,7 +523,7 @@ impl StdlibModule {
                     "at",
                     vec![list(Type::generic("segment")), decoder(Type::generic("a"))],
                     decoder(Type::generic("a")),
-                    temporary_interface_retention(),
+                    runtime_primitive_retention(),
                 ),
                 function(
                     "optionally_at",
@@ -543,7 +543,7 @@ impl StdlibModule {
                         fn_type(vec![Type::generic("t")], decoder(Type::generic("final"))),
                     ],
                     decoder(Type::generic("final")),
-                    temporary_interface_retention(),
+                    runtime_primitive_retention(),
                 ),
                 function(
                     "optional_field",
@@ -564,19 +564,19 @@ impl StdlibModule {
                         fn_type(vec![Type::generic("t")], decoder(Type::generic("final"))),
                     ],
                     decoder(Type::generic("final")),
-                    temporary_interface_retention(),
+                    runtime_primitive_retention(),
                 ),
                 function(
                     "success",
                     vec![Type::generic("t")],
                     decoder(Type::generic("t")),
-                    temporary_interface_retention(),
+                    runtime_primitive_retention(),
                 ),
                 function(
                     "failure",
                     vec![Type::generic("a"), Type::String],
                     decoder(Type::generic("a")),
-                    temporary_interface_retention(),
+                    runtime_primitive_retention(),
                 ),
                 function(
                     "map",
@@ -585,7 +585,7 @@ impl StdlibModule {
                         fn_type(vec![Type::generic("a")], Type::generic("b")),
                     ],
                     decoder(Type::generic("b")),
-                    temporary_interface_retention(),
+                    runtime_primitive_retention(),
                 ),
                 function(
                     "then",
@@ -594,13 +594,13 @@ impl StdlibModule {
                         fn_type(vec![Type::generic("a")], decoder(Type::generic("b"))),
                     ],
                     decoder(Type::generic("b")),
-                    temporary_interface_retention(),
+                    runtime_primitive_retention(),
                 ),
                 function(
                     "one_of",
                     vec![decoder(Type::generic("a")), list(decoder(Type::generic("a")))],
                     decoder(Type::generic("a")),
-                    temporary_interface_retention(),
+                    runtime_primitive_retention(),
                 ),
                 function(
                     "collapse_errors",
@@ -621,7 +621,7 @@ impl StdlibModule {
                     "recursive",
                     vec![fn_type(vec![], decoder(Type::generic("a")))],
                     decoder(Type::generic("a")),
-                    temporary_interface_retention(),
+                    runtime_primitive_retention(),
                 ),
                 function(
                     "new_primitive_decoder",

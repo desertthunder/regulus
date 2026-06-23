@@ -116,6 +116,451 @@ pub const DYNAMIC_HELPERS: &str = r#"
     i64.extend_i32_u
     call $__dynamic_i64
   )
+  (func $__dynamic_string_key_matches (param $candidate i64) (param $key i32) (result i32)
+    (local $ptr i32) (local $tag i32)
+    local.get $candidate
+    local.get $key
+    i64.extend_i32_u
+    i64.eq
+    if
+      i32.const 1
+      return
+    end
+    local.get $candidate
+    i64.const 4294967295
+    i64.gt_u
+    if
+      i32.const 0
+      return
+    end
+    local.get $candidate
+    i32.wrap_i64
+    local.tee $ptr
+    call $__is_managed_ptr
+    i32.eqz
+    if
+      i32.const 0
+      return
+    end
+    local.get $ptr
+    i32.load
+    local.tee $tag
+    i32.const 1
+    i32.eq
+    if
+      local.get $ptr
+      local.get $key
+      call $__equal_value
+      return
+    end
+    local.get $tag
+    i32.const 5
+    i32.eq
+    local.get $ptr
+    i32.const 8
+    i32.add
+    i32.load
+    i32.const 4
+    i32.eq
+    i32.and
+    if
+      local.get $ptr
+      i32.const 12
+      i32.add
+      i64.load
+      i32.wrap_i64
+      local.get $key
+      call $__equal_value
+      return
+    end
+    i32.const 0
+  )
+  (func $__dynamic_dict_get_raw_string (param $dict i32) (param $key i32) (result i32)
+    (local $bucket i32) (local $pair i32)
+    local.get $dict
+    call $__dict_buckets
+    i32.const 0
+    call $__dict_bucket_load
+    local.set $bucket
+    block $done
+      loop $loop
+        local.get $bucket
+        i32.eqz
+        br_if $done
+        local.get $bucket
+        call $__list_head
+        i32.wrap_i64
+        local.set $pair
+        local.get $pair
+        i32.const 0
+        call $__field_load_i64
+        local.get $key
+        call $__dynamic_string_key_matches
+        if
+          local.get $pair
+          i32.const 1
+          call $__field_load_i64
+          i32.wrap_i64
+          return
+        end
+        local.get $bucket
+        call $__list_tail
+        local.set $bucket
+        br $loop
+      end
+    end
+    i32.const 0
+  )
+  (func $__dynamic_lookup (param $data i32) (param $key i64) (param $key_kind i32) (result i32)
+    (local $tag i32) (local $value i32) (local $index i64) (local $option i32)
+    (local $key_ptr i32) (local $key_tag i32) (local $key_value i64)
+    local.get $data
+    i32.eqz
+    if
+      i32.const 0
+      return
+    end
+    local.get $data
+    call $__dynamic_tag
+    local.set $tag
+    local.get $data
+    call $__dynamic_field0
+    i32.wrap_i64
+    local.set $value
+    local.get $key_kind
+    i32.eqz
+    local.get $key
+    i64.const 4294967295
+    i64.le_u
+    i32.and
+    if
+      local.get $key
+      i32.wrap_i64
+      local.set $key_ptr
+      local.get $key_ptr
+      call $__is_managed_ptr
+      if
+        local.get $key_ptr
+        i32.load
+        i32.const 1
+        i32.eq
+        if
+          local.get $data
+          i32.load
+          i32.const 5
+          i32.eq
+          local.get $data
+          i32.const 8
+          i32.add
+          i32.load
+          i32.const 4134106229
+          i32.eq
+          i32.and
+          if
+            local.get $data
+            local.get $key_ptr
+            call $__dynamic_dict_get_raw_string
+            return
+          end
+          local.get $tag
+          i32.const 8
+          i32.eq
+          if
+            local.get $value
+            local.get $key_ptr
+            call $__dynamic_dict_get_raw_string
+            return
+          end
+        end
+        local.get $key_ptr
+        i32.load
+        i32.const 5
+        i32.eq
+        if
+          local.get $key_ptr
+          call $__dynamic_tag
+          local.set $key_tag
+          local.get $key_ptr
+          call $__dynamic_field0
+          local.set $key_value
+          local.get $key_tag
+          i32.const 4
+          i32.eq
+          if
+            local.get $data
+            i32.load
+            i32.const 5
+            i32.eq
+            local.get $data
+            i32.const 8
+            i32.add
+            i32.load
+            i32.const 4134106229
+            i32.eq
+            i32.and
+            if
+              local.get $data
+              local.get $key_value
+              i32.wrap_i64
+              call $__dynamic_dict_get_raw_string
+              return
+            end
+            local.get $tag
+            i32.const 8
+            i32.eq
+            if
+              local.get $value
+              local.get $key_value
+              i32.wrap_i64
+              call $__dynamic_dict_get_raw_string
+              return
+            end
+          end
+          local.get $key_tag
+          i32.const 1
+          i32.eq
+          if
+            local.get $tag
+            i32.const 6
+            i32.eq
+            local.get $tag
+            i32.const 9
+            i32.eq
+            i32.or
+            if
+              local.get $key_value
+              i64.const 0
+              i64.lt_s
+              if
+                i32.const 0
+                return
+              end
+              local.get $key_value
+              local.set $index
+              block $dynamic_index_done
+                loop $dynamic_index_loop
+                  local.get $value
+                  i32.eqz
+                  if
+                    i32.const 0
+                    return
+                  end
+                  local.get $index
+                  i64.eqz
+                  if
+                    local.get $value
+                    call $__list_head
+                    i32.wrap_i64
+                    return
+                  end
+                  local.get $value
+                  call $__list_tail
+                  local.set $value
+                  local.get $index
+                  i64.const 1
+                  i64.sub
+                  local.set $index
+                  br $dynamic_index_loop
+                end
+              end
+            end
+          end
+        end
+      else
+        local.get $tag
+        i32.const 6
+        i32.eq
+        local.get $tag
+        i32.const 9
+        i32.eq
+        i32.or
+        if
+          local.get $key
+          i64.const 0
+          i64.lt_s
+          if
+            i32.const 0
+            return
+          end
+          local.get $key
+          local.set $index
+          block $raw_index_done
+            loop $raw_index_loop
+              local.get $value
+              i32.eqz
+              if
+                i32.const 0
+                return
+              end
+              local.get $index
+              i64.eqz
+              if
+                local.get $value
+                call $__list_head
+                i32.wrap_i64
+                return
+              end
+              local.get $value
+              call $__list_tail
+              local.set $value
+              local.get $index
+              i64.const 1
+              i64.sub
+              local.set $index
+              br $raw_index_loop
+            end
+          end
+        end
+      end
+    end
+    local.get $data
+    i32.load
+    i32.const 5
+    i32.eq
+    local.get $data
+    i32.const 8
+    i32.add
+    i32.load
+    i32.const 4134106229
+    i32.eq
+    i32.and
+    local.get $key_kind
+    i32.eqz
+    local.get $key_kind
+    i32.const 4
+    i32.eq
+    i32.or
+    i32.and
+    if
+      local.get $key_kind
+      i32.const 4
+      i32.eq
+      if
+        local.get $data
+        local.get $key
+        i32.wrap_i64
+        call $__dynamic_dict_get_raw_string
+        return
+      end
+      local.get $data
+      local.get $key
+      call $__dict_get
+      local.set $option
+      local.get $option
+      i32.const 8
+      i32.add
+      i32.load
+      i32.const 2407843793
+      i32.eq
+      if
+        local.get $option
+        i32.const 12
+        i32.add
+        i64.load
+        i32.wrap_i64
+        return
+      end
+      i32.const 0
+      return
+    end
+    local.get $tag
+    i32.const 8
+    i32.eq
+    local.get $key_kind
+    i32.eqz
+    local.get $key_kind
+    i32.const 4
+    i32.eq
+    i32.or
+    i32.and
+    if
+      local.get $key_kind
+      i32.const 4
+      i32.eq
+      if
+        local.get $value
+        local.get $key
+        i32.wrap_i64
+        call $__dynamic_dict_get_raw_string
+        return
+      end
+      local.get $value
+      local.get $key
+      call $__dict_get
+      local.set $option
+      local.get $option
+      i32.const 8
+      i32.add
+      i32.load
+      i32.const 2407843793
+      i32.eq
+      if
+        local.get $option
+        i32.const 12
+        i32.add
+        i64.load
+        i32.wrap_i64
+        return
+      end
+      i32.const 0
+      return
+    end
+    local.get $key_kind
+    i32.const 1
+    i32.ne
+    if
+      i32.const 0
+      return
+    end
+    local.get $tag
+    i32.const 6
+    i32.eq
+    local.get $tag
+    i32.const 9
+    i32.eq
+    i32.or
+    i32.eqz
+    if
+      i32.const 0
+      return
+    end
+    local.get $key
+    i64.const 0
+    i64.lt_s
+    if
+      i32.const 0
+      return
+    end
+    local.get $key
+    local.set $index
+    block $done
+      loop $loop
+        local.get $value
+        i32.eqz
+        if
+          i32.const 0
+          return
+        end
+        local.get $index
+        i64.eqz
+        if
+          local.get $value
+          call $__list_head
+          i32.wrap_i64
+          return
+        end
+        local.get $value
+        call $__list_tail
+        local.set $value
+        local.get $index
+        i64.const 1
+        i64.sub
+        local.set $index
+        br $loop
+      end
+    end
+    i32.const 0
+  )
   (func $__decoder (param $kind i32) (param $inner i32) (result i32)
     (local $slots i32)
     i32.const 16

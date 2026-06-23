@@ -2285,6 +2285,155 @@ case decode.run(dynamic.int(42), decode.int) {
 }
 
 #[test]
+fn runs_dynamic_decoder_map_then_success_and_failure() {
+    let wasm = compile_wasm(
+        r#"import gleam/dynamic
+import gleam/dynamic/decode
+import gleam/result.{Ok, Error}
+
+pub fn mapped() -> Int {
+case decode.run(dynamic.int(41), decode.map(decode.int, fn(x) { x + 1 })) {
+ Ok(value) -> value
+ Error(_) -> 0
+}
+}
+
+pub fn then_success() -> Int {
+case decode.run(dynamic.int(41), decode.then(decode.int, fn(x) { decode.success(x + 1) })) {
+ Ok(value) -> value
+ Error(_) -> 0
+}
+}
+
+pub fn failed() -> Int {
+case decode.run(dynamic.int(41), decode.failure(0, "Nope")) {
+ Ok(value) -> value
+ Error(_) -> 7
+}
+}
+
+pub fn recursive() -> Int {
+case decode.run(dynamic.int(42), decode.recursive(fn() { decode.int })) {
+ Ok(value) -> value
+ Error(_) -> 0
+}
+}
+
+pub fn one_of() -> Int {
+case decode.run(dynamic.int(42), decode.one_of(decode.failure(0, "Nope"), [decode.int])) {
+ Ok(value) -> value
+ Error(_) -> 0
+}
+}
+"#,
+    );
+
+    let engine = Engine::default();
+    let module = Module::new(&engine, &wasm.bytes).expect("compile wasm module");
+    let mut store = Store::new(&engine, ());
+    let instance = Instance::new(&mut store, &module, &[]).expect("instantiate module");
+
+    for (name, expected) in [
+        ("mapped", 42),
+        ("then_success", 42),
+        ("failed", 7),
+        ("recursive", 42),
+        ("one_of", 42),
+    ] {
+        let function = instance
+            .get_typed_func::<(), i64>(&mut store, name)
+            .unwrap_or_else(|error| panic!("get {name} export: {error}"));
+        assert_eq!(
+            function
+                .call(&mut store, ())
+                .unwrap_or_else(|error| panic!("call {name}: {error}")),
+            expected
+        );
+    }
+}
+
+#[test]
+fn runs_dynamic_decoder_lookup_and_traversal() {
+    let wasm = compile_wasm(
+        r#"import gleam/dynamic
+import gleam/dynamic/decode
+import gleam/result.{Ok, Error}
+
+fn profile() {
+  dynamic.properties([
+    #(dynamic.string("name"), dynamic.string("Lucy")),
+    #(dynamic.string("nested"), dynamic.properties([
+      #(dynamic.string("score"), dynamic.int(42)),
+    ])),
+    #(dynamic.string("items"), dynamic.array([
+      dynamic.int(10),
+      dynamic.int(42),
+    ])),
+  ])
+}
+
+pub fn at_score() -> Int {
+case decode.run(profile(), decode.at(["nested", "score"], decode.int)) {
+ Ok(value) -> value
+ Error(_) -> 0
+}
+}
+
+pub fn at_array() -> Int {
+case decode.run(profile(), decode.at([dynamic.string("items"), dynamic.int(1)], decode.int)) {
+ Ok(value) -> value
+ Error(_) -> 0
+}
+}
+
+pub fn field_score() -> Int {
+case decode.run(profile(), decode.field("nested", decode.dynamic, fn(_) { decode.at(["nested", "score"], decode.int) })) {
+ Ok(value) -> value
+ Error(_) -> 0
+}
+}
+
+pub fn subfield_score() -> Int {
+case decode.run(profile(), decode.subfield(["nested", "score"], decode.int, fn(value) { decode.success(value + 1) })) {
+ Ok(value) -> value
+ Error(_) -> 0
+}
+}
+
+pub fn missing() -> Int {
+case decode.run(profile(), decode.at(["missing"], decode.int)) {
+ Ok(value) -> value
+ Error(_) -> 7
+}
+}
+"#,
+    );
+
+    let engine = Engine::default();
+    let module = Module::new(&engine, &wasm.bytes).expect("compile wasm module");
+    let mut store = Store::new(&engine, ());
+    let instance = Instance::new(&mut store, &module, &[]).expect("instantiate module");
+
+    for (name, expected) in [
+        ("at_score", 42),
+        ("at_array", 42),
+        ("field_score", 42),
+        ("subfield_score", 43),
+        ("missing", 7),
+    ] {
+        let function = instance
+            .get_typed_func::<(), i64>(&mut store, name)
+            .unwrap_or_else(|error| panic!("get {name} export: {error}"));
+        assert_eq!(
+            function
+                .call(&mut store, ())
+                .unwrap_or_else(|error| panic!("call {name}: {error}")),
+            expected
+        );
+    }
+}
+
+#[test]
 fn runs_string_concat_and_value_equality_codegen() {
     let wasm = compile_wasm(
         r#"import gleam/string
