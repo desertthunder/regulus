@@ -233,7 +233,9 @@ export function callExport(name, paramTypes = [], returnType = "Nil", ...args) {
  * @returns {Function} A JavaScript function that performs ABI conversion.
  */
 export function exportFunction(name, paramTypes, returnType) {
-  const shape = paramTypes ? { params: paramTypes, result: returnType ?? "Nil" } : exportShape(name);
+  const shape = paramTypes
+    ? { params: paramTypes, result: returnType ?? "Nil" }
+    : exportShape(name);
   return (...args) => callExport(name, shape.params, shape.result, ...args);
 }
 
@@ -245,7 +247,12 @@ export function exportFunction(name, paramTypes, returnType) {
  * @returns {string} The decoded Gleam string result.
  */
 export function callString(name, ...args) {
-  return callExport(name, args.map(() => "String"), "String", ...args);
+  return callExport(
+    name,
+    args.map(() => "String"),
+    "String",
+    ...args,
+  );
 }
 
 /**
@@ -300,6 +307,80 @@ export function readString(ptr) {
  */
 export function readValue(ptr, shape) {
   return fromWasmValue(shape, ptr);
+}
+
+/**
+ * Encode a JavaScript JSON value into a managed Gleam `Dynamic` pointer.
+ *
+ * Accepted values are `null`, booleans, strings, finite numbers, arrays, and
+ * plain objects with string keys. Integers are encoded as dynamic ints when
+ * they fit the stable JS integer range; other numbers become dynamic floats.
+ *
+ * @param {unknown} value JavaScript JSON value.
+ * @returns {number} Borrowed managed Dynamic pointer.
+ */
+export function writeDynamic(value) {
+  ensureInstance();
+  if (value === null) {
+    return writeDynamicNil();
+  }
+  switch (typeof value) {
+    case "boolean":
+      return writeDynamicSlot(3, value ? 1n : 0n);
+    case "string":
+      return writeDynamicSlot(4, BigInt(writeString(value)));
+    case "number":
+      return writeDynamicNumber(value);
+    case "bigint":
+      return writeDynamicInt(value);
+    case "object":
+      if (Array.isArray(value)) {
+        return writeDynamicArray(value);
+      }
+      return writeDynamicObject(value);
+    default:
+      throw new Error(`Cannot convert ${typeof value} to Gleam Dynamic`);
+  }
+}
+
+/**
+ * Parse JSON text and encode the result as a managed Gleam `Dynamic` pointer.
+ *
+ * @param {string} text JSON source text.
+ * @returns {number} Borrowed managed Dynamic pointer.
+ */
+export function writeJson(text) {
+  return writeDynamic(JSON.parse(String(text)));
+}
+
+/**
+ * Decode a managed Gleam `Dynamic` pointer into a JavaScript JSON value.
+ *
+ * @param {number} ptr Borrowed managed Dynamic pointer.
+ * @returns {unknown} JavaScript JSON value.
+ */
+export function readDynamic(ptr) {
+  ensureValueTag(ptr, 5, "Dynamic");
+  const dynamicTag = instance.exports.__regulus_value_constructor(ptr);
+  switch (dynamicTag) {
+    case 1:
+      return instance.exports.__regulus_value_field(ptr, 0);
+    case 2:
+      return floatFromSlot(instance.exports.__regulus_value_field(ptr, 0));
+    case 3:
+      return instance.exports.__regulus_value_field(ptr, 0) !== 0n;
+    case 4:
+      return readString(pointerFromSlot(instance.exports.__regulus_value_field(ptr, 0)));
+    case 6:
+    case 9:
+      return readDynamicArray(pointerFromSlot(instance.exports.__regulus_value_field(ptr, 0)));
+    case 7:
+      return null;
+    case 8:
+      return readDynamicObject(pointerFromSlot(instance.exports.__regulus_value_field(ptr, 0)));
+    default:
+      throw new Error(`Unsupported Gleam Dynamic tag ${dynamicTag}`);
+  }
 }
 
 /**
@@ -421,7 +502,9 @@ export function readCustom(ptr, variants = {}) {
   const fieldShapes = variant.fields ?? [];
   const arity = instance.exports.__regulus_value_arity(ptr);
   if (fieldShapes.length && arity !== fieldShapes.length) {
-    throw new Error(`Regulus custom arity ${arity} does not match shape arity ${fieldShapes.length}`);
+    throw new Error(
+      `Regulus custom arity ${arity} does not match shape arity ${fieldShapes.length}`,
+    );
   }
   const shapes = fieldShapes.length ? fieldShapes : Array.from({ length: arity }, () => "Int");
   const hasNamedFields = shapes.some((field) => typeof field === "object" && "name" in field);
@@ -608,6 +691,8 @@ function toWasmValue(type, value) {
       return value ? 1 : 0;
     case "String":
       return writeString(value);
+    case "Dynamic":
+      return writeDynamic(value);
     case "Handle":
       return typeof value === "number" ? value : wrapHandle(value);
     case "Nil":
@@ -652,6 +737,8 @@ function fromWasmValue(type, value) {
       return value !== 0;
     case "String":
       return readString(value);
+    case "Dynamic":
+      return readDynamic(value);
     case "Handle":
       return getHandle(value);
     case "Nil":
@@ -671,7 +758,7 @@ function fromWasmValue(type, value) {
  */
 function readField(ptr, index, shape) {
   const slot = instance.exports.__regulus_value_field(ptr, index);
-  if (shape === "String" || (shape && typeof shape === "object")) {
+  if (shape === "String" || shape === "Dynamic" || (shape && typeof shape === "object")) {
     return fromWasmValue(shape, pointerFromSlot(slot));
   }
   if (shape === "Float") {
@@ -709,8 +796,10 @@ function handleId(ptr, expectedTypeTag) {
   ensureInstance();
   ensureValueTag(ptr, 8, "opaque handle");
   const actualTypeTag = instance.exports.__regulus_handle_type(ptr) >>> 0;
-  if (expectedTypeTag !== undefined && actualTypeTag !== (expectedTypeTag >>> 0)) {
-    throw new Error(`Regulus handle type ${actualTypeTag} does not match expected type ${expectedTypeTag >>> 0}`);
+  if (expectedTypeTag !== undefined && actualTypeTag !== expectedTypeTag >>> 0) {
+    throw new Error(
+      `Regulus handle type ${actualTypeTag} does not match expected type ${expectedTypeTag >>> 0}`,
+    );
   }
   return instance.exports.__regulus_handle_id(ptr) >>> 0;
 }
@@ -749,6 +838,157 @@ function floatFromSlot(slot) {
   const view = new DataView(buffer);
   view.setBigUint64(0, BigInt.asUintN(64, slot), true);
   return view.getFloat64(0, true);
+}
+
+/**
+ * Reinterpret a JavaScript number as an IEEE-754 Float slot.
+ *
+ * @param {number} value JavaScript number.
+ * @returns {bigint} Raw i64 slot bits.
+ */
+function slotFromFloat(value) {
+  const buffer = new ArrayBuffer(8);
+  const view = new DataView(buffer);
+  view.setFloat64(0, value, true);
+  return view.getBigUint64(0, true);
+}
+
+/**
+ * Allocate a managed custom value.
+ *
+ * @param {number} constructor Constructor tag.
+ * @param {bigint[]} fields Raw field slots.
+ * @returns {number} Custom value pointer.
+ */
+function writeCustom(constructor, fields) {
+  const ptr = instance.exports.__regulus_alloc(align8(12 + fields.length * 8));
+  const view = new DataView(memory.buffer);
+  view.setUint32(ptr, 5, true);
+  view.setUint32(ptr + 4, fields.length, true);
+  view.setUint32(ptr + 8, constructor >>> 0, true);
+  fields.forEach((field, index) => {
+    view.setBigUint64(ptr + 12 + index * 8, BigInt.asUintN(64, field), true);
+  });
+  return ptr;
+}
+
+/**
+ * Allocate a managed tuple value.
+ *
+ * @param {bigint[]} fields Raw field slots.
+ * @returns {number} Tuple pointer.
+ */
+function writeTuple(fields) {
+  const ptr = instance.exports.__regulus_alloc(align8(8 + fields.length * 8));
+  const view = new DataView(memory.buffer);
+  view.setUint32(ptr, 3, true);
+  view.setUint32(ptr + 4, fields.length, true);
+  fields.forEach((field, index) => {
+    view.setBigUint64(ptr + 8 + index * 8, BigInt.asUintN(64, field), true);
+  });
+  return ptr;
+}
+
+/**
+ * Allocate a managed list cons cell.
+ *
+ * @param {bigint} head Raw head slot.
+ * @param {number} tail Tail list pointer.
+ * @returns {number} List cons pointer.
+ */
+function writeListCons(head, tail) {
+  const ptr = instance.exports.__regulus_alloc(24);
+  const view = new DataView(memory.buffer);
+  view.setUint32(ptr, 2, true);
+  view.setUint32(ptr + 4, 2, true);
+  view.setBigUint64(ptr + 8, BigInt.asUintN(64, head), true);
+  view.setUint32(ptr + 16, tail >>> 0, true);
+  return ptr;
+}
+
+function writeDynamicSlot(tag, slot) {
+  return writeCustom(tag, [slot]);
+}
+
+function writeDynamicNil() {
+  return writeCustom(7, []);
+}
+
+function writeDynamicNumber(value) {
+  if (!Number.isFinite(value)) {
+    throw new Error("Cannot convert non-finite number to Gleam Dynamic");
+  }
+  if (Number.isSafeInteger(value)) {
+    return writeDynamicInt(BigInt(value));
+  }
+  return writeDynamicSlot(2, slotFromFloat(value));
+}
+
+function writeDynamicInt(value) {
+  return writeDynamicSlot(1, BigInt.asIntN(64, value));
+}
+
+function writeDynamicArray(items) {
+  let list = 0;
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    list = writeListCons(BigInt(writeDynamic(items[index])), list);
+  }
+  return writeDynamicSlot(9, BigInt(list));
+}
+
+function writeDynamicObject(value) {
+  if (!value || Object.getPrototypeOf(value) !== Object.prototype) {
+    throw new Error("Cannot convert non-plain object to Gleam Dynamic");
+  }
+  const entries = Object.entries(value);
+  const buckets = instance.exports.__regulus_alloc(64);
+  new Uint8Array(memory.buffer, buckets, 64).fill(0);
+  let bucket = 0;
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const [key, item] = entries[index];
+    const pair = writeTuple([BigInt(writeDynamic(key)), BigInt(writeDynamic(item))]);
+    bucket = writeListCons(BigInt(pair), bucket);
+  }
+  new DataView(memory.buffer).setUint32(buckets, bucket >>> 0, true);
+  const dict = writeCustom(4134106229, [BigInt(entries.length), 16n, BigInt(buckets)]);
+  return writeDynamicSlot(8, BigInt(dict));
+}
+
+function readDynamicArray(ptr) {
+  const out = [];
+  let cursor = ptr;
+  while (cursor !== 0) {
+    ensureValueTag(cursor, 2, "dynamic array cons cell");
+    out.push(readDynamic(pointerFromSlot(instance.exports.__regulus_value_field(cursor, 0))));
+    cursor = pointerFromSlot(instance.exports.__regulus_value_field(cursor, 1));
+  }
+  return out;
+}
+
+function readDynamicObject(dict) {
+  ensureValueTag(dict, 5, "dynamic properties dictionary");
+  const buckets = pointerFromSlot(instance.exports.__regulus_value_field(dict, 2));
+  const view = new DataView(memory.buffer);
+  const out = {};
+  for (let index = 0; index < 16; index += 1) {
+    let bucket = view.getUint32(buckets + index * 4, true);
+    while (bucket !== 0) {
+      ensureValueTag(bucket, 2, "dynamic properties bucket");
+      const pair = pointerFromSlot(instance.exports.__regulus_value_field(bucket, 0));
+      ensureValueTag(pair, 3, "dynamic properties pair");
+      const key = readDynamic(pointerFromSlot(instance.exports.__regulus_value_field(pair, 0)));
+      if (typeof key !== "string") {
+        throw new Error("Gleam Dynamic properties contain a non-string key");
+      }
+      out[key] = readDynamic(pointerFromSlot(instance.exports.__regulus_value_field(pair, 1)));
+      bucket = pointerFromSlot(instance.exports.__regulus_value_field(bucket, 1));
+    }
+  }
+  return out;
+}
+
+function align8(value) {
+  return (value + 7) & -8;
 }
 
 /**

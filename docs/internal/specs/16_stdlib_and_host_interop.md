@@ -178,6 +178,14 @@ object memory or retain pointers across resets.
 The JS host ABI, browser, bundler, and Node.js profiles are defined in
 [JavaScript host ABI](../../website/development/js_abi.md).
 
+For JS-family hosts, `Dynamic` is a dedicated ABI shape rather than an opaque
+handle. Adapter metadata names it as `Dynamic`; `writeDynamic` accepts host JSON
+values, `writeJson` parses JSON text before conversion, and `readDynamic`
+returns JSON-shaped JavaScript values. JSON arrays become dynamic arrays, JSON
+objects become dynamic properties with string keys, and JSON `null` becomes
+dynamic nil. Strings passed to `writeDynamic` remain JSON string values; callers
+use `writeJson` when a string contains JSON source text.
+
 ## Externals And Package Assets
 
 General external functions lower to Wasm imports. Regulus preserves declared

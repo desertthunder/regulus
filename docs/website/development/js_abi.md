@@ -43,12 +43,29 @@ reset point.
 | records          | managed `i32` pointer        | Read through value helpers.            |
 | custom types     | managed `i32` pointer        | Read through value helpers.            |
 | lists            | managed `i32` pointer        | Read as JavaScript arrays.             |
+| `Dynamic`        | managed `i32` pointer        | Read and write as JSON-shaped values.  |
 | opaque externals | managed `i32` opaque pointer | JS adapter handle table entry.         |
 | functions        | none                         | Unsupported across the JS host ABI.    |
 
 The first stable call conversion layer is scalar and string focused. Managed
 structured values can be read from borrowed pointers with explicit reader
-shapes. Writing structured JavaScript values into Gleam is deferred.
+shapes.
+
+`Dynamic` is the first structured write bridge because it is the runtime representation
+used for host JSON.
+
+## Dynamic JSON bridge
+
+Generated or packaged JS glue exposes:
+
+- `writeDynamic(value) -> ptr`
+- `writeJson(text) -> ptr`
+- `readDynamic(ptr) -> value`
+
+`writeDynamic` accepts JSON-shaped JavaScript values: `null`, booleans,
+strings, finite numbers, arrays, and plain objects with string keys. Strings
+remain JSON string values. Use `writeJson` when a string contains JSON source
+text that should be parsed before becoming `Dynamic`.
 
 ## Opaque handles
 
@@ -270,10 +287,10 @@ and instantiates the Wasm module.
 Node-profile glue exposes `createNodeImports(options)` for the first standard
 Node APIs. It returns a `nodejs` import module with these names:
 
-| Import name | Gleam ABI shape | JavaScript behavior |
-| ----------- | --------------- | ------------------- |
+| Import name | Gleam ABI shape    | JavaScript behavior                                                   |
+| ----------- | ------------------ | --------------------------------------------------------------------- |
 | `env.get`   | `String -> String` | Reads an environment key and maps missing values to the empty string. |
-| `time.now`  | `Nil -> Int` | Returns Unix time in milliseconds. |
+| `time.now`  | `Nil -> Int`       | Returns Unix time in milliseconds.                                    |
 
 The helper accepts `env` and `now` overrides so tests and custom Node hosts can
 supply checked implementations.

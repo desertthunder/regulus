@@ -255,7 +255,7 @@ transitional.
 - [x] Implement upstream dict runtime primitive
 - [x] Define & implement equality, hashing, transient update, and JS ABI rules for native
       dict values.
-- [ ] Define & implement the JSON bridge from host JSON or JSON text to `Dynamic`.
+- [x] Define & implement the JSON bridge from host JSON or JSON text to `Dynamic`.
 - [ ] Implement primitive dynamic operations for classification, construction,
       lookup, traversal, and error payloads.
 - [ ] Reuse normal closure dispatch for decoder combinators such as `field`,

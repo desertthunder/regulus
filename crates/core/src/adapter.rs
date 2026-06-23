@@ -197,17 +197,18 @@ fn simple_js_abi_type(module: &ir::Module, type_: &Type) -> Option<&'static str>
         Type::Float => Some("Float"),
         Type::Bool => Some("Bool"),
         Type::String => Some("String"),
+        Type::Custom { name, .. } if name == "Dynamic" => Some("Dynamic"),
         Type::Opaque { .. } => Some("Handle"),
-        Type::Custom { name, .. } if is_opaque_type(module, name) => Some("Handle"),
+        Type::Custom { name, .. }
+            if module
+                .type_declarations
+                .iter()
+                .any(|type_| type_.name == *name && type_.opaque) =>
+        {
+            Some("Handle")
+        }
         _ => None,
     }
-}
-
-fn is_opaque_type(module: &ir::Module, name: &str) -> bool {
-    module
-        .type_declarations
-        .iter()
-        .any(|type_| type_.name == name && type_.opaque)
 }
 
 fn substitute_generics(type_: &Type, substitutions: &HashMap<String, Type>) -> Type {
@@ -300,5 +301,58 @@ mod tests {
 
         assert!(metadata.contains(r#""../gleam_stdlib.mjs.to_string":{"params":["Int"],"result":"String"}"#));
         assert!(metadata.contains(r#""imports":{}"#));
+    }
+
+    #[test]
+    fn js_metadata_maps_dynamic_as_json_bridge_value_not_opaque_handle() {
+        let span = Span::new(SourceFileId(1), 0, 3);
+        let module = ir::Module {
+            span,
+            identity: None,
+            imports: Vec::new(),
+            declarations: Vec::new(),
+            type_declarations: vec![ir::TypeMetadata {
+                name: "Dynamic".into(),
+                parameters: Vec::new(),
+                constructors: Vec::new(),
+                opaque: true,
+            }],
+            constants: Vec::new(),
+            init: ir::ModuleInit::default(),
+            references: Vec::new(),
+            js_externals: Vec::new(),
+            exports: vec![ir::Export { name: "main".into(), kind: ir::ExportKind::Function, backend_name: None, span }],
+            functions: vec![ir::Function {
+                name: "main".into(),
+                public: true,
+                closure_captures: Vec::new(),
+                params: vec![ir::Local {
+                    id: ir::LocalId(0),
+                    name: "value".into(),
+                    type_: Type::Custom { name: "Dynamic".into(), args: Vec::new() },
+                    span,
+                }],
+                locals: Vec::new(),
+                return_type: Type::Custom { name: "Dynamic".into(), args: Vec::new() },
+                body: ir::Block {
+                    instructions: Vec::new(),
+                    result: Box::new(ir::Expression {
+                        kind: ir::ExpressionKind::LocalGet(ir::LocalId(0)),
+                        type_: Type::Custom { name: "Dynamic".into(), args: Vec::new() },
+                        span,
+                    }),
+                    span,
+                },
+                abi: ir::CallAbi { boundary: CallBoundary::ModuleExport, params: Vec::new(), return_: None },
+                span,
+            }],
+            dependency_specializations: Vec::new(),
+            linked_names: Vec::new(),
+        };
+
+        let metadata = js_abi_metadata(&module);
+
+        assert!(metadata.contains(r#""main":{"params":["Dynamic"],"result":"Dynamic"}"#));
+        assert!(!metadata.contains("Handle"));
     }
 }
