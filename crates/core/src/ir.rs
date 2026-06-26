@@ -1094,7 +1094,7 @@ pub fn lower_project(project: TypedProject) -> Result<Module, Diagnostics> {
         return Err(diagnostics);
     }
 
-    link_mods(modules, dependency_specializations)
+    link_mods(modules, &dependency_specializations)
 }
 
 fn keep_dependency_module_internal(module: &mut Module) {
@@ -1335,7 +1335,7 @@ fn unsupported_dependency_specialization_diagnostic(
     .with_note("dependency specializations must have concrete internal runtime shapes before Wasm emission")
 }
 
-fn link_mods(mods: Vec<Module>, dep_specializations: Vec<DependencySpecialization>) -> Result<Module, Diagnostics> {
+fn link_mods(mods: Vec<Module>, dep_specializations: &[DependencySpecialization]) -> Result<Module, Diagnostics> {
     let Some(first) = mods.first() else {
         return Err(vec![Diagnostic::new(
             DiagnosticCode::ProjectError,
@@ -1343,7 +1343,7 @@ fn link_mods(mods: Vec<Module>, dep_specializations: Vec<DependencySpecializatio
         )]);
     };
 
-    let rename_plan = global_backend_renames(&mods, &dep_specializations);
+    let rename_plan = global_backend_renames(&mods, dep_specializations);
     let mut linked = Module {
         span: first.span,
         identity: None,
@@ -1367,7 +1367,7 @@ fn link_mods(mods: Vec<Module>, dep_specializations: Vec<DependencySpecializatio
     for module in mods {
         let renames = mod_backend_renames(&module, &rename_plan);
         let mut module = module;
-        add_dep_specialization_funcs(&mut module, &dep_specializations, &rename_plan);
+        add_dep_specialization_funcs(&mut module, dep_specializations, &rename_plan);
         rewrite_mod_backend_names(&mut module, &renames, &rename_plan);
         remove_unspecialized_dep_functions(&mut module, &rename_plan);
 

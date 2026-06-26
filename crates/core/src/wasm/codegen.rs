@@ -392,6 +392,7 @@ impl<'a> StructuredEmitter<'a> {
         self.runtime_helper_roots.insert("__string_len".into());
         self.runtime_helper_roots.insert("__string_data".into());
         self.runtime_helper_roots.insert("__opaque_new".into());
+        // TODO: this should be a helper
         self.module.raw_wat_items.push(
             r#"
   (func $__regulus_alloc (param $size i32) (result i32)
@@ -1172,6 +1173,41 @@ impl<'a> StructuredEmitter<'a> {
                 out.push(Instruction::I32Load(MemoryArg::new(self.ensure_memory(), 4, 2)));
                 out.push(Instruction::I32Eqz);
             }
+            "__stdlib_gleam_string_byte_size" => {
+                self.expression(&call.arguments[0].value, out)?;
+                out.push(Instruction::I32Load(MemoryArg::new(self.ensure_memory(), 4, 2)));
+                out.push(Instruction::I64ExtendI32U);
+            }
+            "__stdlib_gleam_string_starts_with" => {
+                self.expression(&call.arguments[0].value, out)?;
+                self.expression(&call.arguments[1].value, out)?;
+                self.call_runtime_helper(
+                    "__string_starts_with",
+                    [ValueType::I32, ValueType::I32],
+                    [ValueType::I32],
+                    out,
+                );
+            }
+            "__stdlib_gleam_string_ends_with" => {
+                self.expression(&call.arguments[0].value, out)?;
+                self.expression(&call.arguments[1].value, out)?;
+                self.call_runtime_helper(
+                    "__string_ends_with",
+                    [ValueType::I32, ValueType::I32],
+                    [ValueType::I32],
+                    out,
+                );
+            }
+            "__stdlib_gleam_string_contains" => {
+                self.expression(&call.arguments[0].value, out)?;
+                self.expression(&call.arguments[1].value, out)?;
+                self.call_runtime_helper(
+                    "__string_contains",
+                    [ValueType::I32, ValueType::I32],
+                    [ValueType::I32],
+                    out,
+                );
+            }
             "__stdlib_gleam_bit_array_bit_size" => {
                 self.expression(&call.arguments[0].value, out)?;
                 out.push(Instruction::I32Load(MemoryArg::new(self.ensure_memory(), 4, 2)));
@@ -1214,6 +1250,59 @@ impl<'a> StructuredEmitter<'a> {
                     [ValueType::I32],
                     out,
                 );
+            }
+            "__stdlib_gleam_bit_array_from_string" => {
+                self.expression(&call.arguments[0].value, out)?;
+                self.call_runtime_helper("__bit_array_from_string", [ValueType::I32], [ValueType::I32], out);
+            }
+            "__stdlib_gleam_bit_array_to_string" => {
+                self.expression(&call.arguments[0].value, out)?;
+                self.call_runtime_helper("__bit_array_to_string", [ValueType::I32], [ValueType::I32], out);
+            }
+            "__stdlib_gleam_bit_array_slice" => {
+                self.expression(&call.arguments[0].value, out)?;
+                self.expression(&call.arguments[1].value, out)?;
+                self.expression(&call.arguments[2].value, out)?;
+                self.call_runtime_helper(
+                    "__bit_array_slice_bytes",
+                    [ValueType::I32, ValueType::I64, ValueType::I64],
+                    [ValueType::I32],
+                    out,
+                );
+            }
+            "__stdlib_gleam_bit_array_pad_to_bytes" => {
+                self.expression(&call.arguments[0].value, out)?;
+                self.call_runtime_helper("__bit_array_pad_to_bytes", [ValueType::I32], [ValueType::I32], out);
+            }
+            "__stdlib_gleam_bit_array_base16_encode" => {
+                self.expression(&call.arguments[0].value, out)?;
+                self.call_runtime_helper("__base16_encode", [ValueType::I32], [ValueType::I32], out);
+            }
+            "__stdlib_gleam_bit_array_base16_decode" => {
+                self.expression(&call.arguments[0].value, out)?;
+                self.call_runtime_helper("__base16_decode", [ValueType::I32], [ValueType::I32], out);
+            }
+            "__stdlib_gleam_bit_array_base64_encode" => {
+                self.expression(&call.arguments[0].value, out)?;
+                self.expression(&call.arguments[1].value, out)?;
+                self.call_runtime_helper(
+                    "__base64_encode",
+                    [ValueType::I32, ValueType::I32],
+                    [ValueType::I32],
+                    out,
+                );
+            }
+            "__stdlib_gleam_bit_array_base64_decode" => {
+                self.expression(&call.arguments[0].value, out)?;
+                self.call_runtime_helper("__base64_decode", [ValueType::I32], [ValueType::I32], out);
+            }
+            "__stdlib_gleam_uri_percent_encode" => {
+                self.expression(&call.arguments[0].value, out)?;
+                self.call_runtime_helper("__percent_encode", [ValueType::I32], [ValueType::I32], out);
+            }
+            "__stdlib_gleam_uri_percent_decode" => {
+                self.expression(&call.arguments[0].value, out)?;
+                self.call_runtime_helper("__percent_decode", [ValueType::I32], [ValueType::I32], out);
             }
             "__stdlib_gleam_dict_new" => {
                 self.call_runtime_helper("__dict_new", [], [ValueType::I32], out);

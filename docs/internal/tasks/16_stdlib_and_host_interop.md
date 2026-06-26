@@ -260,9 +260,16 @@ transitional.
       lookup, traversal, and error payloads.
 - [x] Reuse normal closure dispatch for decoder combinators such as `field`,
       `map`, `then`, `one_of`, and `recursive`.
-- [ ] Implement or validate primitives/assets for Unicode, string slicing,
-      casing, trimming, inspect, parse, string trees, byte trees, base16,
-      base64, byte slicing, URI parsing, percent encoding, and query handling.
+- [~] Implement or validate primitives/assets for Unicode, string slicing,
+  casing, trimming, inspect, parse, string trees, byte trees, base16,
+  base64, byte slicing, URI parsing, percent encoding, and query handling.
+  - Completed: runtime primitives for string predicates (`starts_with`,
+    `ends_with`, `contains`, `byte_size`), bit-array conversions
+    (`from_string`, `to_string` with UTF-8 validation, `slice`, `pad_to_bytes`),
+    base encoding (`base16_encode`, `base16_decode`, `base64_encode`,
+    `base64_decode`), and URI percent encoding (`percent_encode`, `percent_decode`).
+  - Remaining: Unicode grapheme operations (casing, trimming, slicing, `pop_grapheme`),
+    string trees, byte trees, URI parsing, query handling, and `string.inspect`.
 - [ ] Expand bit-string construction and matching to upstream segment forms.
 - [ ] Add upstream compile fixtures for `gleam/dict`, `gleam/dynamic`,
       `gleam/dynamic/decode`, `gleam/string`, `gleam/string_tree`,

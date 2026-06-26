@@ -113,7 +113,7 @@ fn stdlib_modules() -> Vec<StdlibModule> {
         StdlibModule::gleam_function(),
         StdlibModule::remaining("gleam/set", RetentionGap::TargetFiltering),
         StdlibModule::remaining("gleam/string_tree", RetentionGap::PackageAsset),
-        StdlibModule::remaining("gleam/uri", RetentionGap::PackageMetadata),
+        StdlibModule::gleam_uri(),
     ]
 }
 
@@ -177,6 +177,30 @@ impl StdlibModule {
                 function(
                     "is_empty",
                     vec![Type::String],
+                    Type::Bool,
+                    runtime_primitive_retention(),
+                ),
+                function(
+                    "byte_size",
+                    vec![Type::String],
+                    Type::Int,
+                    runtime_primitive_retention(),
+                ),
+                function(
+                    "starts_with",
+                    vec![Type::String, Type::String],
+                    Type::Bool,
+                    runtime_primitive_retention(),
+                ),
+                function(
+                    "ends_with",
+                    vec![Type::String, Type::String],
+                    Type::Bool,
+                    runtime_primitive_retention(),
+                ),
+                function(
+                    "contains",
+                    vec![Type::String, Type::String],
                     Type::Bool,
                     runtime_primitive_retention(),
                 ),
@@ -365,6 +389,54 @@ impl StdlibModule {
                     "starts_with",
                     vec![Type::BitArray, Type::BitArray],
                     Type::Bool,
+                    runtime_primitive_retention(),
+                ),
+                function(
+                    "from_string",
+                    vec![Type::String],
+                    Type::BitArray,
+                    runtime_primitive_retention(),
+                ),
+                function(
+                    "to_string",
+                    vec![Type::BitArray],
+                    result(Type::String, Type::Nil),
+                    runtime_primitive_retention(),
+                ),
+                function(
+                    "slice",
+                    vec![Type::BitArray, Type::Int, Type::Int],
+                    result(Type::BitArray, Type::Nil),
+                    runtime_primitive_retention(),
+                ),
+                function(
+                    "pad_to_bytes",
+                    vec![Type::BitArray],
+                    Type::BitArray,
+                    runtime_primitive_retention(),
+                ),
+                function(
+                    "base16_encode",
+                    vec![Type::BitArray],
+                    Type::String,
+                    runtime_primitive_retention(),
+                ),
+                function(
+                    "base16_decode",
+                    vec![Type::String],
+                    result(Type::BitArray, Type::Nil),
+                    runtime_primitive_retention(),
+                ),
+                function(
+                    "base64_encode",
+                    vec![Type::BitArray, Type::Bool],
+                    Type::String,
+                    runtime_primitive_retention(),
+                ),
+                function(
+                    "base64_decode",
+                    vec![Type::String],
+                    result(Type::BitArray, Type::Nil),
                     runtime_primitive_retention(),
                 ),
             ],
@@ -717,6 +789,76 @@ impl StdlibModule {
                 ),
             ],
             &[],
+        )
+    }
+
+    fn gleam_uri() -> Self {
+        let uri_type = type_decl(
+            "Uri",
+            vec![],
+            false,
+            vec![constructor(
+                "Uri",
+                vec![
+                    FieldInfo::new("scheme".to_string(), option(Type::String)),
+                    FieldInfo::new("userinfo".to_string(), option(Type::String)),
+                    FieldInfo::new("host".to_string(), option(Type::String)),
+                    FieldInfo::new("port".to_string(), option(Type::Int)),
+                    FieldInfo::new("path".to_string(), Type::String),
+                    FieldInfo::new("query".to_string(), option(Type::String)),
+                    FieldInfo::new("fragment".to_string(), option(Type::String)),
+                ],
+                Type::custom("Uri", vec![]),
+            )],
+        );
+        Self::new(
+            "gleam/uri",
+            ModuleStrategy::Hybrid,
+            module_retention(RetentionGap::PackageMetadata),
+            &[
+                constructor_member("Uri"),
+                function(
+                    "parse",
+                    vec![Type::String],
+                    result(Type::custom("Uri", vec![]), Type::Nil),
+                    upstream_source_retention(),
+                ),
+                function(
+                    "to_string",
+                    vec![Type::custom("Uri", vec![])],
+                    Type::String,
+                    upstream_source_retention(),
+                ),
+                function(
+                    "query_to_string",
+                    vec![Type::List(Box::new(Type::Tuple(vec![Type::String, Type::String])))],
+                    Type::String,
+                    upstream_source_retention(),
+                ),
+                function(
+                    "parse_query",
+                    vec![Type::String],
+                    result(
+                        Type::List(Box::new(Type::Tuple(vec![Type::String, Type::String]))),
+                        Type::Nil,
+                    ),
+                    upstream_source_retention(),
+                ),
+                function(
+                    "percent_encode",
+                    vec![Type::String],
+                    Type::String,
+                    runtime_primitive_retention(),
+                ),
+                function(
+                    "percent_decode",
+                    vec![Type::String],
+                    result(Type::String, Type::Nil),
+                    runtime_primitive_retention(),
+                ),
+                value("empty", Type::custom("Uri", vec![]), temporary_interface_retention()),
+            ],
+            &[uri_type],
         )
     }
 

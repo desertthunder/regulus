@@ -306,4 +306,578 @@ pub const STRING_HELPERS: &str = r#"
     local.get $frac_str
     call $__string_concat
   )
+  (func $__string_starts_with (param $string i32) (param $prefix i32) (result i32)
+    (local $string_len i32) (local $prefix_len i32) (local $i i32)
+    local.get $string
+    call $__string_len
+    local.set $string_len
+    local.get $prefix
+    call $__string_len
+    local.set $prefix_len
+    ;; If prefix is longer than string, it cannot start with it.
+    local.get $prefix_len
+    local.get $string_len
+    i32.gt_u
+    if (result i32)
+      i32.const 0
+    else
+      i32.const 1
+      local.set $i
+      block $match
+        loop $loop
+          local.get $i
+          local.get $prefix_len
+          i32.ge_u
+          br_if $match
+          local.get $string
+          call $__string_data
+          local.get $i
+          i32.add
+          i32.load8_u
+          local.get $prefix
+          call $__string_data
+          local.get $i
+          i32.add
+          i32.load8_u
+          i32.ne
+          if
+            i32.const 0
+            return
+          end
+          local.get $i
+          i32.const 1
+          i32.add
+          local.set $i
+          br $loop
+        end
+      end
+      i32.const 1
+    end
+  )
+  (func $__string_ends_with (param $string i32) (param $suffix i32) (result i32)
+    (local $string_len i32) (local $suffix_len i32) (local $offset i32) (local $i i32)
+    local.get $string
+    call $__string_len
+    local.set $string_len
+    local.get $suffix
+    call $__string_len
+    local.set $suffix_len
+    ;; If suffix is longer than string, it cannot end with it.
+    local.get $suffix_len
+    local.get $string_len
+    i32.gt_u
+    if (result i32)
+      i32.const 0
+    else
+      local.get $string_len
+      local.get $suffix_len
+      i32.sub
+      local.set $offset
+      i32.const 0
+      local.set $i
+      block $match
+        loop $loop
+          local.get $i
+          local.get $suffix_len
+          i32.ge_u
+          br_if $match
+          local.get $string
+          call $__string_data
+          local.get $offset
+          local.get $i
+          i32.add
+          i32.add
+          i32.load8_u
+          local.get $suffix
+          call $__string_data
+          local.get $i
+          i32.add
+          i32.load8_u
+          i32.ne
+          if
+            i32.const 0
+            return
+          end
+          local.get $i
+          i32.const 1
+          i32.add
+          local.set $i
+          br $loop
+        end
+      end
+      i32.const 1
+    end
+  )
+  (func $__string_contains (param $haystack i32) (param $needle i32) (result i32)
+    (local $haystack_len i32) (local $needle_len i32) (local $start i32) (local $j i32) (local $matched i32)
+    local.get $haystack
+    call $__string_len
+    local.set $haystack_len
+    local.get $needle
+    call $__string_len
+    local.set $needle_len
+    ;; Empty needle is always found.
+    local.get $needle_len
+    i32.eqz
+    if (result i32)
+      i32.const 1
+    else
+      i32.const 0
+      local.set $start
+      block $not_found
+        loop $start_loop
+          local.get $start
+          local.get $needle_len
+          i32.add
+          local.get $haystack_len
+          i32.gt_u
+          br_if $not_found
+          i32.const 0
+          local.set $j
+          i32.const 1
+          local.set $matched
+          block $mismatch
+            loop $match_loop
+              local.get $j
+              local.get $needle_len
+              i32.ge_u
+              br_if $mismatch
+              local.get $haystack
+              call $__string_data
+              local.get $start
+              local.get $j
+              i32.add
+              i32.add
+              i32.load8_u
+              local.get $needle
+              call $__string_data
+              local.get $j
+              i32.add
+              i32.load8_u
+              i32.ne
+              if
+                i32.const 0
+                local.set $matched
+                br $mismatch
+              end
+              local.get $j
+              i32.const 1
+              i32.add
+              local.set $j
+              br $match_loop
+            end
+          end
+          local.get $matched
+          if
+            i32.const 1
+            return
+          end
+          local.get $start
+          i32.const 1
+          i32.add
+          local.set $start
+          br $start_loop
+        end
+      end
+      i32.const 0
+    end
+  )
+  ;; Percent encode: replaces unreserved characters except A-Za-z0-9-._~ with %XX.
+  (func $__percent_encode (param $str i32) (result i32)
+    (local $len i32) (local $data i32) (local $i i32) (local $byte i32) (local $out_len i32) (local $out i32) (local $out_data i32) (local $safe i32)
+    local.get $str
+    call $__string_len
+    local.set $len
+    local.get $str
+    call $__string_data
+    local.set $data
+    ;; First pass: count output length.
+    i32.const 0
+    local.set $i
+    i32.const 0
+    local.set $out_len
+    block $count_done
+      loop $count_loop
+        local.get $i
+        local.get $len
+        i32.ge_u
+        br_if $count_done
+        local.get $data
+        local.get $i
+        i32.add
+        i32.load8_u
+        local.set $byte
+        ;; Check if character is unreserved (A-Za-z0-9-._~).
+        i32.const 0
+        local.set $safe
+        local.get $byte
+        i32.const 48
+        i32.ge_u
+        local.get $byte
+        i32.const 57
+        i32.le_u
+        i32.and
+        if
+          i32.const 1
+          local.set $safe
+        end
+        local.get $byte
+        i32.const 65
+        i32.ge_u
+        local.get $byte
+        i32.const 90
+        i32.le_u
+        i32.and
+        if
+          i32.const 1
+          local.set $safe
+        end
+        local.get $byte
+        i32.const 97
+        i32.ge_u
+        local.get $byte
+        i32.const 122
+        i32.le_u
+        i32.and
+        if
+          i32.const 1
+          local.set $safe
+        end
+        local.get $byte
+        i32.const 45
+        i32.eq
+        local.get $byte
+        i32.const 46
+        i32.eq
+        i32.or
+        local.get $byte
+        i32.const 95
+        i32.eq
+        i32.or
+        local.get $byte
+        i32.const 126
+        i32.eq
+        i32.or
+        if
+          i32.const 1
+          local.set $safe
+        end
+        local.get $safe
+        if (result i32)
+          i32.const 1
+        else
+          i32.const 3
+        end
+        local.get $out_len
+        i32.add
+        local.set $out_len
+        local.get $i
+        i32.const 1
+        i32.add
+        local.set $i
+        br $count_loop
+      end
+    end
+    ;; Allocate output string.
+    i32.const 0
+    local.get $out_len
+    call $__string_new
+    local.set $out
+    local.get $out
+    call $__string_data
+    local.set $out_data
+    ;; Second pass: encode.
+    i32.const 0
+    local.set $i
+    i32.const 0
+    local.set $out_len
+    block $encode_done
+      loop $encode_loop
+        local.get $i
+        local.get $len
+        i32.ge_u
+        br_if $encode_done
+        local.get $data
+        local.get $i
+        i32.add
+        i32.load8_u
+        local.set $byte
+        ;; Check if character is unreserved.
+        i32.const 0
+        local.set $safe
+        local.get $byte
+        i32.const 48
+        i32.ge_u
+        local.get $byte
+        i32.const 57
+        i32.le_u
+        i32.and
+        if
+          i32.const 1
+          local.set $safe
+        end
+        local.get $byte
+        i32.const 65
+        i32.ge_u
+        local.get $byte
+        i32.const 90
+        i32.le_u
+        i32.and
+        if
+          i32.const 1
+          local.set $safe
+        end
+        local.get $byte
+        i32.const 97
+        i32.ge_u
+        local.get $byte
+        i32.const 122
+        i32.le_u
+        i32.and
+        if
+          i32.const 1
+          local.set $safe
+        end
+        local.get $byte
+        i32.const 45
+        i32.eq
+        local.get $byte
+        i32.const 46
+        i32.eq
+        i32.or
+        local.get $byte
+        i32.const 95
+        i32.eq
+        i32.or
+        local.get $byte
+        i32.const 126
+        i32.eq
+        i32.or
+        if
+          i32.const 1
+          local.set $safe
+        end
+        local.get $safe
+        if
+          ;; Copy byte as-is.
+          local.get $out_data
+          local.get $out_len
+          i32.add
+          local.get $byte
+          i32.store8
+          local.get $out_len
+          i32.const 1
+          i32.add
+          local.set $out_len
+        else
+          ;; Write %XX.
+          local.get $out_data
+          local.get $out_len
+          i32.add
+          i32.const 37
+          i32.store8
+          local.get $out_data
+          local.get $out_len
+          i32.const 1
+          i32.add
+          i32.add
+          local.get $byte
+          i32.const 4
+          i32.shr_u
+          i32.const 15
+          i32.and
+          call $__nibble_to_hex
+          i32.store8
+          local.get $out_data
+          local.get $out_len
+          i32.const 2
+          i32.add
+          i32.add
+          local.get $byte
+          i32.const 15
+          i32.and
+          call $__nibble_to_hex
+          i32.store8
+          local.get $out_len
+          i32.const 3
+          i32.add
+          local.set $out_len
+        end
+        local.get $i
+        i32.const 1
+        i32.add
+        local.set $i
+        br $encode_loop
+      end
+    end
+    local.get $out
+  )
+  ;; Percent decode: replaces %XX sequences with raw bytes. Returns 0 on error.
+  (func $__percent_decode (param $str i32) (result i32)
+    (local $len i32) (local $data i32) (local $i i32) (local $out_len i32) (local $out i32) (local $out_data i32) (local $byte i32) (local $hi i32) (local $lo i32)
+    local.get $str
+    call $__string_len
+    local.set $len
+    local.get $str
+    call $__string_data
+    local.set $data
+    ;; First pass: count output length.
+    i32.const 0
+    local.set $i
+    i32.const 0
+    local.set $out_len
+    block $count_done
+      loop $count_loop
+        local.get $i
+        local.get $len
+        i32.ge_u
+        br_if $count_done
+        local.get $data
+        local.get $i
+        i32.add
+        i32.load8_u
+        local.set $byte
+        local.get $byte
+        i32.const 37
+        i32.eq
+        if
+          ;; Need at least 2 more chars.
+          local.get $i
+          i32.const 2
+          i32.add
+          local.get $len
+          i32.ge_u
+          if
+            i32.const 0
+            return
+          end
+          ;; Validate hex digits.
+          local.get $data
+          local.get $i
+          i32.const 1
+          i32.add
+          i32.add
+          i32.load8_u
+          call $__hex_digit_value
+          i32.const 255
+          i32.eq
+          if
+            i32.const 0
+            return
+          end
+          local.get $data
+          local.get $i
+          i32.const 2
+          i32.add
+          i32.add
+          i32.load8_u
+          call $__hex_digit_value
+          i32.const 255
+          i32.eq
+          if
+            i32.const 0
+            return
+          end
+          local.get $out_len
+          i32.const 1
+          i32.add
+          local.set $out_len
+          local.get $i
+          i32.const 3
+          i32.add
+          local.set $i
+        else
+          local.get $out_len
+          i32.const 1
+          i32.add
+          local.set $out_len
+          local.get $i
+          i32.const 1
+          i32.add
+          local.set $i
+        end
+        br $count_loop
+      end
+    end
+    ;; Allocate output string.
+    i32.const 0
+    local.get $out_len
+    call $__string_new
+    local.set $out
+    local.get $out
+    call $__string_data
+    local.set $out_data
+    ;; Second pass: decode.
+    i32.const 0
+    local.set $i
+    i32.const 0
+    local.set $out_len
+    block $decode_done
+      loop $decode_loop
+        local.get $i
+        local.get $len
+        i32.ge_u
+        br_if $decode_done
+        local.get $data
+        local.get $i
+        i32.add
+        i32.load8_u
+        local.set $byte
+        local.get $byte
+        i32.const 37
+        i32.eq
+        if
+          local.get $data
+          local.get $i
+          i32.const 1
+          i32.add
+          i32.add
+          i32.load8_u
+          call $__hex_digit_value
+          local.set $hi
+          local.get $data
+          local.get $i
+          i32.const 2
+          i32.add
+          i32.add
+          i32.load8_u
+          call $__hex_digit_value
+          local.set $lo
+          local.get $out_data
+          local.get $out_len
+          i32.add
+          local.get $hi
+          i32.const 4
+          i32.shl
+          local.get $lo
+          i32.or
+          i32.store8
+          local.get $out_len
+          i32.const 1
+          i32.add
+          local.set $out_len
+          local.get $i
+          i32.const 3
+          i32.add
+          local.set $i
+        else
+          local.get $out_data
+          local.get $out_len
+          i32.add
+          local.get $byte
+          i32.store8
+          local.get $out_len
+          i32.const 1
+          i32.add
+          local.set $out_len
+          local.get $i
+          i32.const 1
+          i32.add
+          local.set $i
+        end
+        br $decode_loop
+      end
+    end
+    local.get $out
+  )
 "#;

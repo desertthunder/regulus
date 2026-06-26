@@ -9,11 +9,19 @@ pub struct StdlibRuntimePrimitive {
 
 const STDLIB_RUNTIME_PRIMITIVES: &[StdlibRuntimePrimitive] = &[
     primitive("gleam/bit_array", "append"),
+    primitive("gleam/bit_array", "base16_decode"),
+    primitive("gleam/bit_array", "base16_encode"),
+    primitive("gleam/bit_array", "base64_decode"),
+    primitive("gleam/bit_array", "base64_encode"),
     primitive("gleam/bit_array", "bit_size"),
     primitive("gleam/bit_array", "byte_size"),
     primitive("gleam/bit_array", "concat"),
+    primitive("gleam/bit_array", "from_string"),
     primitive("gleam/bit_array", "is_empty"),
+    primitive("gleam/bit_array", "pad_to_bytes"),
+    primitive("gleam/bit_array", "slice"),
     primitive("gleam/bit_array", "starts_with"),
+    primitive("gleam/bit_array", "to_string"),
     primitive("gleam/dict", "delete"),
     primitive("gleam/dict", "get"),
     primitive("gleam/dict", "has_key"),
@@ -51,9 +59,15 @@ const STDLIB_RUNTIME_PRIMITIVES: &[StdlibRuntimePrimitive] = &[
     primitive("gleam/dynamic/decode", "then"),
     primitive("gleam/io", "debug"),
     primitive("gleam/string", "append"),
+    primitive("gleam/string", "byte_size"),
     primitive("gleam/string", "concat"),
+    primitive("gleam/string", "contains"),
+    primitive("gleam/string", "ends_with"),
     primitive("gleam/string", "is_empty"),
     primitive("gleam/string", "length"),
+    primitive("gleam/string", "starts_with"),
+    primitive("gleam/uri", "percent_decode"),
+    primitive("gleam/uri", "percent_encode"),
 ];
 
 const fn primitive(module: &'static str, member: &'static str) -> StdlibRuntimePrimitive {
